@@ -12,6 +12,8 @@
 //	--top       max signals to print     (default: 5)
 //	--min-rr    minimum risk/reward      (default: 2.0)
 //	--dry-run   skip DB writes           (default: false)
+//	--csv       scan one local OHLCV CSV instead of fetching
+//	--symbol    stock symbol for --csv
 //
 // Note: output is for watchlist research purposes only, not buy recommendations.
 package main
@@ -31,6 +33,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/fetcher"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -42,6 +45,8 @@ func main() {
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	dryRun := flag.Bool("dry-run", false, "fetch and scan without writing to DB")
+	csvPath := flag.String("csv", "", "scan one local OHLCV CSV instead of fetching")
+	csvSymbol := flag.String("symbol", "", "stock symbol for --csv")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -52,16 +57,24 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	// --- Load symbol watchlist ---
-	symbols, err := config.LoadSymbols(*symbolsFile)
-	if err != nil {
-		log.Fatalf("symbols: %v", err)
+	var symbols []string
+	if *csvPath == "" {
+		// --- Load symbol watchlist ---
+		symbols, err = config.LoadSymbols(*symbolsFile)
+		if err != nil {
+			log.Fatalf("symbols: %v", err)
+		}
+		log.Printf("loaded %d symbols from %s", len(symbols), *symbolsFile)
+	} else {
+		if *csvSymbol == "" {
+			log.Fatal("--symbol is required when using --csv")
+		}
+		symbols = []string{fetcher.NormalizeSymbol(*csvSymbol)}
 	}
-	log.Printf("loaded %d symbols from %s", len(symbols), *symbolsFile)
 
 	// --- DB setup (skipped on dry-run) ---
 	var candleStore *store.CandleStore
-	if !*dryRun {
+	if !*dryRun && *csvPath == "" {
 		db, err := sql.Open("postgres", cfg.DSN())
 		if err != nil {
 			log.Fatalf("db open: %v", err)
@@ -78,52 +91,62 @@ func main() {
 		if err := candleStore.Migrate(ctx); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
-	} else {
+	} else if *dryRun {
 		log.Println("dry-run: DB writes disabled")
 	}
 
 	// --- Fetch + load + build scanner inputs ---
-	yf := fetcher.NewStooqFetcher()
-	if yf.APIKey == "" {
-		log.Fatal("STOOQ_API_KEY is required for scans: get a Stooq CSV API key and set it in your shell or .env")
-	}
 	var inputs []scanner.Input
 	fetchFailed := 0
 
-	for _, sym := range symbols {
-		normalized := fetcher.NormalizeSymbol(sym)
-
-		log.Printf("fetching %s (%s)…", sym, *period)
-		candles, err := yf.FetchDaily(sym, *period)
+	if *csvPath != "" {
+		normalized := fetcher.NormalizeSymbol(*csvSymbol)
+		candles, err := loader.LoadCSV(*csvPath, normalized)
 		if err != nil {
-			log.Printf("  skip %s: fetch failed: %v", normalized, err)
-			fetchFailed++
-			continue
+			log.Fatalf("load csv: %v", err)
 		}
-		log.Printf("  fetched %d candles for %s", len(candles), normalized)
+		log.Printf("loaded %d candles for %s from %s", len(candles), normalized, *csvPath)
+		inputs = append(inputs, scanner.Input{Symbol: normalized, Candles: candles})
+	} else {
+		yf := fetcher.NewStooqFetcher()
+		if yf.APIKey == "" {
+			log.Fatal("STOOQ_API_KEY is required for scans: get a Stooq CSV API key and set it in your shell or .env")
+		}
+		for _, sym := range symbols {
+			normalized := fetcher.NormalizeSymbol(sym)
 
-		var dbCandles []models.Candle
-		if !*dryRun {
-			// Persist fresh data.
-			if err := candleStore.UpsertCandles(ctx, candles); err != nil {
-				log.Printf("  skip %s: upsert failed: %v", normalized, err)
-				fetchFailed++
-				continue
-			}
-			// Read the full window back from DB (combines new + existing history).
-			from := time.Now().AddDate(-2, 0, 0)
-			dbCandles, err = candleStore.GetCandles(ctx, normalized, store.CandleFilter{From: &from})
+			log.Printf("fetching %s (%s)…", sym, *period)
+			candles, err := yf.FetchDaily(sym, *period)
 			if err != nil {
-				log.Printf("  skip %s: db read failed: %v", normalized, err)
+				log.Printf("  skip %s: fetch failed: %v", normalized, err)
 				fetchFailed++
 				continue
 			}
-			log.Printf("  %d candles available in DB for %s", len(dbCandles), normalized)
-		} else {
-			dbCandles = candles
-		}
+			log.Printf("  fetched %d candles for %s", len(candles), normalized)
 
-		inputs = append(inputs, scanner.Input{Symbol: normalized, Candles: dbCandles})
+			var dbCandles []models.Candle
+			if !*dryRun {
+				// Persist fresh data.
+				if err := candleStore.UpsertCandles(ctx, candles); err != nil {
+					log.Printf("  skip %s: upsert failed: %v", normalized, err)
+					fetchFailed++
+					continue
+				}
+				// Read the full window back from DB (combines new + existing history).
+				from := time.Now().AddDate(-2, 0, 0)
+				dbCandles, err = candleStore.GetCandles(ctx, normalized, store.CandleFilter{From: &from})
+				if err != nil {
+					log.Printf("  skip %s: db read failed: %v", normalized, err)
+					fetchFailed++
+					continue
+				}
+				log.Printf("  %d candles available in DB for %s", len(dbCandles), normalized)
+			} else {
+				dbCandles = candles
+			}
+
+			inputs = append(inputs, scanner.Input{Symbol: normalized, Candles: dbCandles})
+		}
 	}
 
 	// --- Run scanner ---

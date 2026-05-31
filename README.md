@@ -175,6 +175,14 @@ Available flags:
 | `--top` | `5` | Number of top candidates to print |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
 | `--dry-run` | `false` | Fetch and scan without writing to DB |
+| `--csv` | _none_ | Scan one local OHLCV CSV instead of fetching |
+| `--symbol` | _none_ | Stock symbol for `--csv` |
+
+For a manually downloaded Google Finance CSV:
+
+```bash
+go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
+```
 
 Example output:
 ```
