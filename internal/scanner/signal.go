@@ -27,6 +27,16 @@ type StockSignal struct {
 	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
+// Diagnostic explains how far one stock got through the scanner pipeline,
+// including symbols that were filtered before becoming signals.
+type Diagnostic struct {
+	Symbol string             `json:"symbol"`
+	Price  float64            `json:"price"`
+	Trend  Trend              `json:"trend"`
+	EMA    analysis.EMAResult `json:"ema"`
+	Error  string             `json:"error,omitempty"`
+}
+
 // Input is one stock's data fed into the scanner.
 type Input struct {
 	Symbol  string

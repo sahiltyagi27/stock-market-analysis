@@ -13,6 +13,8 @@
 //	--symbol    stock symbol for --csv; defaults to CSV filename
 //	--top       max signals to print     (default: 5)
 //	--min-rr    minimum risk/reward      (default: 2.0)
+//	--show-filtered
+//	            print diagnostics for filtered symbols
 //
 // Note: output is for watchlist research purposes only, not buy recommendations.
 package main
@@ -36,6 +38,7 @@ func main() {
 	csvSymbol := flag.String("symbol", "", "stock symbol for --csv; defaults to CSV filename")
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
+	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
 	inputs, dataErrs := loadInputs(*csvPath, *csvDir, *csvSymbol)
@@ -51,6 +54,9 @@ func main() {
 	}
 
 	printSignals(signals, *topN)
+	if *showFiltered {
+		printDiagnostics(scanner.Diagnose(inputs, opts), scanErrs)
+	}
 
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 42))
@@ -58,6 +64,27 @@ func main() {
 	fmt.Printf("Skipped:  %d (data errors: %d, no setup: %d)\n",
 		len(dataErrs)+len(scanErrs), len(dataErrs), len(scanErrs))
 	fmt.Printf("Signals:  %d\n", len(signals))
+}
+
+func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
+	if len(scanErrs) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("Filtered Symbols")
+	for _, d := range diags {
+		if _, ok := scanErrs[d.Symbol]; !ok {
+			continue
+		}
+		fmt.Printf("\n%s\n", d.Symbol)
+		fmt.Printf("   Price:   %.2f\n", d.Price)
+		fmt.Printf("   Trend:   %s\n", d.Trend)
+		fmt.Printf("   EMA10:   %.2f\n", d.EMA.EMA10)
+		fmt.Printf("   EMA50:   %.2f\n", d.EMA.EMA50)
+		fmt.Printf("   EMA200:  %.2f\n", d.EMA.EMA200)
+		fmt.Printf("   Reason:  %s\n", d.Error)
+	}
 }
 
 func loadInputs(csvPath, csvDir, csvSymbol string) ([]scanner.Input, map[string]error) {
