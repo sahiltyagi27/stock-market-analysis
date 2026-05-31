@@ -214,6 +214,30 @@ func TestScan_BearishStockFiltered(t *testing.T) {
 	}
 }
 
+func TestDiagnose_FilteredStockIncludesEMAAndReason(t *testing.T) {
+	candles := makeBearishCandles("BEAR", 200)
+	diags := scanner.Diagnose([]scanner.Input{{Symbol: "BEAR", Candles: candles}}, defaultOpts)
+	if len(diags) != 1 {
+		t.Fatalf("got %d diagnostics, want 1", len(diags))
+	}
+	d := diags[0]
+	if d.Symbol != "BEAR" {
+		t.Errorf("symbol = %q, want BEAR", d.Symbol)
+	}
+	if d.Price == 0 {
+		t.Error("price should be populated")
+	}
+	if d.EMA.EMA10 == 0 || d.EMA.EMA50 == 0 || d.EMA.EMA200 == 0 {
+		t.Errorf("EMA values should be populated, got %+v", d.EMA)
+	}
+	if d.Trend != scanner.TrendBearish {
+		t.Errorf("trend = %q, want bearish", d.Trend)
+	}
+	if !strings.Contains(d.Error, "trend is bearish") {
+		t.Errorf("error = %q, want bearish trend reason", d.Error)
+	}
+}
+
 func TestScan_EmptyCandlesSkipped(t *testing.T) {
 	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "NONE", Candles: nil}}, defaultOpts)
 	if len(signals) != 0 {

@@ -72,6 +72,33 @@ func ScanWithErrors(inputs []Input, opts Options) ([]StockSignal, map[string]err
 	return signals, errs
 }
 
+// Diagnose returns price, EMA, trend, and any scanner rejection reason for
+// every input. It is useful for explaining why symbols did not become signals.
+func Diagnose(inputs []Input, opts Options) []Diagnostic {
+	o := opts.withDefaults()
+	out := make([]Diagnostic, 0, len(inputs))
+
+	for _, in := range inputs {
+		d := Diagnostic{Symbol: in.Symbol}
+		if len(in.Candles) == 0 {
+			d.Error = "no candles"
+			out = append(out, d)
+			continue
+		}
+
+		closes := extractCloses(in.Candles)
+		d.Price = closes[len(closes)-1]
+		d.EMA = analysis.ComputeEMAs(closes)
+		d.Trend = deriveTrend(d.Price, d.EMA)
+
+		if _, err := analyzeOne(in, o); err != nil {
+			d.Error = err.Error()
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // analyzeOne runs the pipeline for a single stock and applies the bullish filter.
 func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	if len(in.Candles) == 0 {
