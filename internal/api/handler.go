@@ -1,3 +1,8 @@
+// Package api implements the HTTP layer using the Chi router.
+// Routes:
+//
+//	GET /stocks/{symbol}/candles  — paginated OHLCV history
+//	GET /stocks/{symbol}/latest   — most recent candle
 package api
 
 import (

@@ -1,3 +1,6 @@
+// Package loader parses OHLCV data from CSV files into Candle records.
+// Supported date formats: YYYY-MM-DD, MM/DD/YYYY, RFC3339.
+// Required columns (case-insensitive): date, open, high, low, close, volume.
 package loader
 
 import (

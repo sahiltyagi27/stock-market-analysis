@@ -1,3 +1,5 @@
+// Package service is the application service layer that orchestrates
+// CSV loading, storage, and candle queries.
 package service
 
 import (
