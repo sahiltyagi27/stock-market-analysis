@@ -58,11 +58,11 @@ func (o *AnalyzerOptions) withDefaults() AnalyzerOptions {
 }
 
 var (
-	ErrInvalidPrice      = errors.New("current price must be > 0")
-	ErrZonesOverlap      = errors.New("support and resistance zones overlap")
-	ErrPriceOutOfRange   = errors.New("current price is outside the support-resistance range")
-	ErrZeroRisk          = errors.New("stop loss equals entry: risk is zero")
-	ErrZeroReward        = errors.New("target equals entry: reward is zero")
+	ErrInvalidPrice    = errors.New("current price must be > 0")
+	ErrZonesOverlap    = errors.New("support and resistance zones overlap")
+	ErrPriceOutOfRange = errors.New("current price is outside the support-resistance range")
+	ErrZeroRisk        = errors.New("stop loss equals entry: risk is zero")
+	ErrZeroReward      = errors.New("target equals entry: reward is zero")
 )
 
 // Analyze computes long and short trade setups from the current price and the

@@ -64,6 +64,38 @@ func (s *CandleStore) BulkUpsert(ctx context.Context, candles []models.Candle) e
 	return tx.Commit()
 }
 
+// UpsertCandles inserts candles and updates OHLCV on conflict.
+// Safe to run daily — existing rows are overwritten with fresh data.
+func (s *CandleStore) UpsertCandles(ctx context.Context, candles []models.Candle) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO candles (symbol, timestamp, open, high, low, close, volume)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (symbol, timestamp) DO UPDATE SET
+			open   = EXCLUDED.open,
+			high   = EXCLUDED.high,
+			low    = EXCLUDED.low,
+			close  = EXCLUDED.close,
+			volume = EXCLUDED.volume
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, c := range candles {
+		if _, err := stmt.ExecContext(ctx, c.Symbol, c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume); err != nil {
+			return fmt.Errorf("upsert candle %s@%s: %w", c.Symbol, c.Timestamp, err)
+		}
+	}
+	return tx.Commit()
+}
+
 type CandleFilter struct {
 	From  *time.Time
 	To    *time.Time

@@ -4,10 +4,10 @@ import "sort"
 
 // Zone represents a price cluster that acts as support or resistance.
 type Zone struct {
-	Low    float64 // lowest price in the cluster
-	High   float64 // highest price in the cluster
-	Mid    float64 // arithmetic centre of the zone
-	Touches int    // number of local extremes that formed this zone
+	Low     float64 // lowest price in the cluster
+	High    float64 // highest price in the cluster
+	Mid     float64 // arithmetic centre of the zone
+	Touches int     // number of local extremes that formed this zone
 }
 
 // ZoneResult holds the detected support and resistance zones,

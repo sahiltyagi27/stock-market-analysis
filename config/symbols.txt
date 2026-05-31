@@ -1,0 +1,11 @@
+# NSE watchlist — one Yahoo Finance ticker per line
+# Lines starting with # are ignored
+
+HDFCBANK.NS
+APOLLOTYRE.NS
+ASHOKLEY.NS
+ITC.NS
+BANKBARODA.NS
+CANBK.NS
+TCS.NS
+IOC.NS

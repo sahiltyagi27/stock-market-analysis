@@ -153,6 +153,47 @@ go run ./cmd/server -load data/AAPL_sample.csv -symbol AAPL
 go run ./cmd/server
 ```
 
+### Daily scan
+
+Fetch live data for your watchlist, load it into the database, and print ranked candidates:
+
+```bash
+go run ./cmd/scan --symbols config/symbols.txt --top 5
+```
+
+Available flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--symbols` | `config/symbols.txt` | Path to watchlist file |
+| `--period` | `2y` | History window (`2y`, `6m`, `90d`) |
+| `--top` | `5` | Number of top candidates to print |
+| `--min-rr` | `2.0` | Minimum risk/reward ratio |
+| `--dry-run` | `false` | Fetch and scan without writing to DB |
+
+Example output:
+```
+╔══════════════════════════════════════╗
+║      Top Watchlist Candidates        ║
+║  (research only — not buy signals)   ║
+╚══════════════════════════════════════╝
+
+1. HDFCBANK
+   Score:      86.5 / 100
+   Price:      786.85
+   Trend:      bullish
+   R/R:        2.80  (good)
+   Support:    760.00 – 765.50  (3 touches)
+   Resistance: 820.00 – 828.00  (2 touches)
+   Reasons:
+     • Price above EMA50 (742.10) and EMA200 (698.30)
+     • Risk/Reward 2.80 exceeds minimum 2.00
+     • Support zone touched 3 times
+     • Trade quality: good
+```
+
+> **Note:** Output is for watchlist research only, not buy recommendations.
+
 ### API Endpoints
 
 | Method | Endpoint | Description |
