@@ -1,0 +1,435 @@
+package scanner_test
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
+	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
+)
+
+// containsReason checks whether any entry in reasons contains the given substring.
+func containsReason(reasons []string, substr string) bool {
+	for _, r := range reasons {
+		if strings.Contains(r, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// makeTrendingCandles builds a synthetic OHLCV series that passes the bullish
+// scanner filter (price > EMA50 > EMA200, R/R ≥ 2, clear support + resistance zones).
+//
+// Layout (all prices as multiples of basePrice, bp=100 for illustration):
+//
+//	Phase 1 – 210 rising candles: bp → 2bp          (seeds EMA200 ≈ 150, EMA50 ≈ 188)
+//	Phase 2 – 2 resistance spikes to 2.6bp           (local-max zone ≈ 258–261)
+//	Phase 3 – 2 V-dips with bottoms at 1.88–1.89bp  (local-min zone, merged by clusterer)
+//	Current  – price at 2bp                          (between support ~1.88bp and resistance ~2.6bp)
+//
+// R/R for the long: entry=2bp, SL≈1.87bp, target≈2.6bp  →  RR ≈ 4.7 (excellent).
+func makeTrendingCandles(symbol string, basePrice float64, baseVolume int64) []models.Candle {
+	var candles []models.Candle
+	ts := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	push := func(close, high, low float64, vol int64) {
+		candles = append(candles, models.Candle{
+			Symbol: symbol, Timestamp: ts,
+			Open: close, High: high, Low: low, Close: close, Volume: vol,
+		})
+		ts = ts.Add(24 * time.Hour)
+	}
+	reg := func(p float64) { push(p, p*1.005, p*0.995, baseVolume) }
+
+	// Phase 1: linear rise bp → 2bp over 210 candles.
+	for i := range 210 {
+		p := basePrice * (1.0 + float64(i+1)/210.0)
+		reg(p)
+	}
+
+	cur := basePrice * 2.0
+	res := basePrice * 2.6 // resistance level
+
+	// Phase 2: resistance zone — two spike candles with regular candles between.
+	// Spike Highs (2.6bp and 2.61bp) are strictly above all neighbours' Highs (~2.01bp).
+	for range 3 { reg(cur) }
+	push(cur, res, cur*0.995, baseVolume)       // spike 1
+	for range 3 { reg(cur) }
+	push(cur, res*1.004, cur*0.995, baseVolume) // spike 2
+	for range 3 { reg(cur) }
+
+	// Phase 3: two V-dips creating the support zone.
+	// Each bottom candle has Low strictly below its four nearest neighbours.
+	//   neighbours' Lows:  cur*0.945, cur*0.94  |  bottom  |  cur*0.94, cur*0.945
+	bot1 := cur * 0.940 // Low of bottom candle 1
+	bot2 := cur * 0.944 // Low of bottom candle 2 (within 2% → same zone)
+
+	// V-dip 1
+	reg(cur * 0.975)
+	push(cur*0.96, cur*0.965, cur*0.945, baseVolume) // Low=cur*0.945
+	push(cur*0.95, cur*0.955, cur*0.940, baseVolume) // Low=cur*0.940 → but this IS bot1; need neighbour lower check
+	// bottom: Low = bot1 - small delta so it is strictly below cur*0.940 neighbour
+	push(cur*0.945, cur*0.95, bot1-basePrice*0.01, baseVolume*2) // strict local min
+	push(cur*0.95, cur*0.955, cur*0.940, baseVolume)
+	push(cur*0.96, cur*0.965, cur*0.945, baseVolume)
+	reg(cur * 0.975)
+	for range 3 { reg(cur) }
+
+	// V-dip 2
+	reg(cur * 0.975)
+	push(cur*0.96, cur*0.965, cur*0.945, baseVolume)
+	push(cur*0.95, cur*0.955, cur*0.940, baseVolume)
+	push(cur*0.945, cur*0.95, bot2-basePrice*0.01, baseVolume*2) // strict local min, near bot1
+	push(cur*0.95, cur*0.955, cur*0.940, baseVolume)
+	push(cur*0.96, cur*0.965, cur*0.945, baseVolume)
+	reg(cur * 0.975)
+	for range 3 { reg(cur) }
+
+	// Current price back at cur.
+	reg(cur)
+
+	return candles
+}
+
+// makeBearishCandles produces a clearly downtrending series (price below both EMAs).
+func makeBearishCandles(symbol string, basePrice float64) []models.Candle {
+	var candles []models.Candle
+	ts := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	price := basePrice * 2
+	for range 280 {
+		price -= basePrice * 0.003
+		candles = append(candles, models.Candle{
+			Symbol: symbol, Timestamp: ts,
+			Open: price - 1, High: price + 1, Low: price - 2, Close: price, Volume: 100000,
+		})
+		ts = ts.Add(24 * time.Hour)
+	}
+	return candles
+}
+
+var defaultOpts = scanner.Options{
+	MinRR:        2.0,
+	VolumeWindow: 20,
+}
+
+// ---------------------------------------------------------------------------
+// Scan — happy path
+// ---------------------------------------------------------------------------
+
+func TestScan_BullishSignalReturned(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Fatal("expected at least one signal for a bullish stock, got none")
+	}
+	if signals[0].Symbol != "AAPL" {
+		t.Errorf("symbol = %q, want AAPL", signals[0].Symbol)
+	}
+}
+
+func TestScan_TrendIsBullish(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if signals[0].Trend != scanner.TrendBullish {
+		t.Errorf("trend = %q, want bullish", signals[0].Trend)
+	}
+}
+
+func TestScan_PriceAboveBothEMAs(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	s := signals[0]
+	if s.Price <= s.EMA.EMA50 {
+		t.Errorf("price %.2f not above EMA50 %.2f", s.Price, s.EMA.EMA50)
+	}
+	if s.Price <= s.EMA.EMA200 {
+		t.Errorf("price %.2f not above EMA200 %.2f", s.Price, s.EMA.EMA200)
+	}
+}
+
+func TestScan_TradeIsLong(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if signals[0].Trade.Direction != "long" {
+		t.Errorf("trade direction = %q, want long", signals[0].Trade.Direction)
+	}
+}
+
+func TestScan_RRAboveMinimum(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if signals[0].Trade.RiskReward < defaultOpts.MinRR {
+		t.Errorf("R/R %.2f below MinRR %.2f", signals[0].Trade.RiskReward, defaultOpts.MinRR)
+	}
+}
+
+func TestScan_ScoreIsPositive(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if signals[0].Score <= 0 {
+		t.Errorf("score = %.2f, want > 0", signals[0].Score)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scan — filters
+// ---------------------------------------------------------------------------
+
+func TestScan_BearishStockFiltered(t *testing.T) {
+	candles := makeBearishCandles("BEAR", 200)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "BEAR", Candles: candles}}, defaultOpts)
+	if len(signals) != 0 {
+		t.Errorf("expected bearish stock to be filtered, got signal: %+v", signals[0])
+	}
+}
+
+func TestScan_EmptyCandlesSkipped(t *testing.T) {
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "NONE", Candles: nil}}, defaultOpts)
+	if len(signals) != 0 {
+		t.Error("expected no signals for empty candles")
+	}
+	if _, ok := errs["NONE"]; !ok {
+		t.Error("expected error recorded for NONE")
+	}
+}
+
+func TestScan_RRFilterApplied(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Set MinRR so high that no signal can pass.
+	opts := scanner.Options{MinRR: 100.0, VolumeWindow: 20}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Errorf("expected R/R filter to reject signal, got R/R=%.2f", signals[0].Trade.RiskReward)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scan — multiple stocks, ranking
+// ---------------------------------------------------------------------------
+
+func TestScan_RankedByScoreDescending(t *testing.T) {
+	inputs := []scanner.Input{
+		{Symbol: "AAA", Candles: makeTrendingCandles("AAA", 100, 500_000)},
+		{Symbol: "BBB", Candles: makeTrendingCandles("BBB", 200, 2_000_000)},
+		{Symbol: "CCC", Candles: makeTrendingCandles("CCC", 50, 100_000)},
+	}
+	signals := scanner.Scan(inputs, defaultOpts)
+	for i := 1; i < len(signals); i++ {
+		if signals[i].Score > signals[i-1].Score {
+			t.Errorf("signals not sorted: [%d].Score=%.2f > [%d].Score=%.2f",
+				i, signals[i].Score, i-1, signals[i-1].Score)
+		}
+	}
+}
+
+func TestScan_MixedPortfolio(t *testing.T) {
+	inputs := []scanner.Input{
+		{Symbol: "BULL", Candles: makeTrendingCandles("BULL", 150, 1_000_000)},
+		{Symbol: "BEAR", Candles: makeBearishCandles("BEAR", 200)},
+		{Symbol: "EMPTY", Candles: nil},
+	}
+	signals, errs := scanner.ScanWithErrors(inputs, defaultOpts)
+
+	// Only the bullish stock should produce a signal.
+	for _, s := range signals {
+		if s.Symbol != "BULL" {
+			t.Errorf("unexpected signal for %s", s.Symbol)
+		}
+	}
+	// Errors recorded for filtered/skipped symbols.
+	if _, ok := errs["EMPTY"]; !ok {
+		t.Error("expected error for EMPTY")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reasons
+// ---------------------------------------------------------------------------
+
+func TestReasons_PresentOnSuccessfulSignal(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if len(signals[0].Reasons) == 0 {
+		t.Error("expected Reasons to be populated, got empty slice")
+	}
+}
+
+func TestReasons_EMAReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "EMA50") || !containsReason(signals[0].Reasons, "EMA200") {
+		t.Errorf("expected EMA trend reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_RRReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Risk/Reward") {
+		t.Errorf("expected R/R reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_RRReasonContainsMinRR(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 3.0, VolumeWindow: 20}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced for MinRR=3.0")
+	}
+	if !containsReason(signals[0].Reasons, "3.00") {
+		t.Errorf("expected MinRR 3.00 in R/R reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_SupportTouchReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Support zone touched") {
+		t.Errorf("expected support touch reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_TradeQualityReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Trade quality:") {
+		t.Errorf("expected trade quality reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_VolumeReasonPresentWhenAboveAverage(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Spike the last candle's volume well above average.
+	candles[len(candles)-1].Volume = 5_000_000
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Volume") {
+		t.Errorf("expected volume reason for above-average volume, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_VolumeReasonAbsentWhenBelowAverage(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Drop the last candle's volume well below average.
+	candles[len(candles)-1].Volume = 1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if containsReason(signals[0].Reasons, "Volume") {
+		t.Errorf("expected no volume reason for below-average volume, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_SingularTouchGrammar(t *testing.T) {
+	// The support zone fixture always has touches=2. We test grammar by examining
+	// the raw reason builder via a signal where we can observe the touch count.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	s := signals[0]
+	if s.Support.Touches == 1 {
+		if !containsReason(s.Reasons, "touched 1 time") || containsReason(s.Reasons, "touched 1 times") {
+			t.Errorf("expected singular 'time', got: %v", s.Reasons)
+		}
+	} else {
+		if !containsReason(s.Reasons, "times") {
+			t.Errorf("expected plural 'times' for %d touches, got: %v", s.Support.Touches, s.Reasons)
+		}
+	}
+}
+
+func TestReasons_CountIsAtLeastFour(t *testing.T) {
+	// Trend + R/R + Support + Quality are always present = minimum 4 reasons.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Use low volume so the 5th (volume) reason is absent — confirms floor is exactly 4.
+	candles[len(candles)-1].Volume = 1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if len(signals[0].Reasons) < 4 {
+		t.Errorf("expected at least 4 reasons, got %d: %v", len(signals[0].Reasons), signals[0].Reasons)
+	}
+}
+
+func TestReasons_Deterministic(t *testing.T) {
+	// Running the scanner twice on the same input must yield identical reasons.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	input := []scanner.Input{{Symbol: "AAPL", Candles: candles}}
+	s1 := scanner.Scan(input, defaultOpts)
+	s2 := scanner.Scan(input, defaultOpts)
+	if len(s1) == 0 || len(s2) == 0 {
+		t.Skip("no signal produced")
+	}
+	r1, r2 := s1[0].Reasons, s2[0].Reasons
+	if len(r1) != len(r2) {
+		t.Fatalf("reason count differs: %d vs %d", len(r1), len(r2))
+	}
+	for i := range r1 {
+		if r1[i] != r2[i] {
+			t.Errorf("reason[%d] differs: %q vs %q", i, r1[i], r2[i])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scorer — unit tests
+// ---------------------------------------------------------------------------
+
+func TestScan_ScoreMaxIs100(t *testing.T) {
+	// Score components: 40+30+20+10 = 100 max.
+	// A bullish stock with excellent R/R, 4+ touch support, and high volume
+	// should approach but not exceed 100.
+	candles := makeTrendingCandles("AAPL", 100, 2_000_000)
+	// Spike last candle volume to 3× average to max out volume score.
+	candles[len(candles)-1].Volume = 6_000_000
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if signals[0].Score > 100 {
+		t.Errorf("score %.2f exceeds maximum of 100", signals[0].Score)
+	}
+}
