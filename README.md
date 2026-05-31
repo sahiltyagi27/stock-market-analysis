@@ -155,34 +155,31 @@ go run ./cmd/server
 
 ### Daily scan
 
-Fetch live data for your watchlist, load it into the database, and print ranked candidates:
+Download OHLCV CSV files from your data source, then scan one file or a folder
+of files. This works well with manually exported Google Finance sheets.
 
 ```bash
-export STOOQ_API_KEY=your_stooq_api_key
-go run ./cmd/scan --symbols config/symbols.txt --top 5
+go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
+go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
 ```
 
-Stooq CSV downloads currently require an API key. To get one, open the Stooq
-CSV download page for a symbol with `get_apikey`, complete the captcha, and
-save the key as `STOOQ_API_KEY` in your shell or `.env` before running scans.
+For folder scans, name files by symbol:
+
+```text
+~/Desktop/nifty-data/ITC.csv
+~/Desktop/nifty-data/HDFCBANK.csv
+~/Desktop/nifty-data/TCS.csv
+```
 
 Available flags:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--symbols` | `config/symbols.txt` | Path to watchlist file |
-| `--period` | `2y` | History window (`2y`, `6m`, `90d`) |
 | `--top` | `5` | Number of top candidates to print |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
-| `--dry-run` | `false` | Fetch and scan without writing to DB |
-| `--csv` | _none_ | Scan one local OHLCV CSV instead of fetching |
-| `--symbol` | _none_ | Stock symbol for `--csv` |
-
-For a manually downloaded Google Finance CSV:
-
-```bash
-go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
-```
+| `--csv` | _none_ | Scan one local OHLCV CSV |
+| `--csv-dir` | _none_ | Scan all CSV files in a folder |
+| `--symbol` | CSV filename | Stock symbol for `--csv` |
 
 Example output:
 ```
@@ -224,7 +221,6 @@ Example output:
 | `DB_PASSWORD` | _(required)_ | Database password |
 | `DB_NAME` | `stocks` | Database name |
 | `SERVER_PORT` | `8080` | HTTP listen port |
-| `STOOQ_API_KEY` | _(required for scans)_ | Stooq CSV download API key |
 
 ---
 

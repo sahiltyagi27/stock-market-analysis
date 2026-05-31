@@ -36,8 +36,8 @@ func LoadCSV(path, symbol string) ([]models.Candle, error) {
 	return parseCSV(f, symbol)
 }
 
-// Parse parses OHLCV data from any io.Reader (HTTP response body, string reader, etc.).
-// Symbol is uppercased automatically. Extra columns (e.g. Yahoo's "Adj Close") are ignored.
+// Parse parses OHLCV data from any io.Reader.
+// Symbol is uppercased automatically. Extra columns are ignored.
 func Parse(r io.Reader, symbol string) ([]models.Candle, error) {
 	return parseCSV(r, symbol)
 }
