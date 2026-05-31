@@ -58,11 +58,17 @@ func makeTrendingCandles(symbol string, basePrice float64, baseVolume int64) []m
 
 	// Phase 2: resistance zone — two spike candles with regular candles between.
 	// Spike Highs (2.6bp and 2.61bp) are strictly above all neighbours' Highs (~2.01bp).
-	for range 3 { reg(cur) }
-	push(cur, res, cur*0.995, baseVolume)       // spike 1
-	for range 3 { reg(cur) }
+	for range 3 {
+		reg(cur)
+	}
+	push(cur, res, cur*0.995, baseVolume) // spike 1
+	for range 3 {
+		reg(cur)
+	}
 	push(cur, res*1.004, cur*0.995, baseVolume) // spike 2
-	for range 3 { reg(cur) }
+	for range 3 {
+		reg(cur)
+	}
 
 	// Phase 3: two V-dips creating the support zone.
 	// Each bottom candle has Low strictly below its four nearest neighbours.
@@ -79,7 +85,9 @@ func makeTrendingCandles(symbol string, basePrice float64, baseVolume int64) []m
 	push(cur*0.95, cur*0.955, cur*0.940, baseVolume)
 	push(cur*0.96, cur*0.965, cur*0.945, baseVolume)
 	reg(cur * 0.975)
-	for range 3 { reg(cur) }
+	for range 3 {
+		reg(cur)
+	}
 
 	// V-dip 2
 	reg(cur * 0.975)
@@ -89,7 +97,9 @@ func makeTrendingCandles(symbol string, basePrice float64, baseVolume int64) []m
 	push(cur*0.95, cur*0.955, cur*0.940, baseVolume)
 	push(cur*0.96, cur*0.965, cur*0.945, baseVolume)
 	reg(cur * 0.975)
-	for range 3 { reg(cur) }
+	for range 3 {
+		reg(cur)
+	}
 
 	// Current price back at cur.
 	reg(cur)
