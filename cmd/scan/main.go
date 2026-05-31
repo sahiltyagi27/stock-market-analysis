@@ -1,144 +1,144 @@
-// Command scan fetches daily OHLCV data for a watchlist, upserts it into
-// PostgreSQL, runs the scanner engine, and prints ranked signal candidates.
+// Command scan loads manually downloaded OHLCV CSV files, runs the scanner
+// engine, and prints ranked signal candidates.
 //
 // Usage:
 //
-//	go run ./cmd/scan [flags]
+//	go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC
+//	go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
 //
 // Flags:
 //
-//	--symbols   path to watchlist file   (default: config/symbols.txt)
-//	--period    history window           (default: 2y)
+//	--csv       path to one OHLCV CSV file
+//	--csv-dir   path to a directory of OHLCV CSV files
+//	--symbol    stock symbol for --csv; defaults to CSV filename
 //	--top       max signals to print     (default: 5)
 //	--min-rr    minimum risk/reward      (default: 2.0)
-//	--dry-run   skip DB writes           (default: false)
 //
 // Note: output is for watchlist research purposes only, not buy recommendations.
 package main
 
 import (
-	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
+	"path/filepath"
+	"sort"
 	"strings"
-	"syscall"
-	"time"
 
-	_ "github.com/lib/pq"
-	"github.com/sahiltyagi27/stock-market-analysis/config"
-	"github.com/sahiltyagi27/stock-market-analysis/internal/fetcher"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
-	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
-	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
 func main() {
-	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
-	period := flag.String("period", "2y", "history window (e.g. 2y, 6m, 90d)")
+	csvPath := flag.String("csv", "", "path to one OHLCV CSV file")
+	csvDir := flag.String("csv-dir", "", "path to a directory of OHLCV CSV files")
+	csvSymbol := flag.String("symbol", "", "stock symbol for --csv; defaults to CSV filename")
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
-	dryRun := flag.Bool("dry-run", false, "fetch and scan without writing to DB")
 	flag.Parse()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	inputs, dataErrs := loadInputs(*csvPath, *csvDir, *csvSymbol)
 
-	// --- Load symbol watchlist ---
-	symbols, err := config.LoadSymbols(*symbolsFile)
-	if err != nil {
-		log.Fatalf("symbols: %v", err)
-	}
-	log.Printf("loaded %d symbols from %s", len(symbols), *symbolsFile)
-
-	// --- DB setup (skipped on dry-run) ---
-	var candleStore *store.CandleStore
-	if !*dryRun {
-		cfg, err := config.Load()
-		if err != nil {
-			log.Fatalf("config: %v", err)
-		}
-		db, err := sql.Open("postgres", cfg.DSN())
-		if err != nil {
-			log.Fatalf("db open: %v", err)
-		}
-		defer db.Close()
-		db.SetMaxOpenConns(10)
-		db.SetMaxIdleConns(5)
-		db.SetConnMaxLifetime(5 * time.Minute)
-
-		if err := db.PingContext(ctx); err != nil {
-			log.Fatalf("db ping: %v", err)
-		}
-		candleStore = store.NewCandleStore(db)
-		if err := candleStore.Migrate(ctx); err != nil {
-			log.Fatalf("migrate: %v", err)
-		}
-	} else {
-		log.Println("dry-run: DB writes disabled")
-	}
-
-	// --- Fetch + load + build scanner inputs ---
-	yf := fetcher.NewStooqFetcher()
-	var inputs []scanner.Input
-	fetchFailed := 0
-
-	for _, sym := range symbols {
-		normalized := fetcher.NormalizeSymbol(sym)
-
-		log.Printf("fetching %s (%s)…", sym, *period)
-		candles, err := yf.FetchDaily(sym, *period)
-		if err != nil {
-			log.Printf("  skip %s: fetch failed: %v", normalized, err)
-			fetchFailed++
-			continue
-		}
-		log.Printf("  fetched %d candles for %s", len(candles), normalized)
-
-		var dbCandles []models.Candle
-		if !*dryRun {
-			// Persist fresh data.
-			if err := candleStore.UpsertCandles(ctx, candles); err != nil {
-				log.Printf("  skip %s: upsert failed: %v", normalized, err)
-				fetchFailed++
-				continue
-			}
-			// Read the full window back from DB (combines new + existing history).
-			from := time.Now().AddDate(-2, 0, 0)
-			dbCandles, err = candleStore.GetCandles(ctx, normalized, store.CandleFilter{From: &from})
-			if err != nil {
-				log.Printf("  skip %s: db read failed: %v", normalized, err)
-				fetchFailed++
-				continue
-			}
-			log.Printf("  %d candles available in DB for %s", len(dbCandles), normalized)
-		} else {
-			dbCandles = candles
-		}
-
-		inputs = append(inputs, scanner.Input{Symbol: normalized, Candles: dbCandles})
-	}
-
-	// --- Run scanner ---
 	opts := scanner.Options{MinRR: *minRR}
 	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
-	scanSkipped := len(scanErrs)
 
+	for path, err := range dataErrs {
+		log.Printf("  skip %s: %v", path, err)
+	}
 	for sym, err := range scanErrs {
 		log.Printf("  filter %s: %v", sym, err)
 	}
 
-	// --- Print results ---
+	printSignals(signals, *topN)
+
+	fmt.Println()
+	fmt.Println(strings.Repeat("─", 42))
+	fmt.Printf("Scanned:  %d symbols\n", len(inputs))
+	fmt.Printf("Skipped:  %d (data errors: %d, no setup: %d)\n",
+		len(dataErrs)+len(scanErrs), len(dataErrs), len(scanErrs))
+	fmt.Printf("Signals:  %d\n", len(signals))
+}
+
+func loadInputs(csvPath, csvDir, csvSymbol string) ([]scanner.Input, map[string]error) {
+	if (csvPath == "") == (csvDir == "") {
+		log.Fatal("provide exactly one of --csv or --csv-dir")
+	}
+
+	if csvPath != "" {
+		symbol := normalizeSymbol(csvSymbol)
+		if symbol == "" {
+			symbol = symbolFromPath(csvPath)
+		}
+		input, err := loadOneCSV(csvPath, symbol)
+		if err != nil {
+			log.Fatalf("load csv: %v", err)
+		}
+		return []scanner.Input{input}, nil
+	}
+
+	entries, err := os.ReadDir(csvDir)
+	if err != nil {
+		log.Fatalf("read csv dir: %v", err)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	var inputs []scanner.Input
+	dataErrs := make(map[string]error)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".csv") {
+			continue
+		}
+		path := filepath.Join(csvDir, entry.Name())
+		input, err := loadOneCSV(path, symbolFromPath(path))
+		if err != nil {
+			dataErrs[path] = err
+			continue
+		}
+		inputs = append(inputs, input)
+	}
+	if len(inputs) == 0 && len(dataErrs) == 0 {
+		log.Fatalf("no CSV files found in %s", csvDir)
+	}
+	return inputs, dataErrs
+}
+
+func loadOneCSV(path, symbol string) (scanner.Input, error) {
+	candles, err := loader.LoadCSV(path, symbol)
+	if err != nil {
+		return scanner.Input{}, err
+	}
+	log.Printf("loaded %d candles for %s from %s", len(candles), symbol, path)
+	return scanner.Input{Symbol: symbol, Candles: candles}, nil
+}
+
+func symbolFromPath(path string) string {
+	base := filepath.Base(path)
+	symbol := strings.TrimSuffix(base, filepath.Ext(base))
+	return normalizeSymbol(symbol)
+}
+
+func normalizeSymbol(symbol string) string {
+	symbol = strings.TrimSpace(symbol)
+	if _, after, ok := strings.Cut(symbol, ":"); ok {
+		symbol = after
+	}
+	if before, _, ok := strings.Cut(symbol, "."); ok {
+		symbol = before
+	}
+	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+func printSignals(signals []scanner.StockSignal, topN int) {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════╗")
 	fmt.Println("║      Top Watchlist Candidates        ║")
 	fmt.Println("║  (research only — not buy signals)   ║")
 	fmt.Println("╚══════════════════════════════════════╝")
 
-	top := *topN
+	top := topN
 	if top > len(signals) {
 		top = len(signals)
 	}
@@ -163,16 +163,5 @@ func main() {
 		for _, r := range sig.Reasons {
 			fmt.Printf("     • %s\n", r)
 		}
-	}
-
-	// --- Summary ---
-	fmt.Println()
-	fmt.Println(strings.Repeat("─", 42))
-	fmt.Printf("Scanned:  %d symbols\n", len(symbols))
-	fmt.Printf("Skipped:  %d (fetch/db errors: %d, no setup: %d)\n",
-		fetchFailed+scanSkipped, fetchFailed, scanSkipped)
-	fmt.Printf("Signals:  %d\n", len(signals))
-	if *dryRun {
-		fmt.Println("Mode:     dry-run (no DB writes)")
 	}
 }

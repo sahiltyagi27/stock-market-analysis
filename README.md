@@ -155,21 +155,31 @@ go run ./cmd/server
 
 ### Daily scan
 
-Fetch live data for your watchlist, load it into the database, and print ranked candidates:
+Download OHLCV CSV files from your data source, then scan one file or a folder
+of files. This works well with manually exported Google Finance sheets.
 
 ```bash
-go run ./cmd/scan --symbols config/symbols.txt --top 5
+go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
+go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
+```
+
+For folder scans, name files by symbol:
+
+```text
+~/Desktop/nifty-data/ITC.csv
+~/Desktop/nifty-data/HDFCBANK.csv
+~/Desktop/nifty-data/TCS.csv
 ```
 
 Available flags:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--symbols` | `config/symbols.txt` | Path to watchlist file |
-| `--period` | `2y` | History window (`2y`, `6m`, `90d`) |
 | `--top` | `5` | Number of top candidates to print |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
-| `--dry-run` | `false` | Fetch and scan without writing to DB |
+| `--csv` | _none_ | Scan one local OHLCV CSV |
+| `--csv-dir` | _none_ | Scan all CSV files in a folder |
+| `--symbol` | CSV filename | Stock symbol for `--csv` |
 
 Example output:
 ```

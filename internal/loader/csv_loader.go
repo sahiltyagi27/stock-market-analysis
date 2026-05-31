@@ -1,5 +1,5 @@
 // Package loader parses OHLCV data from CSV files into Candle records.
-// Supported date formats: YYYY-MM-DD, MM/DD/YYYY, RFC3339.
+// Supported date formats: YYYY-MM-DD, MM/DD/YYYY, MM/DD/YYYY HH:MM:SS, RFC3339.
 // Required columns (case-insensitive): date, open, high, low, close, volume.
 package loader
 
@@ -21,6 +21,7 @@ import (
 var dateFormats = []string{
 	"2006-01-02",
 	"01/02/2006",
+	"1/2/2006 15:04:05",
 	"2006-01-02 15:04:05",
 	time.RFC3339,
 }
@@ -35,8 +36,8 @@ func LoadCSV(path, symbol string) ([]models.Candle, error) {
 	return parseCSV(f, symbol)
 }
 
-// Parse parses OHLCV data from any io.Reader (HTTP response body, string reader, etc.).
-// Symbol is uppercased automatically. Extra columns (e.g. Yahoo's "Adj Close") are ignored.
+// Parse parses OHLCV data from any io.Reader.
+// Symbol is uppercased automatically. Extra columns are ignored.
 func Parse(r io.Reader, symbol string) ([]models.Candle, error) {
 	return parseCSV(r, symbol)
 }
