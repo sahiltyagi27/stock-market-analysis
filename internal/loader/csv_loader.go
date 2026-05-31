@@ -25,6 +25,7 @@ var dateFormats = []string{
 	time.RFC3339,
 }
 
+// LoadCSV opens a file and parses it as an OHLCV CSV for the given symbol.
 func LoadCSV(path, symbol string) ([]models.Candle, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -32,6 +33,12 @@ func LoadCSV(path, symbol string) ([]models.Candle, error) {
 	}
 	defer f.Close()
 	return parseCSV(f, symbol)
+}
+
+// Parse parses OHLCV data from any io.Reader (HTTP response body, string reader, etc.).
+// Symbol is uppercased automatically. Extra columns (e.g. Yahoo's "Adj Close") are ignored.
+func Parse(r io.Reader, symbol string) ([]models.Candle, error) {
+	return parseCSV(r, symbol)
 }
 
 func parseCSV(r io.Reader, symbol string) ([]models.Candle, error) {

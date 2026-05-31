@@ -10,9 +10,9 @@ import (
 
 // Fixtures used across tests.
 var (
-	support    = analysis.Zone{Low: 95, High: 100, Mid: 97.5, Touches: 3}
-	resistance = analysis.Zone{Low: 148, High: 152, Mid: 150, Touches: 2}
-	midPrice   = 125.0 // comfortably between the two zones
+	support      = analysis.Zone{Low: 95, High: 100, Mid: 97.5, Touches: 3}
+	resistance   = analysis.Zone{Low: 148, High: 152, Mid: 150, Touches: 2}
+	midPrice     = 125.0 // comfortably between the two zones
 	analyzerOpts = analysis.AnalyzerOptions{SLBufferPct: 0.005}
 )
 
