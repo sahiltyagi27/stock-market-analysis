@@ -192,3 +192,116 @@ func TestFetchDaily_InvalidPeriodReturnsError(t *testing.T) {
 		t.Error("expected error for invalid period, got nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// StooqFetcher — FetchDaily with httptest server (no real network calls)
+// ---------------------------------------------------------------------------
+
+// stooqCsv is a minimal Stooq CSV fixture with rows in descending date order
+// (newest first), which is what stooq.com returns. StooqFetcher must sort
+// them ascending before returning.
+const stooqCsv = `Date,Open,High,Low,Close,Volume
+2024-01-04,791.00,798.40,787.30,794.20,11234567
+2024-01-03,788.50,795.00,783.20,791.60,9876543
+2024-01-02,785.00,792.50,780.10,788.30,12345678
+`
+
+func newStooqTestServer(body string, statusCode int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(statusCode)
+		fmt.Fprint(w, body)
+	}))
+}
+
+func TestStooqFetchDaily_ParsesCandlesCorrectly(t *testing.T) {
+	srv := newStooqTestServer(stooqCsv, http.StatusOK)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(candles) != 3 {
+		t.Errorf("got %d candles, want 3", len(candles))
+	}
+}
+
+func TestStooqFetchDaily_SortsAscending(t *testing.T) {
+	srv := newStooqTestServer(stooqCsv, http.StatusOK)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// stooqCsv is newest-first; after sort we expect oldest first.
+	for i := 1; i < len(candles); i++ {
+		if !candles[i].Timestamp.After(candles[i-1].Timestamp) {
+			t.Errorf("candles[%d] (%v) is not after candles[%d] (%v): data must be ascending",
+				i, candles[i].Timestamp, i-1, candles[i-1].Timestamp)
+		}
+	}
+}
+
+func TestStooqFetchDaily_NormalizesSymbol(t *testing.T) {
+	srv := newStooqTestServer(stooqCsv, http.StatusOK)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range candles {
+		if c.Symbol != "HDFCBANK" {
+			t.Errorf("candle symbol = %q, want HDFCBANK (suffix must be stripped)", c.Symbol)
+		}
+	}
+}
+
+func TestStooqFetchDaily_ParsesCandleFields(t *testing.T) {
+	srv := newStooqTestServer(stooqCsv, http.StatusOK)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// After ascending sort, index 0 = 2024-01-02 (oldest row in fixture).
+	c := candles[0]
+	if c.Open != 785.00 {
+		t.Errorf("Open = %.2f, want 785.00", c.Open)
+	}
+	if c.High != 792.50 {
+		t.Errorf("High = %.2f, want 792.50", c.High)
+	}
+	if c.Volume != 12345678 {
+		t.Errorf("Volume = %d, want 12345678", c.Volume)
+	}
+}
+
+func TestStooqFetchDaily_HTTPErrorReturnsError(t *testing.T) {
+	srv := newStooqTestServer(`not found`, http.StatusNotFound)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	_, err := f.FetchDaily("UNKNOWN.NS", "2y")
+	if err == nil {
+		t.Error("expected error for HTTP 404, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error should mention 404, got: %v", err)
+	}
+}
+
+func TestStooqFetchDaily_InvalidPeriodReturnsError(t *testing.T) {
+	f := fetcher.NewStooqFetcher()
+	_, err := f.FetchDaily("HDFCBANK.NS", "bad")
+	if err == nil {
+		t.Error("expected error for invalid period, got nil")
+	}
+}

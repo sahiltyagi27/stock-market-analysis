@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// --- Fetch + load + build scanner inputs ---
-	yf := fetcher.NewYahooFetcher()
+	yf := fetcher.NewStooqFetcher()
 	var inputs []scanner.Input
 	fetchFailed := 0
 
