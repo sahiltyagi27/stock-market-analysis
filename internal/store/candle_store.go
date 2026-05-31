@@ -1,3 +1,5 @@
+// Package store handles persistence of Candle records in PostgreSQL.
+// It performs schema migration on startup and exposes bulk-upsert and query operations.
 package store
 
 import (
