@@ -125,6 +125,7 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Trade:      *ta.Long,
 	}
 	sig.Score = score(sig, avgVol, lastVol)
+	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
 
 	return sig, nil
 }

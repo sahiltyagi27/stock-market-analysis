@@ -16,14 +16,15 @@ const (
 
 // StockSignal is the full output for a single symbol after the scan pipeline.
 type StockSignal struct {
-	Symbol     string            `json:"symbol"`
-	Price      float64           `json:"price"`
-	Trend      Trend             `json:"trend"`
-	EMA        analysis.EMAResult `json:"ema"`
-	Support    analysis.Zone     `json:"support"`
-	Resistance analysis.Zone     `json:"resistance"`
+	Symbol     string              `json:"symbol"`
+	Price      float64             `json:"price"`
+	Trend      Trend               `json:"trend"`
+	EMA        analysis.EMAResult  `json:"ema"`
+	Support    analysis.Zone       `json:"support"`
+	Resistance analysis.Zone       `json:"resistance"`
 	Trade      analysis.TradeSetup `json:"trade"` // long setup
-	Score      float64           `json:"score"`
+	Score      float64             `json:"score"`
+	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
 // Input is one stock's data fed into the scanner.

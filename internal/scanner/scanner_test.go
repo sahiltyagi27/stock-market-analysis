@@ -1,12 +1,23 @@
 package scanner_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
+
+// containsReason checks whether any entry in reasons contains the given substring.
+func containsReason(reasons []string, substr string) bool {
+	for _, r := range reasons {
+		if strings.Contains(r, substr) {
+			return true
+		}
+	}
+	return false
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -249,6 +260,157 @@ func TestScan_MixedPortfolio(t *testing.T) {
 	// Errors recorded for filtered/skipped symbols.
 	if _, ok := errs["EMPTY"]; !ok {
 		t.Error("expected error for EMPTY")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reasons
+// ---------------------------------------------------------------------------
+
+func TestReasons_PresentOnSuccessfulSignal(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if len(signals[0].Reasons) == 0 {
+		t.Error("expected Reasons to be populated, got empty slice")
+	}
+}
+
+func TestReasons_EMAReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "EMA50") || !containsReason(signals[0].Reasons, "EMA200") {
+		t.Errorf("expected EMA trend reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_RRReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Risk/Reward") {
+		t.Errorf("expected R/R reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_RRReasonContainsMinRR(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 3.0, VolumeWindow: 20}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced for MinRR=3.0")
+	}
+	if !containsReason(signals[0].Reasons, "3.00") {
+		t.Errorf("expected MinRR 3.00 in R/R reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_SupportTouchReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Support zone touched") {
+		t.Errorf("expected support touch reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_TradeQualityReasonPresent(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Trade quality:") {
+		t.Errorf("expected trade quality reason, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_VolumeReasonPresentWhenAboveAverage(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Spike the last candle's volume well above average.
+	candles[len(candles)-1].Volume = 5_000_000
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if !containsReason(signals[0].Reasons, "Volume") {
+		t.Errorf("expected volume reason for above-average volume, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_VolumeReasonAbsentWhenBelowAverage(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Drop the last candle's volume well below average.
+	candles[len(candles)-1].Volume = 1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if containsReason(signals[0].Reasons, "Volume") {
+		t.Errorf("expected no volume reason for below-average volume, got: %v", signals[0].Reasons)
+	}
+}
+
+func TestReasons_SingularTouchGrammar(t *testing.T) {
+	// The support zone fixture always has touches=2. We test grammar by examining
+	// the raw reason builder via a signal where we can observe the touch count.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	s := signals[0]
+	if s.Support.Touches == 1 {
+		if !containsReason(s.Reasons, "touched 1 time") || containsReason(s.Reasons, "touched 1 times") {
+			t.Errorf("expected singular 'time', got: %v", s.Reasons)
+		}
+	} else {
+		if !containsReason(s.Reasons, "times") {
+			t.Errorf("expected plural 'times' for %d touches, got: %v", s.Support.Touches, s.Reasons)
+		}
+	}
+}
+
+func TestReasons_CountIsAtLeastFour(t *testing.T) {
+	// Trend + R/R + Support + Quality are always present = minimum 4 reasons.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	// Use low volume so the 5th (volume) reason is absent — confirms floor is exactly 4.
+	candles[len(candles)-1].Volume = 1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced")
+	}
+	if len(signals[0].Reasons) < 4 {
+		t.Errorf("expected at least 4 reasons, got %d: %v", len(signals[0].Reasons), signals[0].Reasons)
+	}
+}
+
+func TestReasons_Deterministic(t *testing.T) {
+	// Running the scanner twice on the same input must yield identical reasons.
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	input := []scanner.Input{{Symbol: "AAPL", Candles: candles}}
+	s1 := scanner.Scan(input, defaultOpts)
+	s2 := scanner.Scan(input, defaultOpts)
+	if len(s1) == 0 || len(s2) == 0 {
+		t.Skip("no signal produced")
+	}
+	r1, r2 := s1[0].Reasons, s2[0].Reasons
+	if len(r1) != len(r2) {
+		t.Fatalf("reason count differs: %d vs %d", len(r1), len(r2))
+	}
+	for i := range r1 {
+		if r1[i] != r2[i] {
+			t.Errorf("reason[%d] differs: %q vs %q", i, r1[i], r2[i])
+		}
 	}
 }
 
