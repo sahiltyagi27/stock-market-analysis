@@ -1,4 +1,4 @@
-# NSE watchlist — one Yahoo Finance ticker per line
+# NSE watchlist — one market-data ticker per line
 # Lines starting with # are ignored
 
 HDFCBANK.NS

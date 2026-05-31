@@ -1,9 +1,13 @@
 package fetcher
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -13,7 +17,8 @@ import (
 )
 
 // StooqFetcher downloads historical daily OHLCV data from stooq.com.
-// No authentication is required. Supports NSE (.ns), BSE (.bo), and US symbols.
+// Stooq currently requires an API key for CSV downloads. Supports NSE (.ns),
+// BSE (.bo), and US symbols.
 //
 // Symbol mapping: "HDFCBANK.NS" is queried as "hdfcbank.ns" (Stooq uses lowercase),
 // but stored as "HDFCBANK" (exchange suffix stripped via NormalizeSymbol).
@@ -22,13 +27,17 @@ import (
 type StooqFetcher struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	APIKey     string
 }
+
+var ErrStooqAPIKeyRequired = errors.New("stooq API key required")
 
 // NewStooqFetcher returns a StooqFetcher with production defaults.
 func NewStooqFetcher() *StooqFetcher {
 	return &StooqFetcher{
 		BaseURL:    "https://stooq.com",
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		APIKey:     os.Getenv("STOOQ_API_KEY"),
 	}
 }
 
@@ -48,13 +57,7 @@ func (f *StooqFetcher) FetchDaily(symbol, period string) ([]models.Candle, error
 	// Stooq requires lowercase symbols (e.g. "hdfcbank.ns").
 	stooqSym := strings.ToLower(strings.TrimSpace(symbol))
 
-	dlURL := fmt.Sprintf(
-		"%s/q/d/l/?s=%s&d1=%s&d2=%s&i=d",
-		f.BaseURL,
-		stooqSym,
-		start.Format("20060102"),
-		now.Format("20060102"),
-	)
+	dlURL := f.downloadURL(stooqSym, start, now)
 
 	req, err := http.NewRequest(http.MethodGet, dlURL, nil)
 	if err != nil {
@@ -73,7 +76,15 @@ func (f *StooqFetcher) FetchDaily(symbol, period string) ([]models.Candle, error
 		return nil, fmt.Errorf("fetch %s: HTTP %d: %s", symbol, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	candles, err := loader.Parse(resp.Body, NormalizeSymbol(symbol))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read %s response: %w", symbol, err)
+	}
+	if isStooqAPIKeyResponse(body) {
+		return nil, fmt.Errorf("%w: set STOOQ_API_KEY with your Stooq key before fetching %s", ErrStooqAPIKeyRequired, symbol)
+	}
+
+	candles, err := loader.Parse(bytes.NewReader(body), NormalizeSymbol(symbol))
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", symbol, err)
 	}
@@ -84,4 +95,22 @@ func (f *StooqFetcher) FetchDaily(symbol, period string) ([]models.Candle, error
 	})
 
 	return candles, nil
+}
+
+func (f *StooqFetcher) downloadURL(symbol string, start, end time.Time) string {
+	values := url.Values{}
+	values.Set("s", symbol)
+	values.Set("d1", start.Format("20060102"))
+	values.Set("d2", end.Format("20060102"))
+	values.Set("i", "d")
+	if f.APIKey != "" {
+		values.Set("apikey", f.APIKey)
+	}
+	return fmt.Sprintf("%s/q/d/l/?%s", strings.TrimRight(f.BaseURL, "/"), values.Encode())
+}
+
+func isStooqAPIKeyResponse(body []byte) bool {
+	text := strings.ToLower(strings.TrimSpace(string(body)))
+	return strings.Contains(text, "get your apikey") ||
+		strings.Contains(text, "apikey=")
 }

@@ -47,6 +47,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
 	// --- Load symbol watchlist ---
 	symbols, err := config.LoadSymbols(*symbolsFile)
 	if err != nil {
@@ -57,10 +62,6 @@ func main() {
 	// --- DB setup (skipped on dry-run) ---
 	var candleStore *store.CandleStore
 	if !*dryRun {
-		cfg, err := config.Load()
-		if err != nil {
-			log.Fatalf("config: %v", err)
-		}
 		db, err := sql.Open("postgres", cfg.DSN())
 		if err != nil {
 			log.Fatalf("db open: %v", err)
@@ -83,6 +84,9 @@ func main() {
 
 	// --- Fetch + load + build scanner inputs ---
 	yf := fetcher.NewStooqFetcher()
+	if yf.APIKey == "" {
+		log.Fatal("STOOQ_API_KEY is required for scans: get a Stooq CSV API key and set it in your shell or .env")
+	}
 	var inputs []scanner.Input
 	fetchFailed := 0
 

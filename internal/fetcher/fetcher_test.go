@@ -1,6 +1,7 @@
 package fetcher_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -295,6 +296,51 @@ func TestStooqFetchDaily_HTTPErrorReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "404") {
 		t.Errorf("error should mention 404, got: %v", err)
+	}
+}
+
+func TestStooqFetchDaily_APIKeyRequiredReturnsHelpfulError(t *testing.T) {
+	body := `Get your apikey:
+
+1. Open https://stooq.com/q/d/?s=hdfcbank.ns&get_apikey
+2. Enter the captcha code.
+3. Copy the CSV download link at the bottom of the page - it will contain the <apikey> variable.
+`
+	srv := newStooqTestServer(body, http.StatusOK)
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	_, err := f.FetchDaily("HDFCBANK.NS", "2y")
+	if !errors.Is(err, fetcher.ErrStooqAPIKeyRequired) {
+		t.Fatalf("expected ErrStooqAPIKeyRequired, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "STOOQ_API_KEY") {
+		t.Errorf("error should mention STOOQ_API_KEY, got: %v", err)
+	}
+}
+
+func TestNewStooqFetcher_ReadsAPIKeyFromEnv(t *testing.T) {
+	t.Setenv("STOOQ_API_KEY", "test-key")
+
+	f := fetcher.NewStooqFetcher()
+	if f.APIKey != "test-key" {
+		t.Errorf("APIKey = %q, want test-key", f.APIKey)
+	}
+}
+
+func TestStooqFetchDaily_SendsAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("apikey"); got != "test-key" {
+			t.Errorf("apikey query = %q, want test-key", got)
+		}
+		w.Header().Set("Content-Type", "text/csv")
+		fmt.Fprint(w, stooqCsv)
+	}))
+	defer srv.Close()
+
+	f := &fetcher.StooqFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient, APIKey: "test-key"}
+	if _, err := f.FetchDaily("HDFCBANK.NS", "2y"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

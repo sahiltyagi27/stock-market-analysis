@@ -158,8 +158,13 @@ go run ./cmd/server
 Fetch live data for your watchlist, load it into the database, and print ranked candidates:
 
 ```bash
+export STOOQ_API_KEY=your_stooq_api_key
 go run ./cmd/scan --symbols config/symbols.txt --top 5
 ```
+
+Stooq CSV downloads currently require an API key. To get one, open the Stooq
+CSV download page for a symbol with `get_apikey`, complete the captcha, and
+save the key as `STOOQ_API_KEY` in your shell or `.env` before running scans.
 
 Available flags:
 
@@ -211,6 +216,7 @@ Example output:
 | `DB_PASSWORD` | _(required)_ | Database password |
 | `DB_NAME` | `stocks` | Database name |
 | `SERVER_PORT` | `8080` | HTTP listen port |
+| `STOOQ_API_KEY` | _(required for scans)_ | Stooq CSV download API key |
 
 ---
 
