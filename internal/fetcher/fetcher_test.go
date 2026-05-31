@@ -118,7 +118,7 @@ func TestFetchDaily_ParsesCandlesCorrectly(t *testing.T) {
 	srv := newTestServer(yahooCsv, http.StatusOK)
 	defer srv.Close()
 
-	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient, Crumb: "testcrumb"}
 	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -132,7 +132,7 @@ func TestFetchDaily_NormalizesSymbol(t *testing.T) {
 	srv := newTestServer(yahooCsv, http.StatusOK)
 	defer srv.Close()
 
-	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient, Crumb: "testcrumb"}
 	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -148,7 +148,7 @@ func TestFetchDaily_ParsesCandleFields(t *testing.T) {
 	srv := newTestServer(yahooCsv, http.StatusOK)
 	defer srv.Close()
 
-	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient, Crumb: "testcrumb"}
 	candles, err := f.FetchDaily("HDFCBANK.NS", "2y")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -175,7 +175,7 @@ func TestFetchDaily_HTTPErrorReturnsError(t *testing.T) {
 	srv := newTestServer(`{"error":"Not Found"}`, http.StatusNotFound)
 	defer srv.Close()
 
-	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient}
+	f := &fetcher.YahooFetcher{BaseURL: srv.URL, HTTPClient: http.DefaultClient, Crumb: "testcrumb"}
 	_, err := f.FetchDaily("UNKNOWN.NS", "2y")
 	if err == nil {
 		t.Error("expected error for HTTP 404, got nil")
