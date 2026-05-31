@@ -79,7 +79,7 @@ func Analyze(price float64, support, resistance Zone, opts AnalyzerOptions) (Tra
 	if price <= 0 {
 		return TradeAnalysis{}, ErrInvalidPrice
 	}
-	if support.Mid >= resistance.Mid {
+	if support.Mid >= resistance.Mid || support.High >= resistance.Low {
 		return TradeAnalysis{}, ErrZonesOverlap
 	}
 	if price <= support.Low || price >= resistance.High {

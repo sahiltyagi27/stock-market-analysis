@@ -207,12 +207,22 @@ func TestAnalyze_Error_NegativePrice(t *testing.T) {
 	}
 }
 
-func TestAnalyze_Error_ZonesOverlap(t *testing.T) {
+func TestAnalyze_Error_ZonesOverlap_MidsOutOfOrder(t *testing.T) {
 	sup := analysis.Zone{Low: 100, High: 120, Mid: 110, Touches: 2}
-	res := analysis.Zone{Low: 90, High: 110, Mid: 100, Touches: 2} // mid ≤ support.mid
+	res := analysis.Zone{Low: 90, High: 110, Mid: 100, Touches: 2} // resistance.Mid < support.Mid
 	_, err := analysis.Analyze(105, sup, res, analyzerOpts)
 	if !errors.Is(err, analysis.ErrZonesOverlap) {
 		t.Errorf("expected ErrZonesOverlap, got %v", err)
+	}
+}
+
+func TestAnalyze_Error_ZonesOverlap_PriceRangesIntersect(t *testing.T) {
+	// Mids appear ordered but support.High >= resistance.Low — zones physically overlap.
+	sup := analysis.Zone{Low: 95, High: 115, Mid: 105, Touches: 2}
+	res := analysis.Zone{Low: 110, High: 130, Mid: 120, Touches: 2}
+	_, err := analysis.Analyze(112, sup, res, analyzerOpts)
+	if !errors.Is(err, analysis.ErrZonesOverlap) {
+		t.Errorf("expected ErrZonesOverlap for intersecting zones, got %v", err)
 	}
 }
 
