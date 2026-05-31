@@ -184,15 +184,25 @@ func volumeStats(candles []models.Candle, window int) (avg, last float64) {
 		return 0, 0
 	}
 	last = float64(candles[len(candles)-1].Volume)
-	start := len(candles) - window
+
+	// Exclude the latest candle from the average — it is the candle being
+	// evaluated, so including it would understate spikes and overstate dips.
+	history := candles[:len(candles)-1]
+	if len(history) == 0 {
+		// Only one candle: no prior history to average over.
+		return 0, last
+	}
+
+	start := len(history) - window
 	if start < 0 {
 		start = 0
 	}
+	window_ := history[start:]
 	var sum float64
-	for _, c := range candles[start:] {
+	for _, c := range window_ {
 		sum += float64(c.Volume)
 	}
-	avg = sum / float64(len(candles)-start)
+	avg = sum / float64(len(window_))
 	return avg, last
 }
 
