@@ -129,8 +129,20 @@ func makeBearishCandles(symbol string, basePrice float64) []models.Candle {
 }
 
 var defaultOpts = scanner.Options{
-	MinRR:        2.0,
-	VolumeWindow: 20,
+	MinRR:                  2.0,
+	VolumeWindow:           20,
+	MaxEMA10ExtensionPct:   -1,
+	MaxEMA50ExtensionPct:   -1,
+	MaxSupportExtensionPct: -1,
+	MaxMove10DPct:          -1,
+}
+
+func withoutExtensionGuards(opts scanner.Options) scanner.Options {
+	opts.MaxEMA10ExtensionPct = -1
+	opts.MaxEMA50ExtensionPct = -1
+	opts.MaxSupportExtensionPct = -1
+	opts.MaxMove10DPct = -1
+	return opts
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +304,7 @@ func TestScan_EmptyCandlesSkipped(t *testing.T) {
 func TestScan_RRFilterApplied(t *testing.T) {
 	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
 	// Set MinRR so high that no signal can pass.
-	opts := scanner.Options{MinRR: 100.0, VolumeWindow: 20}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 100.0, VolumeWindow: 20})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
 	if len(signals) != 0 {
 		t.Errorf("expected R/R filter to reject signal, got R/R=%.2f", signals[0].Trade.RiskReward)
@@ -377,7 +389,7 @@ func TestReasons_RRReasonPresent(t *testing.T) {
 
 func TestReasons_RRReasonContainsMinRR(t *testing.T) {
 	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
-	opts := scanner.Options{MinRR: 3.0, VolumeWindow: 20}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 3.0, VolumeWindow: 20})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Skip("no signal produced for MinRR=3.0")
@@ -501,7 +513,7 @@ func TestScan_EMAMarginFilter_FiltersWhenTooClose(t *testing.T) {
 	// makeTrendingCandles produces price ≈ 2×basePrice, EMA200 ≈ 1.5×basePrice
 	// → gap ≈ 33%. A 50% margin requirement should reject the signal.
 	candles := makeTrendingCandles("TEST", 100, 1_000_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 50.0}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 50.0})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
 	if len(signals) != 0 {
 		t.Errorf("expected 0 signals with 50%% EMA margin (gap ≈33%%), got %d", len(signals))
@@ -511,7 +523,7 @@ func TestScan_EMAMarginFilter_FiltersWhenTooClose(t *testing.T) {
 func TestScan_EMAMarginFilter_PassesWhenAboveMargin(t *testing.T) {
 	// Same candles: gap ≈ 33% >> 1% → signal should be produced.
 	candles := makeTrendingCandles("TEST", 100, 1_000_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 1.0}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 1.0})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Error("expected signal with 1%% EMA margin and ~33%% gap above EMA200, got none")
@@ -521,7 +533,7 @@ func TestScan_EMAMarginFilter_PassesWhenAboveMargin(t *testing.T) {
 func TestScan_EMAMarginFilter_DisabledWhenNegative(t *testing.T) {
 	// EMAMarginPct < 0 disables the filter; the default-opt gap check is bypassed.
 	candles := makeTrendingCandles("TEST", 100, 1_000_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: -1.0}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: -1.0})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Error("expected signal with EMA margin disabled (EMAMarginPct=-1), got none")
@@ -536,7 +548,7 @@ func TestScan_MinAvgVolumeFilter_FiltersIlliquid(t *testing.T) {
 	// makeTrendingCandles with baseVolume=50_000 → rolling avg ≈ 50k.
 	// MinAvgVolume=200_000 must reject it.
 	candles := makeTrendingCandles("ILLIQ", 100, 50_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "ILLIQ", Candles: candles}}, opts)
 	if len(signals) != 0 {
 		t.Errorf("expected illiquid stock (avg vol ~50k) to be filtered at threshold 200k, got signal")
@@ -546,7 +558,7 @@ func TestScan_MinAvgVolumeFilter_FiltersIlliquid(t *testing.T) {
 func TestScan_MinAvgVolumeFilter_PassesLiquidStock(t *testing.T) {
 	// avg vol ≈ 1_000_000 >> 200_000 minimum.
 	candles := makeTrendingCandles("LIQUID", 100, 1_000_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "LIQUID", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Error("expected liquid stock (avg vol 1M) to pass at threshold 200k, got no signal")
@@ -557,10 +569,51 @@ func TestScan_MinAvgVolumeFilter_DisabledWhenZero(t *testing.T) {
 	// MinAvgVolume=0 disables the filter entirely; low-volume stock should
 	// pass all other filters and produce a signal.
 	candles := makeTrendingCandles("LOW", 100, 50_000)
-	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 0}
+	opts := withoutExtensionGuards(scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 0})
 	signals := scanner.Scan([]scanner.Input{{Symbol: "LOW", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Error("expected MinAvgVolume=0 to disable the filter, got no signals")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Late-rally extension filter
+// ---------------------------------------------------------------------------
+
+func TestScan_ExtensionFilter_FiltersWhenTooFarAboveSupport(t *testing.T) {
+	candles := makeTrendingCandles("EXTENDED", 100, 1_000_000)
+	opts := scanner.Options{
+		MinRR:                  2.0,
+		VolumeWindow:           20,
+		MaxEMA10ExtensionPct:   -1,
+		MaxEMA50ExtensionPct:   -1,
+		MaxSupportExtensionPct: 5.0,
+		MaxMove10DPct:          -1,
+	}
+
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "EXTENDED", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatalf("expected extension filter to reject setup, got %d signals", len(signals))
+	}
+	if err := errs["EXTENDED"]; err == nil || !strings.Contains(err.Error(), "setup extended after recent rally") {
+		t.Fatalf("expected extension rejection reason, got %v", err)
+	}
+}
+
+func TestScan_ExtensionFilter_DisabledWhenNegative(t *testing.T) {
+	candles := makeTrendingCandles("EXTENDED", 100, 1_000_000)
+	opts := scanner.Options{
+		MinRR:                  2.0,
+		VolumeWindow:           20,
+		MaxEMA10ExtensionPct:   -1,
+		MaxEMA50ExtensionPct:   -1,
+		MaxSupportExtensionPct: -1,
+		MaxMove10DPct:          -1,
+	}
+
+	signals := scanner.Scan([]scanner.Input{{Symbol: "EXTENDED", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Fatal("expected signal when extension guards are disabled, got none")
 	}
 }
 

@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -28,6 +29,24 @@ type Options struct {
 	// Default: 0 (disabled). A typical useful value is 200_000.
 	MinAvgVolume int64
 
+	// MaxEMA10ExtensionPct rejects setups that are too far above EMA10.
+	// Default: 8.0. Set to < 0 to disable.
+	MaxEMA10ExtensionPct float64
+
+	// MaxEMA50ExtensionPct rejects setups that are too far above EMA50.
+	// Default: 15.0. Set to < 0 to disable.
+	MaxEMA50ExtensionPct float64
+
+	// MaxSupportExtensionPct rejects setups that are too far above the selected
+	// support zone high.
+	// Default: 5.0. Set to < 0 to disable.
+	MaxSupportExtensionPct float64
+
+	// MaxMove10DPct rejects setups that have already moved too much over the
+	// last 10 candles.
+	// Default: 12.0. Set to < 0 to disable.
+	MaxMove10DPct float64
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -49,6 +68,18 @@ func (o *Options) withDefaults() Options {
 	}
 	if out.VolumeWindow <= 0 {
 		out.VolumeWindow = 20
+	}
+	if out.MaxEMA10ExtensionPct == 0 {
+		out.MaxEMA10ExtensionPct = 8.0
+	}
+	if out.MaxEMA50ExtensionPct == 0 {
+		out.MaxEMA50ExtensionPct = 15.0
+	}
+	if out.MaxSupportExtensionPct == 0 {
+		out.MaxSupportExtensionPct = 5.0
+	}
+	if out.MaxMove10DPct == 0 {
+		out.MaxMove10DPct = 12.0
 	}
 	// Require resistance zones to have been tested at least twice historically.
 	// A 1-touch zone is just a single-session spike and is not a reliable target.
@@ -175,6 +206,11 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		return nil, fmt.Errorf("R/R %.2f below minimum %.2f", ta.Long.RiskReward, opts.MinRR)
 	}
 
+	ext := extensionDiagnostics(price, closes, emas, support)
+	if err := validateExtension(ext, opts); err != nil {
+		return nil, err
+	}
+
 	// --- Volume ---
 	avgVol, lastVol := volumeStats(in.Candles, opts.VolumeWindow)
 
@@ -194,12 +230,32 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Resistance: resistance,
 		Trade:      *ta.Long,
 	}
-	sig.Extension = extensionDiagnostics(price, closes, emas, support)
+	sig.Extension = ext
 	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol)
 	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
 
 	return sig, nil
+}
+
+func validateExtension(ext Extension, opts Options) error {
+	var reasons []string
+	if opts.MaxEMA10ExtensionPct > 0 && ext.FromEMA10Pct > opts.MaxEMA10ExtensionPct {
+		reasons = append(reasons, fmt.Sprintf("EMA10 %.1f%% > max %.1f%%", ext.FromEMA10Pct, opts.MaxEMA10ExtensionPct))
+	}
+	if opts.MaxEMA50ExtensionPct > 0 && ext.FromEMA50Pct > opts.MaxEMA50ExtensionPct {
+		reasons = append(reasons, fmt.Sprintf("EMA50 %.1f%% > max %.1f%%", ext.FromEMA50Pct, opts.MaxEMA50ExtensionPct))
+	}
+	if opts.MaxSupportExtensionPct > 0 && ext.FromSupportHighPct > opts.MaxSupportExtensionPct {
+		reasons = append(reasons, fmt.Sprintf("support %.1f%% > max %.1f%%", ext.FromSupportHighPct, opts.MaxSupportExtensionPct))
+	}
+	if opts.MaxMove10DPct > 0 && ext.HasMove10D && ext.Move10DPct > opts.MaxMove10DPct {
+		reasons = append(reasons, fmt.Sprintf("10D move %.1f%% > max %.1f%%", ext.Move10DPct, opts.MaxMove10DPct))
+	}
+	if len(reasons) > 0 {
+		return fmt.Errorf("setup extended after recent rally: %s", strings.Join(reasons, "; "))
+	}
+	return nil
 }
 
 // nearestZones returns the highest support zone below price and the lowest
