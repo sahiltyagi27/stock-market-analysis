@@ -246,7 +246,7 @@ go run ./cmd/kite-sync --exchange BSE --symbols config/symbols.txt --period 2y
 #### Scan Synced DB Candles
 
 ```bash
-go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --show-filtered
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10
 ```
 
 #### Scan Manual CSV Files
@@ -331,7 +331,7 @@ Available flags:
 | `--csv` | _none_ | Scan one local OHLCV CSV |
 | `--csv-dir` | _none_ | Scan all CSV files in a folder |
 | `--symbol` | CSV filename | Stock symbol for `--csv` |
-| `--show-filtered` | `false` | Print EMA/trend diagnostics for filtered symbols |
+| `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:
 ```

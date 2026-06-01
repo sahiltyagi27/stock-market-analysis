@@ -66,15 +66,9 @@ func main() {
 	opts := scanner.Options{MinRR: *minRR}
 	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
 
-	for path, err := range dataErrs {
-		log.Printf("  skip %s: %v", path, err)
-	}
-	for sym, err := range scanErrs {
-		log.Printf("  filter %s: %v", sym, err)
-	}
-
 	printSignals(signals, *topN)
 	if *showFiltered {
+		printDataErrors(dataErrs)
 		printDiagnostics(scanner.Diagnose(inputs, opts), scanErrs)
 	}
 
@@ -84,6 +78,23 @@ func main() {
 	fmt.Printf("Skipped:  %d (data errors: %d, no setup: %d)\n",
 		len(dataErrs)+len(scanErrs), len(dataErrs), len(scanErrs))
 	fmt.Printf("Signals:  %d\n", len(signals))
+}
+
+func printDataErrors(dataErrs map[string]error) {
+	if len(dataErrs) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("Data Errors")
+	keys := make([]string, 0, len(dataErrs))
+	for key := range dataErrs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Printf("   %s: %v\n", key, dataErrs[key])
+	}
 }
 
 type inputOptions struct {
@@ -190,7 +201,6 @@ func loadDBInputs(ctx context.Context, symbolsFile, period string) ([]scanner.In
 			dataErrs[symbol] = fmt.Errorf("no candles in DB")
 			continue
 		}
-		log.Printf("loaded %d candles for %s from DB", len(candles), symbol)
 		inputs = append(inputs, scanner.Input{Symbol: symbol, Candles: candles})
 	}
 	return inputs, dataErrs
@@ -201,7 +211,6 @@ func loadOneCSV(path, symbol string) (scanner.Input, error) {
 	if err != nil {
 		return scanner.Input{}, err
 	}
-	log.Printf("loaded %d candles for %s from %s", len(candles), symbol, path)
 	return scanner.Input{Symbol: symbol, Candles: candles}, nil
 }
 
