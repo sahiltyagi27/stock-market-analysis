@@ -270,6 +270,29 @@ func main() {
 
 	state := newScanState()
 
+	// Restore today's scan state from DB so streak counts and [NEW] detection
+	// survive a process restart. State from a previous day is intentionally
+	// ignored — streaks reset cleanly at the start of each session.
+	if resultStore != nil {
+		if snap, err := resultStore.LatestTodayScanState(ctx, ist); err != nil {
+			log.Printf("warn: could not restore scan state from DB: %v", err)
+		} else if snap != nil {
+			state.prevSymbols = snap.PrevSymbols
+			state.streaks     = snap.Streaks
+			state.initialized = true
+			maxStreak := 0
+			for _, n := range snap.Streaks {
+				if n > maxStreak {
+					maxStreak = n
+				}
+			}
+			log.Printf("restored scan state from DB — %d symbols, max streak ×%d",
+				len(snap.PrevSymbols), maxStreak)
+		} else {
+			log.Printf("no scan history for today — starting fresh")
+		}
+	}
+
 	// Run immediately so the first results appear right after connect,
 	// not after waiting a full interval.
 	now := time.Now()

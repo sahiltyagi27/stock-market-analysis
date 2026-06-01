@@ -117,6 +117,76 @@ func timeOrNil(t *time.Time) interface{} {
 	return *t
 }
 
+// ScanStateSnapshot holds the in-memory scan state reconstructed from the
+// most recent scan run today. Used to restore a live-scan process after a
+// restart so streak counts and new-signal detection continue seamlessly.
+type ScanStateSnapshot struct {
+	// PrevSymbols is the set of symbols that appeared in the last scan run.
+	PrevSymbols map[string]bool
+	// Streaks maps each symbol to its consecutive-scan count at that run.
+	Streaks map[string]int
+}
+
+// LatestTodayScanState returns a snapshot from the most recent scan run
+// on today's IST calendar date. Returns (nil, nil) when no scan has been
+// recorded today — the caller should start fresh.
+//
+// "Today" is evaluated in the provided IST location so that a midnight
+// restart does not bleed yesterday's streaks into the new session.
+func (s *ScanResultStore) LatestTodayScanState(ctx context.Context, ist *time.Location) (*ScanStateSnapshot, error) {
+	now := time.Now().In(ist)
+	y, m, d := now.Date()
+	dayStart := time.Date(y, m, d, 0, 0, 0, 0, ist)
+	dayEnd   := dayStart.Add(24 * time.Hour)
+
+	// Find the most recent scanned_at within today's IST window.
+	var latestAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT MAX(scanned_at)
+		FROM scan_results
+		WHERE scanned_at >= $1 AND scanned_at < $2
+	`, dayStart, dayEnd).Scan(&latestAt)
+	if err != nil {
+		return nil, fmt.Errorf("latest today scan: %w", err)
+	}
+	if latestAt.IsZero() {
+		return nil, nil // no scan recorded today
+	}
+
+	// Load all rows from that specific scan run.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT symbol, streak
+		FROM scan_results
+		WHERE scanned_at = $1
+		ORDER BY score DESC
+	`, latestAt)
+	if err != nil {
+		return nil, fmt.Errorf("load scan state rows: %w", err)
+	}
+	defer rows.Close()
+
+	snap := &ScanStateSnapshot{
+		PrevSymbols: make(map[string]bool),
+		Streaks:     make(map[string]int),
+	}
+	for rows.Next() {
+		var sym string
+		var streak int
+		if err := rows.Scan(&sym, &streak); err != nil {
+			return nil, err
+		}
+		snap.PrevSymbols[sym] = true
+		snap.Streaks[sym] = streak
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(snap.PrevSymbols) == 0 {
+		return nil, nil // run existed but had no signals
+	}
+	return snap, nil
+}
+
 // Save bulk-inserts rows for one complete scan run inside a single transaction.
 func (s *ScanResultStore) Save(ctx context.Context, rows []ScanResultRow) error {
 	if len(rows) == 0 {
