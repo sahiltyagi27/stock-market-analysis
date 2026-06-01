@@ -52,6 +52,16 @@ type Options struct {
 	// Default: 3.0. Set to < 0 to disable.
 	MaxBreakoutDistancePct float64
 
+	// ATRPeriod is the lookback for Average True Range used to size the stop
+	// loss. When > 0 the SL is placed ATRMultiplier × ATR below the support
+	// zone, adapting to each stock's actual volatility rather than a fixed %.
+	// Default: 14. Set to a negative value to use the fixed SLBufferPct.
+	ATRPeriod int
+
+	// ATRMultiplier scales the ATR for SL placement. Default: 1.5.
+	// SL = support.Low − ATRMultiplier × ATR14.
+	ATRMultiplier float64
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -94,6 +104,14 @@ func (o *Options) withDefaults() Options {
 	// Set ZoneOpts.MinResistanceTouches = 1 to disable.
 	if out.ZoneOpts.MinResistanceTouches <= 0 {
 		out.ZoneOpts.MinResistanceTouches = 2
+	}
+	// ATR-based SL: default period 14, multiplier 1.5.
+	// Negative ATRPeriod disables ATR and falls back to SLBufferPct.
+	if out.ATRPeriod == 0 {
+		out.ATRPeriod = 14
+	}
+	if out.ATRMultiplier <= 0 {
+		out.ATRMultiplier = 1.5
 	}
 	return out
 }
@@ -229,7 +247,14 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	}
 
 	// --- Trade setup ---
-	ta, err := analysis.Analyze(price, support, resistance, opts.AnalyzerOpts)
+	// Compute ATR and inject into analyzer options so the SL adapts to this
+	// stock's volatility. Negative ATRPeriod disables ATR (falls back to fixed buffer).
+	analyzerOpts := opts.AnalyzerOpts
+	if opts.ATRPeriod > 0 {
+		analyzerOpts.ATR = analysis.ATR(in.Candles, opts.ATRPeriod)
+		analyzerOpts.ATRMultiplier = opts.ATRMultiplier
+	}
+	ta, err := analysis.Analyze(price, support, resistance, analyzerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("trade analyzer: %w", err)
 	}
