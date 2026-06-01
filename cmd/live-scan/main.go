@@ -50,6 +50,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -503,8 +504,8 @@ func printScan(
 	niftyPct float64,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
-	banner := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
-	fmt.Printf("\n%s\n", banner)
+	bannerText := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
+	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(bannerText))
 
 	top := topN
 	if top > len(signals) {
@@ -514,70 +515,115 @@ func printScan(
 		fmt.Println("  No bullish setups found.")
 	}
 
+	pipe := display.Dim.Sprint("├")
+	last := display.Dim.Sprint("└")
+
 	for i, sig := range signals[:top] {
-		// Build a tag that tells the user whether this signal is brand new or
-		// how many consecutive scans it has persisted through.
+		// Persistence tag — pad before colorizing so column width is stable.
 		tag := ""
 		switch {
 		case newSymbols[sig.Symbol]:
-			tag = "  [NEW]"
+			tag = "  " + display.BoldGreen.Sprint("[NEW]")
 		case streaks[sig.Symbol] > 1:
-			tag = fmt.Sprintf("  ×%d", streaks[sig.Symbol])
+			tag = "  " + display.Cyan.Sprintf("×%d", streaks[sig.Symbol])
 		}
 
-		fmt.Printf("\n  %d. %-14s  ₹%-9.2f  Score: %.0f/100%s\n",
-			i+1, sig.Symbol, sig.Price, sig.Score, tag)
+		// Pad symbol and price before applying color so alignment is preserved.
+		sym   := display.BoldWhite.Sprint(fmt.Sprintf("%-14s", sig.Symbol))
+		price := fmt.Sprintf("₹%-9.2f", sig.Price)
+		score := display.TotalScore(sig.Score)
 
-		// Score breakdown.
-		fmt.Printf("     ├ Trend:   %.0f/40  R/R: %.0f/30  Support: %.0f/20",
-			sig.Breakdown.Trend, sig.Breakdown.RR, sig.Breakdown.Support)
+		fmt.Printf("\n  %s %s  %s  %s %s/100%s\n",
+			display.Dim.Sprintf("%d.", i+1),
+			sym, price,
+			display.Dim.Sprint("Score:"),
+			score, tag)
+
+		// Score breakdown — each component colored by how full it is.
+		volLabel := "actual"
+		if volFrac < 1.0 {
+			volLabel = "est."
+		}
+		fmt.Printf("     %s %s %s  %s %s  %s %s",
+			pipe,
+			display.Dim.Sprint("Trend:"),   display.Component(sig.Breakdown.Trend, 40),
+			display.Dim.Sprint("R/R:"),     display.Component(sig.Breakdown.RR, 30),
+			display.Dim.Sprint("Support:"), display.Component(sig.Breakdown.Support, 20))
 		if sig.Breakdown.AvgVolume > 0 {
-			volLabel := "actual"
-			if volFrac < 1.0 {
-				volLabel = "est."
-			}
-			fmt.Printf("  Volume: %.0f/10 (%s %.0f vs avg %.0f = %.2fx)\n",
-				sig.Breakdown.Volume,
-				volLabel,
-				sig.Breakdown.LastVolume,
-				sig.Breakdown.AvgVolume,
-				sig.Breakdown.VolumeRatio)
+			fmt.Printf("  %s %s (%s %.0f vs avg %.0f = %.2fx)\n",
+				display.Dim.Sprint("Volume:"),
+				display.Component(sig.Breakdown.Volume, 10),
+				display.Dim.Sprint(volLabel),
+				sig.Breakdown.LastVolume, sig.Breakdown.AvgVolume, sig.Breakdown.VolumeRatio)
 		} else {
-			fmt.Printf("  Volume: %.0f/10 (no prior volume avg)\n", sig.Breakdown.Volume)
+			fmt.Printf("  %s %s\n",
+				display.Dim.Sprint("Volume:"),
+				display.Component(sig.Breakdown.Volume, 10))
 		}
 
 		// Relative strength vs NIFTY 50.
 		if rsMap != nil {
 			if rs, ok := rsMap[sig.Symbol]; ok {
-				fmt.Printf("     ├ RS vs NIFTY: %+.2f%%  (NIFTY: %+.2f%%)\n", rs, niftyPct)
+				fmt.Printf("     %s %s %s  %s %s\n",
+					pipe,
+					display.Dim.Sprint("RS vs NIFTY:"),
+					display.Sign(rs, "%+.2f%%"),
+					display.Dim.Sprint("(NIFTY:"),
+					display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(")"))
 			}
 		}
 
-		fmt.Printf("     ├ Trend: %-8s  R/R: %.2f (%s)\n",
-			sig.Trend, sig.Trade.RiskReward, sig.Trade.Quality)
-		fmt.Printf("     ├ Entry: %-9.2f  SL: %-9.2f  Target: %.2f\n",
-			sig.Trade.Entry, sig.Trade.StopLoss, sig.Trade.Target)
-		fmt.Printf("     ├ Support:    %.2f–%.2f (%d touches)\n",
-			sig.Support.Low, sig.Support.High, sig.Support.Touches)
-		fmt.Printf("     ├ Resistance: %.2f–%.2f (%d touches)\n",
-			sig.Resistance.Low, sig.Resistance.High, sig.Resistance.Touches)
-		fmt.Println("     └ Reasons:")
+		// Trade direction + R/R quality.
+		trend  := fmt.Sprintf("%-8s", string(sig.Trend))
+		fmt.Printf("     %s %s %s  %s %s %s\n",
+			pipe,
+			display.Dim.Sprint("Trend:"), display.Trend(trend),
+			display.Dim.Sprint("R/R:"),
+			display.RR(sig.Trade.RiskReward),
+			display.Dim.Sprint("(")+display.Quality(string(sig.Trade.Quality))+display.Dim.Sprint(")"))
+
+		// Entry / SL / Target — SL red, target green.
+		fmt.Printf("     %s %s %-9.2f  %s %s  %s %s\n",
+			pipe,
+			display.Dim.Sprint("Entry:"), sig.Trade.Entry,
+			display.Dim.Sprint("SL:"),    display.Red.Sprintf("%-9.2f", sig.Trade.StopLoss),
+			display.Dim.Sprint("Target:"), display.Green.Sprintf("%.2f", sig.Trade.Target))
+
+		// Support / Resistance zones.
+		fmt.Printf("     %s %s %.2f–%.2f (%s)\n",
+			pipe,
+			display.Dim.Sprint("Support:   "),
+			sig.Support.Low, sig.Support.High,
+			display.Dim.Sprintf("%d touches", sig.Support.Touches))
+		fmt.Printf("     %s %s %.2f–%.2f (%s)\n",
+			pipe,
+			display.Dim.Sprint("Resistance:"),
+			sig.Resistance.Low, sig.Resistance.High,
+			display.Dim.Sprintf("%d touches", sig.Resistance.Touches))
+
+		// Reasons.
+		fmt.Printf("     %s %s\n", last, display.Dim.Sprint("Reasons:"))
 		for _, r := range sig.Reasons {
-			fmt.Printf("         • %s\n", r)
+			fmt.Printf("         %s %s\n", display.Cyan.Sprint("•"), display.Dim.Sprint(r))
 		}
 	}
 
-	fmt.Printf("\n  %s\n", strings.Repeat("─", 54))
-	fmt.Printf("  Scanned: %-4d  Signals: %-4d  No tick yet: %d\n",
-		total, len(signals), noTick)
+	sep := display.Dim.Sprint(strings.Repeat("─", 54))
+	fmt.Printf("\n  %s\n", sep)
+	fmt.Printf("  %s\n",
+		display.Dim.Sprintf("Scanned: %-4d  Signals: %-4d  No tick yet: %d",
+			total, len(signals), noTick))
 	if volFrac < 1.0 {
-		fmt.Printf("  * volume projected to full-day (%d%% of session elapsed)\n",
-			int(volFrac*100))
+		fmt.Printf("  %s\n",
+			display.Dim.Sprintf("* volume projected to full-day (%d%% of session elapsed)",
+				int(volFrac*100)))
 	}
 	if rsMap != nil {
-		fmt.Printf("  NIFTY 50: %+.2f%% from open\n", niftyPct)
+		fmt.Printf("  %s %s\n",
+			display.Dim.Sprint("NIFTY 50:"),
+			display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(" from open"))
 	}
-	fmt.Printf("%s\n", strings.Repeat("━", len(banner)))
+	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(bannerText))))
 }
 
 // ── Market hours helpers ───────────────────────────────────────────────────────

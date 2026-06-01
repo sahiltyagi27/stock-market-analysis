@@ -38,6 +38,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -82,11 +83,11 @@ func main() {
 	}
 
 	fmt.Println()
-	fmt.Println(strings.Repeat("─", 42))
-	fmt.Printf("Scanned:  %d symbols\n", len(inputs))
-	fmt.Printf("Skipped:  %d (data errors: %d, no setup: %d)\n",
-		len(dataErrs)+len(scanErrs), len(dataErrs), len(scanErrs))
-	fmt.Printf("Signals:  %d\n", len(signals))
+	fmt.Println(display.Dim.Sprint(strings.Repeat("─", 42)))
+	fmt.Printf("%s  %d symbols\n",  display.Dim.Sprint("Scanned: "), len(inputs))
+	fmt.Printf("%s  %d %s\n",       display.Dim.Sprint("Skipped: "), len(dataErrs)+len(scanErrs),
+		display.Dim.Sprintf("(data errors: %d, no setup: %d)", len(dataErrs), len(scanErrs)))
+	fmt.Printf("%s  %s\n", display.Dim.Sprint("Signals: "), display.TotalScore(float64(len(signals))))
 }
 
 func printDataErrors(dataErrs map[string]error) {
@@ -292,10 +293,11 @@ func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
 
 func printSignals(signals []scanner.StockSignal, topN int) {
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════╗")
-	fmt.Println("║      Top Watchlist Candidates        ║")
-	fmt.Println("║  (research only — not buy signals)   ║")
-	fmt.Println("╚══════════════════════════════════════╝")
+	box := display.BoldCyan.Sprint
+	fmt.Println(box("╔══════════════════════════════════════╗"))
+	fmt.Println(box("║") + display.Bold.Sprint("      Top Watchlist Candidates        ") + box("║"))
+	fmt.Println(box("║") + display.Dim.Sprint("  (research only — not buy signals)   ") + box("║"))
+	fmt.Println(box("╚══════════════════════════════════════╝"))
 
 	top := topN
 	if top > len(signals) {
@@ -307,32 +309,62 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 	}
 
 	for i, sig := range signals[:top] {
-		fmt.Printf("\n%d. %s\n", i+1, sig.Symbol)
-		fmt.Printf("   Score:      %.1f / 100\n", sig.Score)
-		fmt.Printf("     Trend:   %.1f / 40\n", sig.Breakdown.Trend)
-		fmt.Printf("     R/R:     %.1f / 30\n", sig.Breakdown.RR)
-		fmt.Printf("     Support: %.1f / 20\n", sig.Breakdown.Support)
+		fmt.Printf("\n%s %s\n",
+			display.Dim.Sprintf("%d.", i+1),
+			display.BoldWhite.Sprint(sig.Symbol))
+
+		// Total score.
+		fmt.Printf("   %s  %s %s\n",
+			display.Dim.Sprint("Score:     "),
+			display.TotalScore(sig.Score),
+			display.Dim.Sprint("/ 100"))
+
+		// Component breakdown.
+		fmt.Printf("     %s  %s\n", display.Dim.Sprint("Trend:  "), display.ComponentF(sig.Breakdown.Trend, 40))
+		fmt.Printf("     %s  %s\n", display.Dim.Sprint("R/R:    "), display.ComponentF(sig.Breakdown.RR, 30))
+		fmt.Printf("     %s  %s\n", display.Dim.Sprint("Support:"), display.ComponentF(sig.Breakdown.Support, 20))
 		if sig.Breakdown.AvgVolume > 0 {
-			fmt.Printf("     Volume:  %.1f / 10  (latest %.0f, avg20 %.0f, %.2fx)\n",
-				sig.Breakdown.Volume,
-				sig.Breakdown.LastVolume,
-				sig.Breakdown.AvgVolume,
-				sig.Breakdown.VolumeRatio)
+			fmt.Printf("     %s  %s  %s\n",
+				display.Dim.Sprint("Volume: "),
+				display.ComponentF(sig.Breakdown.Volume, 10),
+				display.Dim.Sprintf("(latest %.0f, avg20 %.0f, %.2fx)",
+					sig.Breakdown.LastVolume, sig.Breakdown.AvgVolume, sig.Breakdown.VolumeRatio))
 		} else {
-			fmt.Printf("     Volume:  %.1f / 10  (no prior volume average)\n", sig.Breakdown.Volume)
+			fmt.Printf("     %s  %s\n",
+				display.Dim.Sprint("Volume: "),
+				display.ComponentF(sig.Breakdown.Volume, 10))
 		}
-		fmt.Printf("   Price:      %.2f\n", sig.Price)
-		fmt.Printf("   Trend:      %s\n", sig.Trend)
-		fmt.Printf("   R/R:        %.2f  (%s)\n", sig.Trade.RiskReward, sig.Trade.Quality)
-		fmt.Printf("   Entry:      %.2f   SL: %.2f   Target: %.2f\n",
-			sig.Trade.Entry, sig.Trade.StopLoss, sig.Trade.Target)
-		fmt.Printf("   Support:    %.2f – %.2f  (%d touches)\n",
-			sig.Support.Low, sig.Support.High, sig.Support.Touches)
-		fmt.Printf("   Resistance: %.2f – %.2f  (%d touches)\n",
-			sig.Resistance.Low, sig.Resistance.High, sig.Resistance.Touches)
-		fmt.Println("   Reasons:")
+
+		// Price + trend.
+		fmt.Printf("   %s  %.2f\n", display.Dim.Sprint("Price:     "), sig.Price)
+		fmt.Printf("   %s  %s\n",   display.Dim.Sprint("Trend:     "), display.Trend(string(sig.Trend)))
+
+		// R/R.
+		fmt.Printf("   %s  %s  %s\n",
+			display.Dim.Sprint("R/R:       "),
+			display.RR(sig.Trade.RiskReward),
+			display.Dim.Sprint("(")+display.Quality(string(sig.Trade.Quality))+display.Dim.Sprint(")"))
+
+		// Entry / SL / Target.
+		fmt.Printf("   %s  %.2f   %s %s   %s %s\n",
+			display.Dim.Sprint("Entry:     "), sig.Trade.Entry,
+			display.Dim.Sprint("SL:"), display.Red.Sprintf("%.2f", sig.Trade.StopLoss),
+			display.Dim.Sprint("Target:"), display.Green.Sprintf("%.2f", sig.Trade.Target))
+
+		// Zones.
+		fmt.Printf("   %s  %.2f – %.2f  %s\n",
+			display.Dim.Sprint("Support:   "),
+			sig.Support.Low, sig.Support.High,
+			display.Dim.Sprintf("(%d touches)", sig.Support.Touches))
+		fmt.Printf("   %s  %.2f – %.2f  %s\n",
+			display.Dim.Sprint("Resistance:"),
+			sig.Resistance.Low, sig.Resistance.High,
+			display.Dim.Sprintf("(%d touches)", sig.Resistance.Touches))
+
+		// Reasons.
+		fmt.Printf("   %s\n", display.Dim.Sprint("Reasons:"))
 		for _, r := range sig.Reasons {
-			fmt.Printf("     • %s\n", r)
+			fmt.Printf("     %s %s\n", display.Cyan.Sprint("•"), display.Dim.Sprint(r))
 		}
 	}
 }
