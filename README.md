@@ -32,6 +32,8 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **Scanner Engine** — bullish filter, multi-stock ranking by score
 - ✅ **Volume Confirmation** — rolling average comparison, spike detection
 - ✅ **Explainable Signals** — human-readable reasons for every signal
+- ✅ **Kite Connect** — token exchange, instrument lookup, historical data sync
+- ✅ **Score Breakdown** — per-component score transparency (trend / R/R / support / volume)
 
 ---
 
@@ -114,13 +116,19 @@ Historical Candles (OHLCV)
 
 ```
 stock-market-analysis/
-├── cmd/server/          # HTTP server entry point
-├── config/              # Environment config loader
+├── cmd/
+│   ├── kite-sync/       # Download daily candles from Kite → PostgreSQL
+│   ├── kite-token/      # Exchange Kite request_token for access_token
+│   ├── scan/            # Run scanner (CSV / CSV dir / DB modes)
+│   └── server/          # REST API server
+├── config/              # Environment config loader + symbols watchlist
 ├── internal/
 │   ├── analysis/        # EMA, zone detection, trade analyzer
 │   ├── api/             # REST handlers (Chi router)
+│   ├── fetcher/         # Stooq HTTP downloader (no auth required)
+│   ├── kite/            # Kite Connect client (token, instruments, history)
 │   ├── loader/          # CSV → Candle parser
-│   ├── scanner/         # Scanner engine, scorer, signal reasons
+│   ├── scanner/         # Scanner engine, scorer, signal reasons, diagnostics
 │   ├── service/         # Application service layer
 │   └── store/           # PostgreSQL candle store
 ├── pkg/models/          # Shared domain types (Candle)
@@ -245,8 +253,17 @@ go run ./cmd/kite-sync --exchange BSE --symbols config/symbols.txt --period 2y
 
 #### Scan Synced DB Candles
 
+Full watchlist:
+
 ```bash
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10
+```
+
+Single symbol (skips the symbols file, queries just that ticker):
+
+```bash
+go run ./cmd/scan --db --symbol RELIANCE --top 1
+go run ./cmd/scan --db --symbol HDFCBANK --show-filtered
 ```
 
 #### Scan Manual CSV Files
@@ -330,7 +347,7 @@ Available flags:
 | `--period` | `2y` | DB history window (`2y`, `6m`, `90d`) |
 | `--csv` | _none_ | Scan one local OHLCV CSV |
 | `--csv-dir` | _none_ | Scan all CSV files in a folder |
-| `--symbol` | CSV filename | Stock symbol for `--csv` |
+| `--symbol` | CSV filename | Symbol for `--csv`, or single-symbol filter for `--db` |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:
@@ -391,7 +408,11 @@ go test ./...
 ```
 
 ```
+ok  github.com/sahiltyagi27/stock-market-analysis/config
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/analysis
+ok  github.com/sahiltyagi27/stock-market-analysis/internal/fetcher
+ok  github.com/sahiltyagi27/stock-market-analysis/internal/kite
+ok  github.com/sahiltyagi27/stock-market-analysis/internal/loader
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
 ```
 
@@ -405,6 +426,7 @@ ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
 - [x] M3 — Support & resistance zone detection
 - [x] M4 — Trade analyzer (SL, target, R/R grading)
 - [x] M5 — Scanner engine (bullish filter, scoring, explainable signals)
+- [x] M5.1 — Kite Connect sync + multi-mode scan CLI (CSV / DB)
 
 **Upcoming**
 - [ ] M6 — Backtesting engine (walk-forward simulation, win rate, profit factor)
