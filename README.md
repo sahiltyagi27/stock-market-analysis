@@ -294,6 +294,7 @@ Available flags:
 | `--top` | `10` | Signals to print per run |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
 | `--interval` | `2m` | Scan interval (e.g. `30s`, `2m`, `5m`) |
+| `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -404,6 +405,7 @@ Available flags:
 | `--csv` | _none_ | Scan one local OHLCV CSV |
 | `--csv-dir` | _none_ | Scan all CSV files in a folder |
 | `--symbol` | CSV filename | Symbol for `--csv`, or single-symbol filter for `--db` |
+| `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:

@@ -477,6 +477,41 @@ func TestReasons_Deterministic(t *testing.T) {
 // Scorer — unit tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// EMA margin filter
+// ---------------------------------------------------------------------------
+
+func TestScan_EMAMarginFilter_FiltersWhenTooClose(t *testing.T) {
+	// makeTrendingCandles produces price ≈ 2×basePrice, EMA200 ≈ 1.5×basePrice
+	// → gap ≈ 33%. A 50% margin requirement should reject the signal.
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 50.0}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Errorf("expected 0 signals with 50%% EMA margin (gap ≈33%%), got %d", len(signals))
+	}
+}
+
+func TestScan_EMAMarginFilter_PassesWhenAboveMargin(t *testing.T) {
+	// Same candles: gap ≈ 33% >> 1% → signal should be produced.
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: 1.0}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected signal with 1%% EMA margin and ~33%% gap above EMA200, got none")
+	}
+}
+
+func TestScan_EMAMarginFilter_DisabledWhenNegative(t *testing.T) {
+	// EMAMarginPct < 0 disables the filter; the default-opt gap check is bypassed.
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, EMAMarginPct: -1.0}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected signal with EMA margin disabled (EMAMarginPct=-1), got none")
+	}
+}
+
 func TestScan_ScoreMaxIs100(t *testing.T) {
 	// Score components: 40+30+20+10 = 100 max.
 	// A bullish stock with excellent R/R, 4+ touch support, and high volume

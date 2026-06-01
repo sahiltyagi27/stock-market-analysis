@@ -61,6 +61,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	topN := flag.Int("top", 10, "signals to print per scan run")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
+	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
@@ -167,7 +168,7 @@ func main() {
 		log.Printf("⚠  --dev mode: market hours check disabled")
 	}
 
-	scanOpts := scanner.Options{MinRR: *minRR}
+	scanOpts := scanner.Options{MinRR: *minRR, EMAMarginPct: *emaMargin}
 
 	// Run immediately so the first results appear right after connect,
 	// not after waiting a full interval.
