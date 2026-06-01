@@ -7,9 +7,10 @@
 // current live tick as today's candle, then ranks signals exactly as the
 // offline scanner does — EMA trend filter, zone detection, R/R grading, score.
 //
-// New signals (appearing for the first time since the previous scan) are
-// marked [NEW]. Signals that persist across consecutive scans show a streak
-// counter (×2, ×3, …) indicating how many back-to-back scans they appeared in.
+// Relative strength vs NIFTY 50 is computed for every signal and shown in the
+// output. Signals new to this scan are marked [NEW]; persistent signals show a
+// streak counter (×2, ×3, …). Every scan run is written to the scan_results
+// table so it can be reviewed and back-tested later.
 //
 // Usage:
 //
@@ -92,6 +93,14 @@ var nseHolidays = map[string]string{
 	"2026-11-25": "Guru Nanak Jayanti",
 }
 
+// niftyToken is the Kite instrument token for the NIFTY 50 index (NSE).
+// We subscribe to it alongside the equity watchlist so we can compute each
+// signal's relative strength vs the broad market.
+const (
+	niftyToken  = uint32(256265)
+	niftySymbol = "NIFTY 50"
+)
+
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	topN        := flag.Int("top", 10, "signals to print per scan run")
@@ -123,7 +132,7 @@ func main() {
 	}
 	log.Printf("loaded %d symbols from %s", len(symbols), *symbolsFile)
 
-	// ── DB: historical candle cache ───────────────────────────────────────────
+	// ── DB: historical candle cache + scan result store ───────────────────────
 	db, err := sql.Open("postgres", cfg.DSN())
 	if err != nil {
 		log.Fatalf("db open: %v", err)
@@ -133,6 +142,13 @@ func main() {
 		log.Fatalf("db ping: %v", err)
 	}
 	candleStore := store.NewCandleStore(db)
+
+	resultStore, err := store.NewScanResultStore(db)
+	if err != nil {
+		// Non-fatal: live scan still works, we just won't persist results.
+		log.Printf("warn: scan result store unavailable: %v — scan history will not be recorded", err)
+		resultStore = nil
+	}
 
 	from, err := parsePeriod(*period, time.Now())
 	if err != nil {
@@ -162,9 +178,13 @@ func main() {
 	}
 	log.Printf("fetched %d %s instruments from Kite", len(instruments), *exchange)
 
-	tokenSymbol := make(map[uint32]string, len(symbols))
-	symbolToken := make(map[string]uint32, len(symbols))
-	var tokens []uint32
+	// tokenSymbol and tokens include the NIFTY 50 index so we can compute
+	// relative strength for each signal (IsTradable=false ticks are now stored
+	// by WSClient since ws.go no longer filters by IsTradable).
+	tokenSymbol := make(map[uint32]string, len(symbols)+1)
+	symbolToken := make(map[string]uint32, len(symbols)+1)
+	tokens := []uint32{niftyToken}
+	tokenSymbol[niftyToken] = niftySymbol
 
 	for _, rawSym := range symbols {
 		sym := kite.NormalizeSymbol(rawSym)
@@ -177,9 +197,9 @@ func main() {
 		symbolToken[sym] = tok
 		tokens = append(tokens, tok)
 	}
-	log.Printf("mapped %d/%d symbols to instrument tokens", len(tokens), len(symbols))
-	if len(tokens) == 0 {
-		log.Fatal("no instrument tokens resolved — check KITE_ACCESS_TOKEN and exchange")
+	log.Printf("mapped %d/%d symbols to instrument tokens (+ NIFTY 50 index)", len(tokens)-1, len(symbols))
+	if len(tokens) <= 1 { // only Nifty token, no equities
+		log.Fatal("no equity instrument tokens resolved — check KITE_ACCESS_TOKEN and exchange")
 	}
 
 	// ── WebSocket ─────────────────────────────────────────────────────────────
@@ -216,7 +236,7 @@ func main() {
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(now, ws, historyCache, symbolToken, scanOpts, *topN, state)
+		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -239,7 +259,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(t, ws, historyCache, symbolToken, scanOpts, *topN, state)
+			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, state, resultStore)
 		}
 	}
 }
@@ -300,10 +320,11 @@ func (s *scanState) advance(signals []scanner.StockSignal) map[string]bool {
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
 
-// runScan builds scanner inputs by merging historical candles with the latest
-// live tick for each symbol, runs the scanner, updates scan state, and prints
-// results.
+// runScan builds scanner inputs from live ticks + historical candles, runs the
+// full scanner pipeline, updates scan state, prints results, and persists
+// every signal to the scan_results table.
 func runScan(
+	ctx context.Context,
 	at time.Time,
 	ws *kite.WSClient,
 	history map[string][]models.Candle,
@@ -311,6 +332,7 @@ func runScan(
 	opts scanner.Options,
 	topN int,
 	state *scanState,
+	resultStore *store.ScanResultStore,
 ) {
 	volFrac := sessionElapsedFraction(at)
 	var inputs []scanner.Input
@@ -330,8 +352,90 @@ func runScan(
 	}
 
 	signals, _ := scanner.ScanWithErrors(inputs, opts)
+
+	// Compute relative strength vs NIFTY 50 for every signal.
+	rsMap, niftyPct := computeRS(ws, symbolToken, signals)
+
 	newSymbols := state.advance(signals)
-	printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks)
+	printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct)
+
+	// Persist scan results asynchronously so a slow DB write can't delay the
+	// next scan tick.
+	if resultStore != nil {
+		rows := buildScanResultRows(at, signals, newSymbols, state.streaks, rsMap)
+		go func() {
+			if err := resultStore.Save(ctx, rows); err != nil {
+				log.Printf("warn: save scan results: %v", err)
+			}
+		}()
+	}
+}
+
+// computeRS returns a map of symbol → relative-strength-vs-NIFTY (percentage
+// points) and the NIFTY's own % change from open.
+//
+// Returns (nil, 0) when the NIFTY 50 tick is not yet available or its open
+// price is zero (e.g. before market open or during the first seconds of
+// trading).
+func computeRS(
+	ws *kite.WSClient,
+	symbolToken map[string]uint32,
+	signals []scanner.StockSignal,
+) (rsMap map[string]float64, niftyPct float64) {
+	niftyTick, ok := ws.LatestTick(niftyToken)
+	if !ok || niftyTick.Open <= 0 || niftyTick.LastPrice <= 0 {
+		return nil, 0
+	}
+	niftyPct = (niftyTick.LastPrice - niftyTick.Open) / niftyTick.Open * 100
+
+	rsMap = make(map[string]float64, len(signals))
+	for _, sig := range signals {
+		tok, ok := symbolToken[sig.Symbol]
+		if !ok {
+			continue
+		}
+		tick, ok := ws.LatestTick(tok)
+		if !ok || tick.Open <= 0 {
+			continue
+		}
+		stockPct := (tick.LastPrice - tick.Open) / tick.Open * 100
+		rsMap[sig.Symbol] = stockPct - niftyPct
+	}
+	return rsMap, niftyPct
+}
+
+// buildScanResultRows converts the scanner output into rows ready for DB insert.
+func buildScanResultRows(
+	at time.Time,
+	signals []scanner.StockSignal,
+	newSymbols map[string]bool,
+	streaks map[string]int,
+	rsMap map[string]float64,
+) []store.ScanResultRow {
+	rows := make([]store.ScanResultRow, 0, len(signals))
+	for _, sig := range signals {
+		var rs *float64
+		if rsMap != nil {
+			if v, ok := rsMap[sig.Symbol]; ok {
+				v := v
+				rs = &v
+			}
+		}
+		rows = append(rows, store.ScanResultRow{
+			ScannedAt:   at,
+			Symbol:      sig.Symbol,
+			Price:       sig.Price,
+			Score:       sig.Score,
+			Trend:       string(sig.Trend),
+			RR:          sig.Trade.RiskReward,
+			EMA50:       sig.EMA.EMA50,
+			EMA200:      sig.EMA.EMA200,
+			RelStrength: rs,
+			IsNew:       newSymbols[sig.Symbol],
+			Streak:      streaks[sig.Symbol],
+		})
+	}
+	return rows
 }
 
 // buildInput creates a scanner.Input by appending (or replacing) a synthetic
@@ -378,9 +482,11 @@ func buildInput(sym string, historical []models.Candle, tick kite.Tick, volFrac 
 
 // printScan prints ranked signals to stdout in a compact terminal-friendly format.
 //
-//   - volFrac: fraction of NSE session elapsed, used to label volume as "est."
+//   - volFrac:    fraction of NSE session elapsed — labels volume as "est."
 //   - newSymbols: symbols appearing for the first time since the last scan → [NEW]
-//   - streaks: consecutive-scan count per symbol → ×N shown when N > 1
+//   - streaks:    consecutive-scan count per symbol → ×N shown when N > 1
+//   - rsMap:      symbol → relative strength % vs NIFTY (nil if unavailable)
+//   - niftyPct:   NIFTY 50's own % change from open (0 if rsMap is nil)
 func printScan(
 	at time.Time,
 	signals []scanner.StockSignal,
@@ -388,6 +494,8 @@ func printScan(
 	volFrac float64,
 	newSymbols map[string]bool,
 	streaks map[string]int,
+	rsMap map[string]float64,
+	niftyPct float64,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	banner := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
@@ -415,11 +523,10 @@ func printScan(
 		fmt.Printf("\n  %d. %-14s  ₹%-9.2f  Score: %.0f/100%s\n",
 			i+1, sig.Symbol, sig.Price, sig.Score, tag)
 
-		// Score breakdown — shows exactly how each component contributed.
+		// Score breakdown.
 		fmt.Printf("     ├ Trend:   %.0f/40  R/R: %.0f/30  Support: %.0f/20",
 			sig.Breakdown.Trend, sig.Breakdown.RR, sig.Breakdown.Support)
 		if sig.Breakdown.AvgVolume > 0 {
-			// LastVolume is the projected full-day volume when volFrac < 1.
 			volLabel := "actual"
 			if volFrac < 1.0 {
 				volLabel = "est."
@@ -432,6 +539,13 @@ func printScan(
 				sig.Breakdown.VolumeRatio)
 		} else {
 			fmt.Printf("  Volume: %.0f/10 (no prior volume avg)\n", sig.Breakdown.Volume)
+		}
+
+		// Relative strength vs NIFTY 50.
+		if rsMap != nil {
+			if rs, ok := rsMap[sig.Symbol]; ok {
+				fmt.Printf("     ├ RS vs NIFTY: %+.2f%%  (NIFTY: %+.2f%%)\n", rs, niftyPct)
+			}
 		}
 
 		fmt.Printf("     ├ Trend: %-8s  R/R: %.2f (%s)\n",
@@ -454,6 +568,9 @@ func printScan(
 	if volFrac < 1.0 {
 		fmt.Printf("  * volume projected to full-day (%d%% of session elapsed)\n",
 			int(volFrac*100))
+	}
+	if rsMap != nil {
+		fmt.Printf("  NIFTY 50: %+.2f%% from open\n", niftyPct)
 	}
 	fmt.Printf("%s\n", strings.Repeat("━", len(banner)))
 }

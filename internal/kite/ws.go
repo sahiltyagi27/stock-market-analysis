@@ -155,11 +155,13 @@ func (c *WSClient) handleBinary(msg []byte) {
 		return
 	}
 
+	// Store every tick for tokens we explicitly subscribed to (gated by
+	// tokenSymbol in ParseTicks). We no longer filter by IsTradable so that
+	// index tokens such as NIFTY 50 — which have IsTradable=false — are also
+	// stored and accessible via LatestTick.
 	c.mu.Lock()
 	for _, t := range ticks {
-		if t.IsTradable {
-			c.ticks[t.InstrumentToken] = t
-		}
+		c.ticks[t.InstrumentToken] = t
 	}
 	c.mu.Unlock()
 }
