@@ -55,10 +55,13 @@ type VolumeConfirmation struct {
 
 // ScoreBreakdown explains how StockSignal.Score was composed.
 type ScoreBreakdown struct {
-	Trend       float64 `json:"trend"`
-	RR          float64 `json:"rr"`
-	Support     float64 `json:"support"`
-	Volume      float64 `json:"volume"`
+	Trend     float64 `json:"trend"`
+	RR        float64 `json:"rr"`
+	Support   float64 `json:"support"`
+	Volume    float64 `json:"volume"`
+	// CandleDir is 0 for a bullish/flat last candle and -5 for a bearish one
+	// (close < open). A red candle on a support zone is a weaker setup.
+	CandleDir   float64 `json:"candle_dir,omitempty"`
 	AvgVolume   float64 `json:"avg_volume"`
 	LastVolume  float64 `json:"last_volume"`
 	VolumeRatio float64 `json:"volume_ratio"`

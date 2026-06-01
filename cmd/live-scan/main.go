@@ -122,6 +122,9 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	alertScore           := flag.Float64("alert-score", 85, "highlight signals at or above this score with ⚡ (0 = disabled)")
+	retentionDays        := flag.Int("retention-days", 30, "delete scan_results older than this many days on startup (0 = keep forever)")
+	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
 	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
 	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
@@ -173,6 +176,17 @@ func main() {
 		// Non-fatal: live scan still works, we just won't persist results.
 		log.Printf("warn: scan result store unavailable: %v — scan history will not be recorded", err)
 		resultStore = nil
+	}
+
+	// Purge old scan results on startup so the table doesn't grow forever.
+	// Candles are kept — they're the core dataset. Only scan_results are pruned.
+	if resultStore != nil && *retentionDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -*retentionDays)
+		if n, err := resultStore.PurgeOlderThan(ctx, cutoff); err != nil {
+			log.Printf("warn: scan_results purge failed: %v", err)
+		} else if n > 0 {
+			log.Printf("purged %d scan_results older than %d days", n, *retentionDays)
+		}
 	}
 
 	from, err := parsePeriod(*period, time.Now())
@@ -253,6 +267,7 @@ func main() {
 		MinRR:                  *minRR,
 		EMAMarginPct:           *emaMargin,
 		MinAvgVolume:           *minVolume,
+		MinCandles:             *minCandles,
 		MaxEMA10ExtensionPct:   *maxEMA10Extension,
 		MaxEMA50ExtensionPct:   *maxEMA50Extension,
 		MaxSupportExtensionPct: *maxSupportExtension,
@@ -267,11 +282,34 @@ func main() {
 
 	state := newScanState()
 
+	// Restore today's scan state from DB so streak counts and [NEW] detection
+	// survive a process restart. State from a previous day is intentionally
+	// ignored — streaks reset cleanly at the start of each session.
+	if resultStore != nil {
+		if snap, err := resultStore.LatestTodayScanState(ctx, ist); err != nil {
+			log.Printf("warn: could not restore scan state from DB: %v", err)
+		} else if snap != nil {
+			state.prevSymbols = snap.PrevSymbols
+			state.streaks     = snap.Streaks
+			state.initialized = true
+			maxStreak := 0
+			for _, n := range snap.Streaks {
+				if n > maxStreak {
+					maxStreak = n
+				}
+			}
+			log.Printf("restored scan state from DB — %d symbols, max streak ×%d",
+				len(snap.PrevSymbols), maxStreak)
+		} else {
+			log.Printf("no scan history for today — starting fresh")
+		}
+	}
+
 	// Run immediately so the first results appear right after connect,
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
+		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -294,7 +332,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
+			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 		}
 	}
 }
@@ -367,6 +405,7 @@ func runScan(
 	opts scanner.Options,
 	topN int,
 	mode string,
+	alertScore float64,
 	state *scanState,
 	resultStore *store.ScanResultStore,
 ) {
@@ -401,7 +440,7 @@ func runScan(
 
 	newSymbols := state.advance(signals)
 	if mode == "swing" || mode == "all" {
-		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct)
+		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct, alertScore)
 	}
 	if mode == "breakout" || mode == "all" {
 		breakoutRSMap, breakoutNiftyPct := computeBreakoutRS(ws, symbolToken, breakouts)
@@ -572,6 +611,7 @@ func printScan(
 	streaks map[string]int,
 	rsMap map[string]float64,
 	niftyPct float64,
+	alertScore float64,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	bannerText := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
@@ -589,13 +629,16 @@ func printScan(
 	last := display.Dim.Sprint("└")
 
 	for i, sig := range signals[:top] {
-		// Persistence tag — pad before colorizing so column width is stable.
+		// ⚡ alert when score crosses threshold, then [NEW] / ×N streak.
 		tag := ""
+		if alertScore > 0 && sig.Score >= alertScore {
+			tag += "  " + display.BoldYellow.Sprint("⚡")
+		}
 		switch {
 		case newSymbols[sig.Symbol]:
-			tag = "  " + display.BoldGreen.Sprint("[NEW]")
+			tag += "  " + display.BoldGreen.Sprint("[NEW]")
 		case streaks[sig.Symbol] > 1:
-			tag = "  " + display.Cyan.Sprintf("×%d", streaks[sig.Symbol])
+			tag += "  " + display.Cyan.Sprintf("×%d", streaks[sig.Symbol])
 		}
 
 		// Pad symbol and price before applying color so alignment is preserved.
@@ -629,6 +672,13 @@ func printScan(
 			fmt.Printf("  %s %s\n",
 				display.Dim.Sprint("Volume:"),
 				display.Component(sig.Breakdown.Volume, 10))
+		}
+		// Bearish candle penalty.
+		if sig.Breakdown.CandleDir < 0 {
+			fmt.Printf("     %s %s %s\n",
+				pipe,
+				display.Dim.Sprint("Candle:"),
+				display.Red.Sprintf("%.0f (bearish — close < open)", sig.Breakdown.CandleDir))
 		}
 
 		// Relative strength vs NIFTY 50.
