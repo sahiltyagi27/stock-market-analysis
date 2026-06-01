@@ -37,6 +37,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -52,8 +53,9 @@ func main() {
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
-	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
-	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
+	minVolume            := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	showFiltered         := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
 	inputs, dataErrs := loadInputs(context.Background(), inputOptions{
@@ -65,7 +67,12 @@ func main() {
 		Symbol:      *csvSymbol,
 	})
 
-	opts := scanner.Options{MinRR: *minRR, EMAMarginPct: *emaMargin, MinAvgVolume: *minVolume}
+	opts := scanner.Options{
+		MinRR:        *minRR,
+		EMAMarginPct: *emaMargin,
+		MinAvgVolume: *minVolume,
+		ZoneOpts:     analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
+	}
 	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
 
 	printSignals(signals, *topN)

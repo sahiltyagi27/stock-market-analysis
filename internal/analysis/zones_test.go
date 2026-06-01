@@ -179,6 +179,53 @@ func TestFindZones_ZeroOptsUsesDefaults(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// MinResistanceTouches filter
+// ---------------------------------------------------------------------------
+
+func TestFindZones_MinResistanceTouches_Filters1TouchZone(t *testing.T) {
+	// Single spike high → 1-touch resistance. MinResistanceTouches=2 must drop it.
+	highs := []float64{50, 55, 58, 80, 57, 54, 50, 52, 49}
+	lows  := []float64{45, 50, 53, 75, 52, 49, 45, 47, 44}
+	opts := analysis.ZoneOptions{Window: 2, ClusterPct: 0.02, MinResistanceTouches: 2}
+	r := analysis.FindZones(highs, lows, opts)
+	for _, z := range r.Resistance {
+		if z.Touches < 2 {
+			t.Errorf("resistance zone with %d touches survived MinResistanceTouches=2: %+v", z.Touches, z)
+		}
+	}
+}
+
+func TestFindZones_MinResistanceTouches_Passes2TouchZone(t *testing.T) {
+	// Two spike highs near 200 → merged 2-touch zone must survive min=2.
+	highs := []float64{180, 190, 200, 180, 185, 190, 202, 180, 185}
+	lows  := []float64{170, 180, 190, 170, 175, 180, 192, 170, 175}
+	opts := analysis.ZoneOptions{Window: 2, ClusterPct: 0.02, MinResistanceTouches: 2}
+	r := analysis.FindZones(highs, lows, opts)
+	found := false
+	for _, z := range r.Resistance {
+		if z.Low <= 202 && z.High >= 200 && z.Touches >= 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 2-touch zone around 200–202 to survive min=2 filter, got %+v", r.Resistance)
+	}
+}
+
+func TestFindZones_MinResistanceTouches_DisabledWhenZeroOrOne(t *testing.T) {
+	// MinResistanceTouches=0 and =1 must both allow 1-touch zones through.
+	highs := []float64{50, 55, 58, 80, 57, 54, 50, 52, 49}
+	lows  := []float64{45, 50, 53, 75, 52, 49, 45, 47, 44}
+	for _, min := range []int{0, 1} {
+		opts := analysis.ZoneOptions{Window: 2, ClusterPct: 0.02, MinResistanceTouches: min}
+		r := analysis.FindZones(highs, lows, opts)
+		if len(r.Resistance) == 0 {
+			t.Errorf("MinResistanceTouches=%d should allow 1-touch zones but got no resistance zones", min)
+		}
+	}
+}
+
 func TestFindZones_ZoneMidIsAverage(t *testing.T) {
 	lows := []float64{50, 45, 42, 30, 43, 46, 50, 48, 51}
 	highs := []float64{55, 50, 47, 35, 48, 51, 55, 53, 56}
