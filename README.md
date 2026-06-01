@@ -34,6 +34,7 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **Explainable Signals** — human-readable reasons for every signal
 - ✅ **Kite Connect** — token exchange, instrument lookup, historical data sync
 - ✅ **Score Breakdown** — per-component score transparency (trend / R/R / support / volume)
+- ✅ **Live Scanner** — Kite WebSocket (full mode), runs every 2 min during market hours, merges live ticks with DB history
 
 ---
 
@@ -119,7 +120,8 @@ stock-market-analysis/
 ├── cmd/
 │   ├── kite-sync/       # Download daily candles from Kite → PostgreSQL
 │   ├── kite-token/      # Exchange Kite request_token for access_token
-│   ├── scan/            # Run scanner (CSV / CSV dir / DB modes)
+│   ├── live-scan/       # Real-time scanner via Kite WebSocket (every 2 min)
+│   ├── scan/            # Offline scanner (CSV / CSV dir / DB modes)
 │   └── server/          # REST API server
 ├── config/              # Environment config loader + symbols watchlist
 ├── internal/
@@ -265,6 +267,58 @@ Single symbol (skips the symbols file, queries just that ticker):
 go run ./cmd/scan --db --symbol RELIANCE --top 1
 go run ./cmd/scan --db --symbol HDFCBANK --show-filtered
 ```
+
+#### Live Scan (Real-Time via Kite WebSocket)
+
+Connects to the Kite WebSocket feed, subscribes all watchlist symbols in **full mode**, and runs the scanner every 2 minutes during NSE market hours (09:15–15:30 IST, Mon–Fri).
+
+Each run merges the live tick (LTP, Open, High, Low, Volume) as today's candle on top of 2 years of historical candles from PostgreSQL, then runs the full scanner pipeline.
+
+```bash
+go run ./cmd/live-scan
+```
+
+With options:
+
+```bash
+go run ./cmd/live-scan --top 10 --interval 2m --min-rr 2.0
+go run ./cmd/live-scan --interval 30s            # faster cadence
+go run ./cmd/live-scan --dev                     # disable market hours check (for testing)
+```
+
+Available flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--symbols` | `config/symbols.txt` | Watchlist file |
+| `--top` | `10` | Signals to print per run |
+| `--min-rr` | `2.0` | Minimum risk/reward ratio |
+| `--interval` | `2m` | Scan interval (e.g. `30s`, `2m`, `5m`) |
+| `--period` | `2y` | Historical candle window for EMA/zone computation |
+| `--exchange` | `NSE` | Kite exchange |
+| `--dev` | `false` | Disable market hours check |
+
+Example output:
+
+```
+━━━  Live Scan  02-Jun-2026  10:15:00 IST  ━━━
+
+  1. HDFCBANK        ₹1625.50    Score: 87/100
+     Trend: bullish   R/R: 2.85 (good)
+     Entry: 1625.50   SL: 1580.20   Target: 1750.00
+     Support:    1580.00–1590.00 (3 touches)
+     Resistance: 1745.00–1760.00 (2 touches)
+     Reasons:
+       • Price above EMA50 (1520.00) and EMA200 (1380.00)
+       • Risk/Reward 2.85 exceeds minimum 2.00
+       • Support zone touched 3 times
+       • Trade quality: good
+
+  ──────────────────────────────────────────────────────
+  Scanned: 487   Signals: 5    No tick yet: 13
+```
+
+> **Prerequisites:** `KITE_API_KEY` and `KITE_ACCESS_TOKEN` must be set. Refresh the access token daily with `cmd/kite-token`. Populate the DB with `cmd/kite-sync` before the first run.
 
 #### Scan Manual CSV Files
 
@@ -427,6 +481,7 @@ ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
 - [x] M4 — Trade analyzer (SL, target, R/R grading)
 - [x] M5 — Scanner engine (bullish filter, scoring, explainable signals)
 - [x] M5.1 — Kite Connect sync + multi-mode scan CLI (CSV / DB)
+- [x] Live Scan — real-time scanner via Kite WebSocket (full mode, configurable interval, market hours guard)
 
 **Upcoming**
 - [ ] M6 — Backtesting engine (walk-forward simulation, win rate, profit factor)
