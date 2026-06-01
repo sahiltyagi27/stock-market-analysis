@@ -198,6 +198,8 @@ func main() {
 
 // runScan builds scanner inputs by merging historical candles with the latest
 // live tick for each symbol, runs the scanner, and prints results.
+// Volume is projected to a full-day equivalent based on session elapsed time
+// so it can be fairly compared against the historical full-day rolling average.
 func runScan(
 	at time.Time,
 	ws *kite.WSClient,
@@ -206,6 +208,7 @@ func runScan(
 	opts scanner.Options,
 	topN int,
 ) {
+	volFrac := sessionElapsedFraction(at)
 	var inputs []scanner.Input
 	noTick := 0
 
@@ -219,11 +222,11 @@ func runScan(
 			noTick++
 			continue
 		}
-		inputs = append(inputs, buildInput(sym, candles, tick))
+		inputs = append(inputs, buildInput(sym, candles, tick, volFrac))
 	}
 
 	signals, _ := scanner.ScanWithErrors(inputs, opts)
-	printScan(at, signals, topN, len(history), noTick)
+	printScan(at, signals, topN, len(history), noTick, volFrac)
 }
 
 // buildInput creates a scanner.Input by appending (or replacing) a synthetic
@@ -232,12 +235,21 @@ func runScan(
 // If the latest historical candle is from today (same IST calendar day as the
 // tick), it is replaced so the scanner sees a continuously updated intraday
 // candle. Otherwise the live candle is appended as a new day.
-func buildInput(sym string, historical []models.Candle, tick kite.Tick) scanner.Input {
+//
+// volFrac is the fraction of the NSE session elapsed (from sessionElapsedFraction).
+// The intraday volume is divided by volFrac to project it to a full-day equivalent,
+// allowing fair comparison against the historical full-day rolling average.
+// e.g. at 12:15 (48% elapsed): 328k intraday → 683k projected full-day.
+func buildInput(sym string, historical []models.Candle, tick kite.Tick, volFrac float64) scanner.Input {
 	now := time.Now().UTC()
 	open := tick.Open
 	if open <= 0 {
 		open = tick.LastPrice // fallback if intraday open not yet available
 	}
+
+	// Project intraday volume to a full-day equivalent for fair scoring.
+	projVol := int64(float64(tick.Volume) / volFrac)
+
 	live := models.Candle{
 		Symbol:    sym,
 		Timestamp: now,
@@ -245,7 +257,7 @@ func buildInput(sym string, historical []models.Candle, tick kite.Tick) scanner.
 		High:      tick.High,
 		Low:       tick.Low,
 		Close:     tick.LastPrice, // LTP as the "current price"
-		Volume:    int64(tick.Volume),
+		Volume:    projVol,
 	}
 
 	merged := make([]models.Candle, len(historical))
@@ -260,7 +272,9 @@ func buildInput(sym string, historical []models.Candle, tick kite.Tick) scanner.
 }
 
 // printScan prints ranked signals to stdout in a compact terminal-friendly format.
-func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick int) {
+// volFrac is passed so the footer can show the session-elapsed percentage used
+// for volume projection.
+func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick int, volFrac float64) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	banner := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
 	fmt.Printf("\n%s\n", banner)
@@ -281,8 +295,14 @@ func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick 
 		fmt.Printf("     ├ Trend:   %.0f/40  R/R: %.0f/30  Support: %.0f/20",
 			sig.Breakdown.Trend, sig.Breakdown.RR, sig.Breakdown.Support)
 		if sig.Breakdown.AvgVolume > 0 {
-			fmt.Printf("  Volume: %.0f/10 (%.0f vs avg %.0f = %.2fx)\n",
+			// LastVolume is the projected full-day volume when volFrac < 1.
+			volLabel := "actual"
+			if volFrac < 1.0 {
+				volLabel = "est."
+			}
+			fmt.Printf("  Volume: %.0f/10 (%s %.0f vs avg %.0f = %.2fx)\n",
 				sig.Breakdown.Volume,
+				volLabel,
 				sig.Breakdown.LastVolume,
 				sig.Breakdown.AvgVolume,
 				sig.Breakdown.VolumeRatio)
@@ -307,7 +327,37 @@ func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick 
 	fmt.Printf("\n  %s\n", strings.Repeat("─", 54))
 	fmt.Printf("  Scanned: %-4d  Signals: %-4d  No tick yet: %d\n",
 		total, len(signals), noTick)
+	if volFrac < 1.0 {
+		fmt.Printf("  * volume projected to full-day (%d%% of session elapsed)\n",
+			int(volFrac*100))
+	}
 	fmt.Printf("%s\n", strings.Repeat("━", len(banner)))
+}
+
+// sessionElapsedFraction returns the fraction of the NSE trading session
+// (09:15–15:30 IST = 375 minutes) that has elapsed at time t.
+//
+// Clamped to a minimum of 30/375 ≈ 0.08 to avoid extreme scale factors in
+// the first 30 minutes of trading when very few trades have occurred.
+// Returns 1.0 outside session hours so volume is never inflated.
+func sessionElapsedFraction(t time.Time) float64 {
+	local := t.In(ist)
+	y, m, d := local.Date()
+	open   := time.Date(y, m, d, 9, 15, 0, 0, ist)
+	close_ := time.Date(y, m, d, 15, 30, 0, 0, ist)
+
+	if local.Before(open) || local.After(close_) {
+		return 1.0 // outside session: use volume as-is
+	}
+
+	const totalMins = 375.0
+	const minMins   = 30.0 // cap: don't project before 30 min of trading
+
+	elapsed := local.Sub(open).Minutes()
+	if elapsed < minMins {
+		elapsed = minMins
+	}
+	return elapsed / totalMins
 }
 
 // isMarketOpen returns true if t is within NSE trading hours:
