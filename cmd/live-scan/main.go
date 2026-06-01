@@ -162,13 +162,22 @@ func main() {
 	}
 
 	// ── Scan loop ─────────────────────────────────────────────────────────────
-	ticker := time.NewTicker(*interval)
-	defer ticker.Stop()
-
 	log.Printf("live scan ready — interval %s | top %d | min R/R %.1f", *interval, *topN, *minRR)
 	if *dev {
 		log.Printf("⚠  --dev mode: market hours check disabled")
 	}
+
+	scanOpts := scanner.Options{MinRR: *minRR}
+
+	// Run immediately so the first results appear right after connect,
+	// not after waiting a full interval.
+	now := time.Now()
+	if *dev || isMarketOpen(now) {
+		runScan(now, ws, historyCache, symbolToken, scanOpts, *topN)
+	}
+
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -181,8 +190,7 @@ func main() {
 					t.In(ist).Format("15:04:05"))
 				continue
 			}
-			runScan(t, ws, historyCache, symbolToken,
-				scanner.Options{MinRR: *minRR}, *topN)
+			runScan(t, ws, historyCache, symbolToken, scanOpts, *topN)
 		}
 	}
 }
