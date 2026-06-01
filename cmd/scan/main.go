@@ -14,7 +14,7 @@
 //	--db        scan candles from PostgreSQL
 //	--symbols   symbol file for --db        (default: config/symbols.txt)
 //	--period    DB history window           (default: 2y)
-//	--symbol    stock symbol for --csv; defaults to CSV filename
+//	--symbol    stock symbol for --csv; or filter --db to one symbol
 //	--top       max signals to print        (default: 5)
 //	--min-rr    minimum risk/reward         (default: 2.0)
 //	--show-filtered
@@ -60,7 +60,7 @@ func main() {
 		DBMode:      *dbMode,
 		SymbolsFile: *symbolsFile,
 		Period:      *period,
-		CSVSymbol:   *csvSymbol,
+		Symbol:      *csvSymbol,
 	})
 
 	opts := scanner.Options{MinRR: *minRR}
@@ -103,7 +103,9 @@ type inputOptions struct {
 	DBMode      bool
 	SymbolsFile string
 	Period      string
-	CSVSymbol   string
+	// Symbol is used as the candle symbol for --csv, and as a single-symbol
+	// filter when --db is set (overrides --symbols).
+	Symbol string
 }
 
 func loadInputs(ctx context.Context, opts inputOptions) ([]scanner.Input, map[string]error) {
@@ -119,7 +121,7 @@ func loadInputs(ctx context.Context, opts inputOptions) ([]scanner.Input, map[st
 
 	switch {
 	case opts.CSVPath != "":
-		symbol := normalizeSymbol(opts.CSVSymbol)
+		symbol := normalizeSymbol(opts.Symbol)
 		if symbol == "" {
 			symbol = symbolFromPath(opts.CSVPath)
 		}
@@ -129,7 +131,7 @@ func loadInputs(ctx context.Context, opts inputOptions) ([]scanner.Input, map[st
 		}
 		return []scanner.Input{input}, nil
 	case opts.DBMode:
-		return loadDBInputs(ctx, opts.SymbolsFile, opts.Period)
+		return loadDBInputs(ctx, opts.SymbolsFile, opts.Period, normalizeSymbol(opts.Symbol))
 	default:
 		return loadCSVDir(opts.CSVDir)
 	}
@@ -164,7 +166,7 @@ func loadCSVDir(csvDir string) ([]scanner.Input, map[string]error) {
 	return inputs, dataErrs
 }
 
-func loadDBInputs(ctx context.Context, symbolsFile, period string) ([]scanner.Input, map[string]error) {
+func loadDBInputs(ctx context.Context, symbolsFile, period, singleSymbol string) ([]scanner.Input, map[string]error) {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -178,9 +180,15 @@ func loadDBInputs(ctx context.Context, symbolsFile, period string) ([]scanner.In
 		log.Fatalf("db ping: %v", err)
 	}
 
-	symbols, err := config.LoadSymbols(symbolsFile)
-	if err != nil {
-		log.Fatalf("symbols: %v", err)
+	var symbols []string
+	if singleSymbol != "" {
+		// --symbol overrides --symbols: query only that one stock.
+		symbols = []string{singleSymbol}
+	} else {
+		symbols, err = config.LoadSymbols(symbolsFile)
+		if err != nil {
+			log.Fatalf("symbols: %v", err)
+		}
 	}
 	from, err := parsePeriod(period, time.Now())
 	if err != nil {
