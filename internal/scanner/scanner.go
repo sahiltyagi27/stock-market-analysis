@@ -22,6 +22,12 @@ type Options struct {
 	// Set to 0 to disable the check entirely.
 	EMAMarginPct float64
 
+	// MinAvgVolume is the minimum rolling average daily volume (over VolumeWindow
+	// candles) required for a symbol to qualify. Illiquid stocks are hard to exit
+	// cleanly and their zone levels are less reliable.
+	// Default: 0 (disabled). A typical useful value is 200_000.
+	MinAvgVolume int64
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -165,6 +171,13 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 
 	// --- Volume ---
 	avgVol, lastVol := volumeStats(in.Candles, opts.VolumeWindow)
+
+	// Liquidity filter: skip symbols whose rolling average volume is below the
+	// minimum. Guard on avgVol > 0 so we don't reject stocks with only one
+	// candle (no prior history to average over).
+	if opts.MinAvgVolume > 0 && avgVol > 0 && avgVol < float64(opts.MinAvgVolume) {
+		return nil, fmt.Errorf("avg daily volume %.0f below minimum %d", avgVol, opts.MinAvgVolume)
+	}
 
 	sig := &StockSignal{
 		Symbol:     in.Symbol,
