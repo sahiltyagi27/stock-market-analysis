@@ -1,10 +1,15 @@
 // Command live-scan subscribes to all watchlist symbols via the Kite WebSocket
 // feed (full mode) and runs the scanner engine every 2 minutes during NSE
-// market hours (09:15–15:30 IST, Mon–Fri).
+// market hours (09:15–15:30 IST, Mon–Fri), automatically skipping public
+// holidays.
 //
 // Each scan run merges 2 years of historical candles from PostgreSQL with the
 // current live tick as today's candle, then ranks signals exactly as the
 // offline scanner does — EMA trend filter, zone detection, R/R grading, score.
+//
+// New signals (appearing for the first time since the previous scan) are
+// marked [NEW]. Signals that persist across consecutive scans show a streak
+// counter (×2, ×3, …) indicating how many back-to-back scans they appeared in.
 //
 // Usage:
 //
@@ -18,13 +23,15 @@
 //
 // Optional flags:
 //
-//	--symbols   path to watchlist file     (default: config/symbols.txt)
-//	--top       signals to print per run   (default: 10)
-//	--min-rr    minimum risk/reward ratio  (default: 2.0)
-//	--interval  scan interval              (default: 2m)
-//	--period    historical candle window   (default: 2y)
-//	--exchange  Kite exchange              (default: NSE)
-//	--dev       disable market hours check (default: false)
+//	--symbols    path to watchlist file     (default: config/symbols.txt)
+//	--top        signals to print per run   (default: 10)
+//	--min-rr     minimum risk/reward ratio  (default: 2.0)
+//	--ema-margin minimum %% gap above EMA200 (default: 1.0, 0 = disabled)
+//	--min-volume minimum avg daily volume   (default: 0, disabled)
+//	--interval   scan interval              (default: 2m)
+//	--period     historical candle window   (default: 2y)
+//	--exchange   Kite exchange              (default: NSE)
+//	--dev        disable market hours check (default: false)
 package main
 
 import (
@@ -57,15 +64,44 @@ func init() {
 	}
 }
 
+// nseHolidays lists NSE equity-segment trading holidays keyed by IST date
+// (format "2006-01-02").
+//
+// Fixed-date holidays are confirmed. Moveable feasts (marked with *) are
+// best-effort estimates — verify against the official NSE holiday circular
+// before each trading year:
+//
+//	https://www.nseindia.com/resources/exchange-communication-holidays
+//
+// Saturday/Sunday closures are handled separately by isMarketOpen and do
+// not need to be listed here.
+var nseHolidays = map[string]string{
+	// 2026 — fixed
+	"2026-01-26": "Republic Day",
+	"2026-04-03": "Good Friday",        // Easter Apr 5 → GF Apr 3
+	"2026-04-14": "Dr. Ambedkar Jayanti",
+	"2026-05-01": "Maharashtra Day",
+	"2026-10-02": "Gandhi Jayanti",
+	"2026-12-25": "Christmas",
+	// 2026 — moveable (*)
+	"2026-02-26": "Mahashivratri",
+	"2026-03-04": "Holi",
+	"2026-10-20": "Dussehra",
+	"2026-11-09": "Diwali (Laxmi Puja)",
+	"2026-11-10": "Diwali (Balipratipada)",
+	"2026-11-25": "Guru Nanak Jayanti",
+}
+
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
-	topN := flag.Int("top", 10, "signals to print per scan run")
-	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
-	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
-	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
-	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
-	exchange := flag.String("exchange", "NSE", "Kite exchange")
-	dev := flag.Bool("dev", false, "disable market hours check (useful for testing)")
+	topN        := flag.Int("top", 10, "signals to print per scan run")
+	minRR       := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
+	emaMargin   := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
+	minVolume   := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	interval    := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
+	period      := flag.String("period", "2y", "historical candle window for EMA/zone computation")
+	exchange    := flag.String("exchange", "NSE", "Kite exchange")
+	dev         := flag.Bool("dev", false, "disable market hours check (useful for testing)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -168,13 +204,19 @@ func main() {
 		log.Printf("⚠  --dev mode: market hours check disabled")
 	}
 
-	scanOpts := scanner.Options{MinRR: *minRR, EMAMarginPct: *emaMargin}
+	scanOpts := scanner.Options{
+		MinRR:        *minRR,
+		EMAMarginPct: *emaMargin,
+		MinAvgVolume: *minVolume,
+	}
+
+	state := newScanState()
 
 	// Run immediately so the first results appear right after connect,
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(now, ws, historyCache, symbolToken, scanOpts, *topN)
+		runScan(now, ws, historyCache, symbolToken, scanOpts, *topN, state)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -187,19 +229,80 @@ func main() {
 			return
 		case t := <-ticker.C:
 			if !*dev && !isMarketOpen(t) {
-				log.Printf("[%s IST] outside market hours (09:15–15:30 Mon–Fri) — skipping",
-					t.In(ist).Format("15:04:05"))
+				local := t.In(ist)
+				if name, ok := nseHolidays[local.Format("2006-01-02")]; ok {
+					log.Printf("[%s IST] NSE holiday: %s — skipping",
+						local.Format("15:04:05"), name)
+				} else {
+					log.Printf("[%s IST] outside market hours (09:15–15:30 Mon–Fri) — skipping",
+						local.Format("15:04:05"))
+				}
 				continue
 			}
-			runScan(t, ws, historyCache, symbolToken, scanOpts, *topN)
+			runScan(t, ws, historyCache, symbolToken, scanOpts, *topN, state)
 		}
 	}
 }
 
+// ── Scan state ────────────────────────────────────────────────────────────────
+
+// scanState tracks which symbols appeared in the previous scan so new
+// arrivals can be flagged [NEW] and persistent signals show a streak count.
+type scanState struct {
+	initialized bool
+	prevSymbols map[string]bool
+	streaks     map[string]int
+}
+
+func newScanState() *scanState {
+	return &scanState{
+		prevSymbols: make(map[string]bool),
+		streaks:     make(map[string]int),
+	}
+}
+
+// advance updates state with the current signal set and returns the symbols
+// that are new (present now but absent last scan).
+//
+// On the very first call (before any scan has completed) no symbols are
+// marked as new — prevSymbols is empty and marking everything [NEW] would
+// be noisy without providing signal.
+func (s *scanState) advance(signals []scanner.StockSignal) map[string]bool {
+	current := make(map[string]bool, len(signals))
+	newSymbols := make(map[string]bool)
+
+	for _, sig := range signals {
+		sym := sig.Symbol
+		current[sym] = true
+		if s.initialized && !s.prevSymbols[sym] {
+			// Appeared this scan but not last — genuinely new signal.
+			newSymbols[sym] = true
+			s.streaks[sym] = 1
+		} else {
+			// Present on first scan (streak starts at 1) or consecutive scan
+			// (streak increments). The zero-value for a missing map key means
+			// 0++ = 1 on first appearance.
+			s.streaks[sym]++
+		}
+	}
+
+	// Remove streak entries for symbols that dropped out.
+	for sym := range s.streaks {
+		if !current[sym] {
+			delete(s.streaks, sym)
+		}
+	}
+
+	s.prevSymbols = current
+	s.initialized = true
+	return newSymbols
+}
+
+// ── Scan helpers ──────────────────────────────────────────────────────────────
+
 // runScan builds scanner inputs by merging historical candles with the latest
-// live tick for each symbol, runs the scanner, and prints results.
-// Volume is projected to a full-day equivalent based on session elapsed time
-// so it can be fairly compared against the historical full-day rolling average.
+// live tick for each symbol, runs the scanner, updates scan state, and prints
+// results.
 func runScan(
 	at time.Time,
 	ws *kite.WSClient,
@@ -207,6 +310,7 @@ func runScan(
 	symbolToken map[string]uint32,
 	opts scanner.Options,
 	topN int,
+	state *scanState,
 ) {
 	volFrac := sessionElapsedFraction(at)
 	var inputs []scanner.Input
@@ -226,7 +330,8 @@ func runScan(
 	}
 
 	signals, _ := scanner.ScanWithErrors(inputs, opts)
-	printScan(at, signals, topN, len(history), noTick, volFrac)
+	newSymbols := state.advance(signals)
+	printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks)
 }
 
 // buildInput creates a scanner.Input by appending (or replacing) a synthetic
@@ -272,9 +377,18 @@ func buildInput(sym string, historical []models.Candle, tick kite.Tick, volFrac 
 }
 
 // printScan prints ranked signals to stdout in a compact terminal-friendly format.
-// volFrac is passed so the footer can show the session-elapsed percentage used
-// for volume projection.
-func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick int, volFrac float64) {
+//
+//   - volFrac: fraction of NSE session elapsed, used to label volume as "est."
+//   - newSymbols: symbols appearing for the first time since the last scan → [NEW]
+//   - streaks: consecutive-scan count per symbol → ×N shown when N > 1
+func printScan(
+	at time.Time,
+	signals []scanner.StockSignal,
+	topN, total, noTick int,
+	volFrac float64,
+	newSymbols map[string]bool,
+	streaks map[string]int,
+) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	banner := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
 	fmt.Printf("\n%s\n", banner)
@@ -288,8 +402,18 @@ func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick 
 	}
 
 	for i, sig := range signals[:top] {
-		fmt.Printf("\n  %d. %-14s  ₹%-9.2f  Score: %.0f/100\n",
-			i+1, sig.Symbol, sig.Price, sig.Score)
+		// Build a tag that tells the user whether this signal is brand new or
+		// how many consecutive scans it has persisted through.
+		tag := ""
+		switch {
+		case newSymbols[sig.Symbol]:
+			tag = "  [NEW]"
+		case streaks[sig.Symbol] > 1:
+			tag = fmt.Sprintf("  ×%d", streaks[sig.Symbol])
+		}
+
+		fmt.Printf("\n  %d. %-14s  ₹%-9.2f  Score: %.0f/100%s\n",
+			i+1, sig.Symbol, sig.Price, sig.Score, tag)
 
 		// Score breakdown — shows exactly how each component contributed.
 		fmt.Printf("     ├ Trend:   %.0f/40  R/R: %.0f/30  Support: %.0f/20",
@@ -334,6 +458,8 @@ func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick 
 	fmt.Printf("%s\n", strings.Repeat("━", len(banner)))
 }
 
+// ── Market hours helpers ───────────────────────────────────────────────────────
+
 // sessionElapsedFraction returns the fraction of the NSE trading session
 // (09:15–15:30 IST = 375 minutes) that has elapsed at time t.
 //
@@ -360,16 +486,19 @@ func sessionElapsedFraction(t time.Time) float64 {
 	return elapsed / totalMins
 }
 
-// isMarketOpen returns true if t is within NSE trading hours:
-// Monday–Friday, 09:15–15:30 IST.
+// isMarketOpen returns true if t falls within NSE trading hours:
+// Monday–Friday, 09:15–15:30 IST, excluding public holidays.
 func isMarketOpen(t time.Time) bool {
 	local := t.In(ist)
 	switch local.Weekday() {
 	case time.Saturday, time.Sunday:
 		return false
 	}
+	if _, holiday := nseHolidays[local.Format("2006-01-02")]; holiday {
+		return false
+	}
 	y, m, d := local.Date()
-	open := time.Date(y, m, d, 9, 15, 0, 0, ist)
+	open   := time.Date(y, m, d, 9, 15, 0, 0, ist)
 	close_ := time.Date(y, m, d, 15, 30, 0, 0, ist)
 	return !local.Before(open) && !local.After(close_)
 }

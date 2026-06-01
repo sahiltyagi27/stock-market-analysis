@@ -512,6 +512,42 @@ func TestScan_EMAMarginFilter_DisabledWhenNegative(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Minimum average volume (liquidity) filter
+// ---------------------------------------------------------------------------
+
+func TestScan_MinAvgVolumeFilter_FiltersIlliquid(t *testing.T) {
+	// makeTrendingCandles with baseVolume=50_000 → rolling avg ≈ 50k.
+	// MinAvgVolume=200_000 must reject it.
+	candles := makeTrendingCandles("ILLIQ", 100, 50_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "ILLIQ", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Errorf("expected illiquid stock (avg vol ~50k) to be filtered at threshold 200k, got signal")
+	}
+}
+
+func TestScan_MinAvgVolumeFilter_PassesLiquidStock(t *testing.T) {
+	// avg vol ≈ 1_000_000 >> 200_000 minimum.
+	candles := makeTrendingCandles("LIQUID", 100, 1_000_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 200_000}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "LIQUID", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected liquid stock (avg vol 1M) to pass at threshold 200k, got no signal")
+	}
+}
+
+func TestScan_MinAvgVolumeFilter_DisabledWhenZero(t *testing.T) {
+	// MinAvgVolume=0 disables the filter entirely; low-volume stock should
+	// pass all other filters and produce a signal.
+	candles := makeTrendingCandles("LOW", 100, 50_000)
+	opts := scanner.Options{MinRR: 2.0, VolumeWindow: 20, MinAvgVolume: 0}
+	signals := scanner.Scan([]scanner.Input{{Symbol: "LOW", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected MinAvgVolume=0 to disable the filter, got no signals")
+	}
+}
+
 func TestScan_ScoreMaxIs100(t *testing.T) {
 	// Score components: 40+30+20+10 = 100 max.
 	// A bullish stock with excellent R/R, 4+ touch support, and high volume

@@ -35,6 +35,9 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **Kite Connect** — token exchange, instrument lookup, historical data sync
 - ✅ **Score Breakdown** — per-component score transparency (trend / R/R / support / volume)
 - ✅ **Live Scanner** — Kite WebSocket (full mode), runs every 2 min during market hours, merges live ticks with DB history
+- ✅ **NSE Holiday Calendar** — automatically skips all NSE trading holidays (no false "no signals" on holidays)
+- ✅ **Signal Persistence** — new signals marked `[NEW]`; consecutive appearances show a streak counter `×N`
+- ✅ **Liquidity Filter** — optional minimum avg daily volume threshold to exclude illiquid stocks
 
 ---
 
@@ -295,6 +298,7 @@ Available flags:
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
 | `--interval` | `2m` | Scan interval (e.g. `30s`, `2m`, `5m`) |
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
+| `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -304,8 +308,8 @@ Example output:
 ```
 ━━━  Live Scan  02-Jun-2026  10:15:00 IST  ━━━
 
-  1. HDFCBANK        ₹1625.50    Score: 87/100
-     ├ Trend:   40/40  R/R: 22/30  Support: 20/20  Volume: 5/10 (3500000 vs avg 2100000 = 1.67x)
+  1. HDFCBANK        ₹1625.50    Score: 87/100  ×3
+     ├ Trend:   40/40  R/R: 22/30  Support: 20/20  Volume: 5/10 (est. 3500000 vs avg 2100000 = 1.67x)
      ├ Trend: bullish   R/R: 2.85 (good)
      ├ Entry: 1625.50   SL: 1580.20   Target: 1750.00
      ├ Support:    1580.00–1590.00 (3 touches)
@@ -317,9 +321,18 @@ Example output:
          • Trade quality: good
          • Volume 1.7x above rolling average
 
+  2. TATASTEEL       ₹142.30     Score: 74/100  [NEW]
+     ├ Trend:   40/40  R/R: 18/30  Support: 15/20  Volume: 1/10 (est. 8200000 vs avg 9100000 = 0.90x)
+     ...
+
   ──────────────────────────────────────────────────────
-  Scanned: 487   Signals: 5    No tick yet: 13
+  Scanned: 487   Signals: 6    No tick yet: 8
+  * volume projected to full-day (48% of session elapsed)
 ```
+
+**Signal tags:**
+- `×N` — signal has appeared in N consecutive scans (e.g. `×3` = present for 6 minutes straight)
+- `[NEW]` — appeared in this scan but was absent from the previous one
 
 > **Prerequisites:** `KITE_API_KEY` and `KITE_ACCESS_TOKEN` must be set. Refresh the access token daily with `cmd/kite-token`. Populate the DB with `cmd/kite-sync` before the first run.
 
@@ -406,6 +419,7 @@ Available flags:
 | `--csv-dir` | _none_ | Scan all CSV files in a folder |
 | `--symbol` | CSV filename | Symbol for `--csv`, or single-symbol filter for `--db` |
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
+| `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:
