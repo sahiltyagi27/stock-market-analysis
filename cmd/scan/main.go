@@ -295,7 +295,15 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 		fmt.Printf("     Trend:   %.1f / 40\n", sig.Breakdown.Trend)
 		fmt.Printf("     R/R:     %.1f / 30\n", sig.Breakdown.RR)
 		fmt.Printf("     Support: %.1f / 20\n", sig.Breakdown.Support)
-		fmt.Printf("     Volume:  %.1f / 10\n", sig.Breakdown.Volume)
+		if sig.Breakdown.AvgVolume > 0 {
+			fmt.Printf("     Volume:  %.1f / 10  (latest %.0f, avg20 %.0f, %.2fx)\n",
+				sig.Breakdown.Volume,
+				sig.Breakdown.LastVolume,
+				sig.Breakdown.AvgVolume,
+				sig.Breakdown.VolumeRatio)
+		} else {
+			fmt.Printf("     Volume:  %.1f / 10  (no prior volume average)\n", sig.Breakdown.Volume)
+		}
 		fmt.Printf("   Price:      %.2f\n", sig.Price)
 		fmt.Printf("   Trend:      %s\n", sig.Trend)
 		fmt.Printf("   R/R:        %.2f  (%s)\n", sig.Trade.RiskReward, sig.Trade.Quality)

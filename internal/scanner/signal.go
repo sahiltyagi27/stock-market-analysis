@@ -30,10 +30,13 @@ type StockSignal struct {
 
 // ScoreBreakdown explains how StockSignal.Score was composed.
 type ScoreBreakdown struct {
-	Trend   float64 `json:"trend"`
-	RR      float64 `json:"rr"`
-	Support float64 `json:"support"`
-	Volume  float64 `json:"volume"`
+	Trend       float64 `json:"trend"`
+	RR          float64 `json:"rr"`
+	Support     float64 `json:"support"`
+	Volume      float64 `json:"volume"`
+	AvgVolume   float64 `json:"avg_volume"`
+	LastVolume  float64 `json:"last_volume"`
+	VolumeRatio float64 `json:"volume_ratio"`
 }
 
 // Diagnostic explains how far one stock got through the scanner pipeline,
