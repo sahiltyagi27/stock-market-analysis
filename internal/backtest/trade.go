@@ -16,9 +16,15 @@ import "time"
 type Outcome string
 
 const (
-	OutcomeWin     Outcome = "win"
-	OutcomeLoss    Outcome = "loss"
-	OutcomeTimeout Outcome = "timeout"
+	OutcomeWin       Outcome = "win"
+	OutcomeLoss      Outcome = "loss"
+	OutcomeTimeout   Outcome = "timeout"
+	// OutcomeTrailStop is recorded when the ATR-based trailing stop is hit.
+	// The trade was at some point profitable (highestHigh > entry) before the
+	// trailing stop caught a reversal.  ActualRR can be positive (protected
+	// profit), zero (breakeven), or slightly negative (stop moved above original
+	// SL but still below entry).
+	OutcomeTrailStop Outcome = "trail_stop"
 )
 
 // TradeResult records the full lifecycle of one simulated trade.
