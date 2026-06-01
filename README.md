@@ -342,6 +342,10 @@ Example output:
 
 1. HDFCBANK
    Score:      86.5 / 100
+     Trend:   40.0 / 40
+     R/R:     22.5 / 30
+     Support: 20.0 / 20
+     Volume:  4.0 / 10
    Price:      786.85
    Trend:      bullish
    R/R:        2.80  (good)

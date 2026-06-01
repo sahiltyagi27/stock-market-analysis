@@ -16,10 +16,20 @@ const (
 )
 
 func score(sig *StockSignal, avgVolume, lastVolume float64) float64 {
-	return trendScore(sig.Trend) +
-		rrScore(sig.Trade.Quality) +
-		supportScore(sig.Support) +
-		volumeScore(avgVolume, lastVolume)
+	return scoreBreakdown(sig, avgVolume, lastVolume).Total()
+}
+
+func scoreBreakdown(sig *StockSignal, avgVolume, lastVolume float64) ScoreBreakdown {
+	return ScoreBreakdown{
+		Trend:   trendScore(sig.Trend),
+		RR:      rrScore(sig.Trade.Quality),
+		Support: supportScore(sig.Support),
+		Volume:  volumeScore(avgVolume, lastVolume),
+	}
+}
+
+func (b ScoreBreakdown) Total() float64 {
+	return b.Trend + b.RR + b.Support + b.Volume
 }
 
 func trendScore(t Trend) float64 {

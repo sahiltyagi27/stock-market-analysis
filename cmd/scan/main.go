@@ -292,6 +292,10 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 	for i, sig := range signals[:top] {
 		fmt.Printf("\n%d. %s\n", i+1, sig.Symbol)
 		fmt.Printf("   Score:      %.1f / 100\n", sig.Score)
+		fmt.Printf("     Trend:   %.1f / 40\n", sig.Breakdown.Trend)
+		fmt.Printf("     R/R:     %.1f / 30\n", sig.Breakdown.RR)
+		fmt.Printf("     Support: %.1f / 20\n", sig.Breakdown.Support)
+		fmt.Printf("     Volume:  %.1f / 10\n", sig.Breakdown.Volume)
 		fmt.Printf("   Price:      %.2f\n", sig.Price)
 		fmt.Printf("   Trend:      %s\n", sig.Trend)
 		fmt.Printf("   R/R:        %.2f  (%s)\n", sig.Trade.RiskReward, sig.Trade.Quality)
