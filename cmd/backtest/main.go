@@ -62,10 +62,11 @@ func main() {
 	maxEMA50Extension  := flag.Float64("max-ema50-extension", 15.0, "max %% above EMA50 (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "max %% above support high (<0 disables)")
 	maxMove10D          := flag.Float64("max-10d-move", 12.0, "max 10-candle %% move (<0 disables)")
-	maxRiskPct          := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
-	minRiskPct          := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
-	allowBearishCandle  := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
-	ema200SlopePeriod   := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	maxRiskPct         := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
+	minRiskPct         := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
+	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
+	ema200SlopePeriod  := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	trailATRMult       := flag.Float64("trail-atr-mult", 1.5, "ATR multiplier for trailing stop: trailSL = highestHigh − mult×ATR (≤0 disables)")
 
 	flag.Parse()
 
@@ -152,12 +153,13 @@ func main() {
 	}
 
 	opts := backtest.Options{
-		From:      from,
-		To:        to,
-		MinScore:  *minScore,
-		MaxHold:   *maxHold,
-		Workers:   *workers,
-		ScanOpts:  scanOpts,
+		From:               from,
+		To:                 to,
+		MinScore:           *minScore,
+		MaxHold:            *maxHold,
+		Workers:            *workers,
+		TrailATRMultiplier: *trailATRMult,
+		ScanOpts:           scanOpts,
 		Progress: func(done, total int) {
 			if done%50 == 0 || done == total {
 				log.Printf("  simulating: %d/%d symbols…", done, total)
@@ -273,8 +275,8 @@ func printSummary(s backtest.Summary, fromLabel, toLabel string) {
 	fmt.Printf("  %s %s  %s\n",
 		display.Dim.Sprint("Win rate      :"),
 		winRateStr+display.Dim.Sprint("%"),
-		display.Dim.Sprintf("(%d wins / %d losses / %d timeouts)",
-			s.Wins, s.Losses, s.Timeouts))
+		display.Dim.Sprintf("(%d wins / %d losses / %d trail stops / %d timeouts)",
+			s.Wins, s.Losses, s.TrailStops, s.Timeouts))
 
 	fmt.Printf("  %s %s\n",
 		display.Dim.Sprint("Avg winner    :"),
@@ -295,6 +297,12 @@ func printSummary(s backtest.Summary, fromLabel, toLabel string) {
 		expStr,
 		display.Dim.Sprint("per trade"))
 
+	if s.TrailStops > 0 {
+		fmt.Printf("  %s %s  %s\n",
+			display.Dim.Sprint("Trail stops   :"),
+			display.Cyan.Sprintf("%d", s.TrailStops),
+			display.Dim.Sprintf("(avg exit %+.2fR)", s.AvgTrailStopRR))
+	}
 	fmt.Printf("  %s %s\n",
 		display.Dim.Sprint("Max consec L  :"),
 		display.Red.Sprintf("%d", s.MaxConsecLoss))
@@ -328,6 +336,8 @@ func outcomeLabel(o backtest.Outcome) string {
 		return display.BoldGreen.Sprint("✅ WIN    ")
 	case backtest.OutcomeLoss:
 		return display.Red.Sprint("❌ LOSS   ")
+	case backtest.OutcomeTrailStop:
+		return display.Cyan.Sprint("📈 TRAIL  ")
 	default:
 		return display.Yellow.Sprint("⏱ TIMEOUT")
 	}

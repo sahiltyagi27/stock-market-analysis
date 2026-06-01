@@ -31,6 +31,16 @@ type Options struct {
 	// Default: 8.
 	Workers int
 
+	// TrailATRMultiplier sets the ATR-based trailing stop distance.
+	// Once the trade's highest intraday price exceeds the entry, the trailing
+	// stop is placed at:
+	//
+	//   highestHigh − TrailATRMultiplier × ATR
+	//
+	// and only ever moves upward.  ATR is the value computed at signal time
+	// (stored in TradeResult.ATR).  Default: 1.5.  Set to ≤ 0 to disable.
+	TrailATRMultiplier float64
+
 	// ScanOpts are passed through to scanner.Scan on every signal day.
 	ScanOpts scanner.Options
 
@@ -60,6 +70,9 @@ func Run(_ context.Context, candles map[string][]models.Candle, opts Options) []
 	}
 	if opts.Workers <= 0 {
 		opts.Workers = 8
+	}
+	if opts.TrailATRMultiplier == 0 {
+		opts.TrailATRMultiplier = 1.5
 	}
 
 	symbols := make([]string, 0, len(candles))
@@ -172,7 +185,13 @@ func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeRe
 		}
 
 		// Walk forward starting from the entry candle.
-		outcome, exitPrice, holdDays := walkForward(entry, sl, target, candles[i+1:], opts.MaxHold)
+		outcome, exitPrice, holdDays := walkForward(
+			entry, sl, target,
+			sig.Trade.ATR,
+			candles[i+1:],
+			opts.MaxHold,
+			opts.TrailATRMultiplier,
+		)
 
 		// exitIdx is the 0-based index into candles[] where the trade closed.
 		// walkForward holdDays=1 means closed on candles[i+1], so exitIdx = i+1.
@@ -209,27 +228,69 @@ func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeRe
 }
 
 // walkForward advances through candles from the entry candle until the trade
-// is resolved. The first element of candles is the entry candle.
+// is resolved.  The first element of candles is the entry candle (entered at
+// open).
 //
-// Pessimistic tie-breaking: when both SL and Target are hit on the same candle,
-// the stop-loss is recorded (loss).
+// ATR trailing stop:
+//
+//	When trailATRMult > 0 and atr > 0, a trailing stop is computed as:
+//	  trailSL = highestHigh − trailATRMult × atr
+//	The trailing stop only activates once the highest intraday High seen
+//	exceeds the entry price (trade is profitable).  It only moves upward —
+//	never below the original sl.
+//
+// Pessimistic tie-breaking on the same candle:
+//   - stop (trailing or fixed) checked before target
+//   - if both trailing stop and target fire on the same candle → trail stop
 //
 // Returns (outcome, exitPrice, holdDays) where holdDays is 1-indexed
 // (1 = closed on the entry candle itself).
-func walkForward(entry, sl, target float64, candles []models.Candle, maxHold int) (Outcome, float64, int) {
+func walkForward(entry, sl, target, atr float64, candles []models.Candle, maxHold int, trailATRMult float64) (Outcome, float64, int) {
+	stopLevel := sl        // current effective stop; only ever moves up
+	highestHigh := entry   // highest intraday High seen (starts at entry)
+	trailBuffer := trailATRMult * atr
+	trailingActive := trailATRMult > 0 && atr > 0 && trailBuffer > 0
+
 	for i, c := range candles {
 		holdDays := i + 1
-		// Pessimistic: check SL before Target.
-		if c.Low <= sl {
+
+		// ── Step 1: check current stop (pessimistic — before any updates) ──────
+		if c.Low <= stopLevel {
+			if stopLevel > sl {
+				// Trailing stop moved above the original SL → trail exit.
+				return OutcomeTrailStop, stopLevel, holdDays
+			}
 			return OutcomeLoss, sl, holdDays
 		}
+
+		// ── Step 2: target hit ───────────────────────────────────────────────
 		if c.High >= target {
 			return OutcomeWin, target, holdDays
 		}
+
+		// ── Step 3: max-hold timeout ─────────────────────────────────────────
 		if holdDays >= maxHold {
 			return OutcomeTimeout, c.Close, holdDays
 		}
+
+		// ── Step 4: update highest high AFTER this candle's checks ───────────
+		// This ensures the raised trailing stop only applies from the next candle,
+		// preventing a same-candle raise-and-trigger paradox.
+		if c.High > highestHigh {
+			highestHigh = c.High
+		}
+
+		// ── Step 5: raise trailing stop for the next candle ──────────────────
+		// Trailing activates only once price has exceeded entry intraday
+		// (trade is in profit), then the stop can only move upward.
+		if trailingActive && highestHigh > entry {
+			newTrailSL := highestHigh - trailBuffer
+			if newTrailSL > stopLevel {
+				stopLevel = newTrailSL
+			}
+		}
 	}
+
 	// Ran out of history before resolution — exit at the last close.
 	if len(candles) == 0 {
 		return OutcomeTimeout, entry, 1

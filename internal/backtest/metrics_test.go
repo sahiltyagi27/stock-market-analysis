@@ -83,10 +83,52 @@ func TestCompute_Mixed(t *testing.T) {
 	if math.Abs(s.ProfitFactor-wantPF) > 1e-9 {
 		t.Fatalf("expected ProfitFactor=%.2f, got %.4f", wantPF, s.ProfitFactor)
 	}
-	// Expectancy = (2/3)*2.5 + (1/3)*(-1.0) = 1.6667 - 0.3333 = 1.3333
-	wantE := (2.0/3.0)*2.5 + (1.0/3.0)*(-1.0)
+	// Expectancy = (sumWinR + sumLossR) / total = (3+2-1) / 3 = 4/3
+	wantE := (3.0 + 2.0 - 1.0) / 3.0
 	if math.Abs(s.Expectancy-wantE) > 1e-6 {
 		t.Fatalf("expected Expectancy=%.4f, got %.4f", wantE, s.Expectancy)
+	}
+}
+
+func TestCompute_TrailStops(t *testing.T) {
+	results := []TradeResult{
+		{Outcome: OutcomeWin, ActualRR: 3.0, HoldDays: 5},
+		{Outcome: OutcomeTrailStop, ActualRR: 1.5, HoldDays: 8},  // profitable trail exit
+		{Outcome: OutcomeTrailStop, ActualRR: -0.3, HoldDays: 4}, // slight-loss trail exit
+		{Outcome: OutcomeLoss, ActualRR: -1.0, HoldDays: 2},
+	}
+	s := Compute(results)
+
+	if s.TrailStops != 2 {
+		t.Fatalf("expected TrailStops=2, got %d", s.TrailStops)
+	}
+	// WinRate = wins/(wins+losses) = 1/(1+1) = 50% (trail stops excluded)
+	if math.Abs(s.WinRate-50.0) > 1e-6 {
+		t.Fatalf("expected WinRate=50, got %.2f", s.WinRate)
+	}
+	// AvgTrailStopRR = (1.5 + (-0.3)) / 2 = 0.6
+	wantAvgTrail := (1.5 - 0.3) / 2.0
+	if math.Abs(s.AvgTrailStopRR-wantAvgTrail) > 1e-6 {
+		t.Fatalf("expected AvgTrailStopRR=%.4f, got %.4f", wantAvgTrail, s.AvgTrailStopRR)
+	}
+	// Expectancy = (3.0 + 1.5 - 0.3 - 1.0) / 4 = 3.2/4 = 0.8
+	wantE := (3.0 + 1.5 - 0.3 - 1.0) / 4.0
+	if math.Abs(s.Expectancy-wantE) > 1e-6 {
+		t.Fatalf("expected Expectancy=%.4f, got %.4f", wantE, s.Expectancy)
+	}
+}
+
+func TestCompute_TrailStop_BreaksThenResumesLossStreak(t *testing.T) {
+	// Loss streak of 2, profitable trail stop resets it, then 1 more loss.
+	results := []TradeResult{
+		{Outcome: OutcomeLoss, ActualRR: -1.0},
+		{Outcome: OutcomeLoss, ActualRR: -1.0},
+		{Outcome: OutcomeTrailStop, ActualRR: 0.5}, // profitable → resets streak
+		{Outcome: OutcomeLoss, ActualRR: -1.0},
+	}
+	s := Compute(results)
+	if s.MaxConsecLoss != 2 {
+		t.Fatalf("expected MaxConsecLoss=2, got %d", s.MaxConsecLoss)
 	}
 }
 
