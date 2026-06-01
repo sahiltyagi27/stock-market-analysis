@@ -72,6 +72,32 @@ type Options struct {
 	// SL = support.Low − ATRMultiplier × ATR14.
 	ATRMultiplier float64
 
+	// AllowBearishCandle disables the hard bullish-candle-at-support requirement.
+	// By default (false) the scanner rejects setups where the signal candle closed
+	// below its open — a stock still declining into a support zone has not confirmed
+	// a bounce. Set to true to fall back to the soft −5 score penalty only.
+	AllowBearishCandle bool
+
+	// MaxRiskPct is the maximum stop-loss distance as a percentage of entry price.
+	// ATR-based stops on high-volatility stocks can push the SL 10 %+ away; that
+	// level of adverse move on a daily chart usually represents a trend reversal,
+	// not a normal correction, so such setups are rejected.
+	// Default: 8.0.  Set to < 0 to disable.
+	MaxRiskPct float64
+
+	// MinRiskPct is the minimum stop-loss distance as a percentage of entry price.
+	// Stops tighter than ~1.5 % on a daily chart lie within normal bid/ask noise
+	// and are triggered without the zone actually breaking.
+	// Default: 1.5.  Set to < 0 to disable.
+	MinRiskPct float64
+
+	// EMA200SlopePeriod enables a trend-quality check: the EMA200 at today must be
+	// higher than the EMA200 computed EMA200SlopePeriod candles ago.  A declining
+	// EMA200 means the macro uptrend is deteriorating even if the current price
+	// sits above it — those setups tend to grind through support over months.
+	// Default: 20.  Set to ≤ 0 to disable.
+	EMA200SlopePeriod int
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -127,6 +153,19 @@ func (o *Options) withDefaults() Options {
 	// meaningful; fewer candles produce an unreliable trend signal.
 	if out.MinCandles <= 0 {
 		out.MinCandles = 200
+	}
+	// Risk % bounds: cap the SL distance as a fraction of entry price.
+	// Values of 0 trigger the defaults; use < 0 to disable the check.
+	if out.MaxRiskPct == 0 {
+		out.MaxRiskPct = 8.0
+	}
+	if out.MinRiskPct == 0 {
+		out.MinRiskPct = 1.5
+	}
+	// EMA200 slope: require the EMA200 to be rising over this many candles.
+	// 0 triggers the default; ≤ 0 after defaulting disables the check.
+	if out.EMA200SlopePeriod == 0 {
+		out.EMA200SlopePeriod = 20
 	}
 	return out
 }
@@ -233,6 +272,9 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	highs := extractHighs(in.Candles)
 	lows := extractLows(in.Candles)
 
+	// Extract the last candle early — needed for the bullish-candle filter and scoring.
+	lastCandle := in.Candles[len(in.Candles)-1]
+
 	// --- EMA ---
 	emas := analysis.ComputeEMAs(closes)
 	price := closes[len(closes)-1]
@@ -255,6 +297,35 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 				price, gapPct, emas.EMA200, opts.EMAMarginPct,
 			)
 		}
+	}
+
+	// EMA200 slope filter: require the 200-period EMA to be RISING.
+	// A declining EMA200 means the macro uptrend is deteriorating even though
+	// price currently sits above it — these setups tend to grind through
+	// support over weeks or months before the stop is finally hit.
+	if opts.EMA200SlopePeriod > 0 {
+		slopeIdx := len(closes) - opts.EMA200SlopePeriod
+		if slopeIdx >= 200 { // need enough candles for a reliable past EMA200
+			pastEMAs := analysis.ComputeEMAs(closes[:slopeIdx])
+			if pastEMAs.EMA200 > 0 && emas.EMA200 < pastEMAs.EMA200 {
+				return nil, fmt.Errorf(
+					"EMA200 declining: current %.2f < %.2f (%d candles ago) — macro trend weakening",
+					emas.EMA200, pastEMAs.EMA200, opts.EMA200SlopePeriod,
+				)
+			}
+		}
+	}
+
+	// Bullish candle requirement: the signal candle must close at or above its
+	// open.  A bearish close means the stock is still declining into the support
+	// zone, not bouncing from it — entering into active selling pressure is a
+	// low-probability setup.  Set AllowBearishCandle = true to fall back to the
+	// soft −5 score penalty instead.
+	if !opts.AllowBearishCandle && lastCandle.Close < lastCandle.Open {
+		return nil, fmt.Errorf(
+			"signal candle bearish (close %.2f < open %.2f): no bounce confirmation at support zone",
+			lastCandle.Close, lastCandle.Open,
+		)
 	}
 
 	// --- Zones ---
@@ -283,6 +354,27 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		return nil, fmt.Errorf("R/R %.2f below minimum %.2f", ta.Long.RiskReward, opts.MinRR)
 	}
 
+	// Risk-percentage bounds: cap the SL distance as a fraction of entry price.
+	// ATR-based stops on volatile stocks can push the SL 10 %+ below entry —
+	// that magnitude of adverse move on a daily chart usually signals a trend
+	// change rather than a normal pullback, so such setups are filtered out.
+	// A stop tighter than MinRiskPct % lies within daily bid/ask noise.
+	{
+		riskPct := ta.Long.Risk / ta.Long.Entry * 100
+		if opts.MaxRiskPct > 0 && riskPct > opts.MaxRiskPct {
+			return nil, fmt.Errorf(
+				"risk %.1f%% exceeds max %.1f%%: SL too far for a daily swing trade",
+				riskPct, opts.MaxRiskPct,
+			)
+		}
+		if opts.MinRiskPct > 0 && riskPct < opts.MinRiskPct {
+			return nil, fmt.Errorf(
+				"risk %.1f%% below min %.1f%%: SL too tight, noise-level stop",
+				riskPct, opts.MinRiskPct,
+			)
+		}
+	}
+
 	ext := extensionDiagnostics(price, closes, emas, support)
 	if err := validateExtension(ext, opts); err != nil {
 		return nil, err
@@ -308,7 +400,6 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Trade:      *ta.Long,
 	}
 	sig.Extension = ext
-	lastCandle := in.Candles[len(in.Candles)-1]
 	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol, lastCandle.Open, lastCandle.Close)
 	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
