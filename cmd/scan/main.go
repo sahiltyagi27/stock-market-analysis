@@ -68,6 +68,8 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
+	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
@@ -94,6 +96,8 @@ func main() {
 		MaxSupportExtensionPct: *maxSupportExtension,
 		MaxMove10DPct:          *maxMove10D,
 		MaxBreakoutDistancePct: *maxBreakoutDistance,
+		ATRPeriod:              *atrPeriod,
+		ATRMultiplier:          *atrMultiplier,
 		ZoneOpts:               analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
 	}
 	if *mode != "swing" && *mode != "breakout" && *mode != "all" {
@@ -418,11 +422,16 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 			display.RR(sig.Trade.RiskReward),
 			display.Dim.Sprint("(")+display.Quality(string(sig.Trade.Quality))+display.Dim.Sprint(")"))
 
-		// Entry / SL / Target.
-		fmt.Printf("   %s  %.2f   %s %s   %s %s\n",
+		// Entry / SL / Target — show ATR period when ATR-based SL was used.
+		atrLabel := ""
+		if sig.Trade.ATR > 0 {
+			atrLabel = display.Dim.Sprintf("  (ATR14: %.2f)", sig.Trade.ATR)
+		}
+		fmt.Printf("   %s  %.2f   %s %s   %s %s%s\n",
 			display.Dim.Sprint("Entry:     "), sig.Trade.Entry,
 			display.Dim.Sprint("SL:"), display.Red.Sprintf("%.2f", sig.Trade.StopLoss),
-			display.Dim.Sprint("Target:"), display.Green.Sprintf("%.2f", sig.Trade.Target))
+			display.Dim.Sprint("Target:"), display.Green.Sprintf("%.2f", sig.Trade.Target),
+			atrLabel)
 
 		// Zones.
 		fmt.Printf("   %s  %.2f – %.2f  %s\n",

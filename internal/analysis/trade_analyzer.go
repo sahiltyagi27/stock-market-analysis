@@ -33,6 +33,7 @@ type TradeSetup struct {
 	Reward     float64   `json:"reward"`      // |Target - Entry|
 	RiskReward float64   `json:"risk_reward"` // Reward / Risk
 	Quality    Quality   `json:"quality"`
+	ATR        float64   `json:"atr,omitempty"` // ATR used for SL sizing; 0 = fixed buffer
 }
 
 // TradeAnalysis holds setups for both directions so the caller can pick
@@ -45,14 +46,28 @@ type TradeAnalysis struct {
 // AnalyzerOptions controls how the trade analyzer places stops and targets.
 type AnalyzerOptions struct {
 	// SLBufferPct is the distance beyond a zone boundary where the stop loss
-	// is placed, as a fraction of price. Default: 0.005 (0.5%).
+	// is placed as a fraction of price. Used when ATR is 0. Default: 0.005 (0.5%).
 	SLBufferPct float64
+
+	// ATR is the pre-computed Average True Range for the symbol. When > 0 it
+	// overrides SLBufferPct: the SL is placed ATRMultiplier × ATR beyond the
+	// zone boundary instead. This adapts the stop to actual price volatility —
+	// a stock moving ₹20/day needs a wider stop than one moving ₹2/day.
+	ATR float64
+
+	// ATRMultiplier scales the ATR distance for SL placement. Default: 1.5.
+	// A multiplier of 1.5 places the SL 1.5 average daily ranges beyond the
+	// zone edge — outside normal noise, but close enough to cap risk.
+	ATRMultiplier float64
 }
 
 func (o *AnalyzerOptions) withDefaults() AnalyzerOptions {
 	out := *o
 	if out.SLBufferPct <= 0 {
 		out.SLBufferPct = 0.005
+	}
+	if out.ATRMultiplier <= 0 {
+		out.ATRMultiplier = 1.5
 	}
 	return out
 }
@@ -86,11 +101,11 @@ func Analyze(price float64, support, resistance Zone, opts AnalyzerOptions) (Tra
 		return TradeAnalysis{}, ErrPriceOutOfRange
 	}
 
-	long, err := buildLong(price, support, resistance, o.SLBufferPct)
+	long, err := buildLong(price, support, resistance, o)
 	if err != nil {
 		return TradeAnalysis{}, err
 	}
-	short, err := buildShort(price, support, resistance, o.SLBufferPct)
+	short, err := buildShort(price, support, resistance, o)
 	if err != nil {
 		return TradeAnalysis{}, err
 	}
@@ -98,9 +113,14 @@ func Analyze(price float64, support, resistance Zone, opts AnalyzerOptions) (Tra
 	return TradeAnalysis{Long: &long, Short: &short}, nil
 }
 
-func buildLong(price float64, support, resistance Zone, slBuf float64) (TradeSetup, error) {
+func buildLong(price float64, support, resistance Zone, opts AnalyzerOptions) (TradeSetup, error) {
 	entry := round2(price)
-	sl := round2(support.Low * (1 - slBuf))
+	var sl float64
+	if opts.ATR > 0 {
+		sl = round2(support.Low - opts.ATRMultiplier*opts.ATR)
+	} else {
+		sl = round2(support.Low * (1 - opts.SLBufferPct))
+	}
 	target := round2(resistance.Mid)
 
 	risk := round2(entry - sl)
@@ -123,12 +143,18 @@ func buildLong(price float64, support, resistance Zone, slBuf float64) (TradeSet
 		Reward:     reward,
 		RiskReward: rr,
 		Quality:    GradeRR(rr),
+		ATR:        opts.ATR,
 	}, nil
 }
 
-func buildShort(price float64, support, resistance Zone, slBuf float64) (TradeSetup, error) {
+func buildShort(price float64, support, resistance Zone, opts AnalyzerOptions) (TradeSetup, error) {
 	entry := round2(price)
-	sl := round2(resistance.High * (1 + slBuf))
+	var sl float64
+	if opts.ATR > 0 {
+		sl = round2(resistance.High + opts.ATRMultiplier*opts.ATR)
+	} else {
+		sl = round2(resistance.High * (1 + opts.SLBufferPct))
+	}
 	target := round2(support.Mid)
 
 	risk := round2(sl - entry)
@@ -151,6 +177,7 @@ func buildShort(price float64, support, resistance Zone, slBuf float64) (TradeSe
 		Reward:     reward,
 		RiskReward: rr,
 		Quality:    GradeRR(rr),
+		ATR:        opts.ATR,
 	}, nil
 }
 
