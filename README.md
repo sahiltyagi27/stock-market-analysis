@@ -304,15 +304,17 @@ Example output:
 ━━━  Live Scan  02-Jun-2026  10:15:00 IST  ━━━
 
   1. HDFCBANK        ₹1625.50    Score: 87/100
-     Trend: bullish   R/R: 2.85 (good)
-     Entry: 1625.50   SL: 1580.20   Target: 1750.00
-     Support:    1580.00–1590.00 (3 touches)
-     Resistance: 1745.00–1760.00 (2 touches)
-     Reasons:
-       • Price above EMA50 (1520.00) and EMA200 (1380.00)
-       • Risk/Reward 2.85 exceeds minimum 2.00
-       • Support zone touched 3 times
-       • Trade quality: good
+     ├ Trend:   40/40  R/R: 22/30  Support: 20/20  Volume: 5/10 (3500000 vs avg 2100000 = 1.67x)
+     ├ Trend: bullish   R/R: 2.85 (good)
+     ├ Entry: 1625.50   SL: 1580.20   Target: 1750.00
+     ├ Support:    1580.00–1590.00 (3 touches)
+     ├ Resistance: 1745.00–1760.00 (2 touches)
+     └ Reasons:
+         • Price above EMA50 (1520.00) and EMA200 (1380.00)
+         • Risk/Reward 2.85 exceeds minimum 2.00
+         • Support zone touched 3 times
+         • Trade quality: good
+         • Volume 1.7x above rolling average
 
   ──────────────────────────────────────────────────────
   Scanned: 487   Signals: 5    No tick yet: 13

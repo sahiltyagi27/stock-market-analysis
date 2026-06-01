@@ -267,17 +267,31 @@ func printScan(at time.Time, signals []scanner.StockSignal, topN, total, noTick 
 	for i, sig := range signals[:top] {
 		fmt.Printf("\n  %d. %-14s  ₹%-9.2f  Score: %.0f/100\n",
 			i+1, sig.Symbol, sig.Price, sig.Score)
-		fmt.Printf("     Trend: %-8s  R/R: %.2f (%s)\n",
+
+		// Score breakdown — shows exactly how each component contributed.
+		fmt.Printf("     ├ Trend:   %.0f/40  R/R: %.0f/30  Support: %.0f/20",
+			sig.Breakdown.Trend, sig.Breakdown.RR, sig.Breakdown.Support)
+		if sig.Breakdown.AvgVolume > 0 {
+			fmt.Printf("  Volume: %.0f/10 (%.0f vs avg %.0f = %.2fx)\n",
+				sig.Breakdown.Volume,
+				sig.Breakdown.LastVolume,
+				sig.Breakdown.AvgVolume,
+				sig.Breakdown.VolumeRatio)
+		} else {
+			fmt.Printf("  Volume: %.0f/10 (no prior volume avg)\n", sig.Breakdown.Volume)
+		}
+
+		fmt.Printf("     ├ Trend: %-8s  R/R: %.2f (%s)\n",
 			sig.Trend, sig.Trade.RiskReward, sig.Trade.Quality)
-		fmt.Printf("     Entry: %-9.2f  SL: %-9.2f  Target: %.2f\n",
+		fmt.Printf("     ├ Entry: %-9.2f  SL: %-9.2f  Target: %.2f\n",
 			sig.Trade.Entry, sig.Trade.StopLoss, sig.Trade.Target)
-		fmt.Printf("     Support:    %.2f–%.2f (%d touches)\n",
+		fmt.Printf("     ├ Support:    %.2f–%.2f (%d touches)\n",
 			sig.Support.Low, sig.Support.High, sig.Support.Touches)
-		fmt.Printf("     Resistance: %.2f–%.2f (%d touches)\n",
+		fmt.Printf("     ├ Resistance: %.2f–%.2f (%d touches)\n",
 			sig.Resistance.Low, sig.Resistance.High, sig.Resistance.Touches)
-		fmt.Println("     Reasons:")
+		fmt.Println("     └ Reasons:")
 		for _, r := range sig.Reasons {
-			fmt.Printf("       • %s\n", r)
+			fmt.Printf("         • %s\n", r)
 		}
 	}
 
