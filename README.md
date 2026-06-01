@@ -293,8 +293,21 @@ Full watchlist scan:
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10
 ```
 
+Breakout watchlist scan:
+
+```bash
+go run ./cmd/scan --db --symbols config/symbols.txt --mode breakout --top 10
+```
+
+Show both swing entries and breakout watch candidates:
+
+```bash
+go run ./cmd/scan --db --symbols config/symbols.txt --mode all --top 10
+```
+
 What it shows:
-- only valid trade candidates by default
+- only valid swing trade candidates by default
+- breakout watch candidates when `--mode breakout` or `--mode all` is used
 - score breakdown: trend, R/R, support, volume
 - price, trend, entry, stop-loss, target
 - support/resistance zones and reasons
@@ -327,9 +340,11 @@ go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-volume 200000
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-resistance-touches 1
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-10d-move 15
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-ema50-extension -1
+go run ./cmd/scan --db --symbols config/symbols.txt --mode breakout --max-breakout-distance 2
 ```
 
 Flag notes:
+- `--mode`: `swing`, `breakout`, or `all`; default is `swing`
 - `--min-rr`: minimum risk/reward required before a signal is printed
 - `--ema-margin`: minimum percent price must be above EMA200; `0` disables it
 - `--min-volume`: minimum previous-20-day average volume; `0` disables it
@@ -338,6 +353,7 @@ Flag notes:
 - `--max-ema50-extension`: default `15`; filters stocks already too far above EMA50
 - `--max-support-extension`: default `5`; filters entries too far above support
 - `--max-10d-move`: default `12`; filters stocks that already rallied too much in 10 candles
+- `--max-breakout-distance`: default `3`; max percent below resistance for breakout watch
 - set any `--max-*` extension flag below `0` to disable that specific guard
 
 #### Live Scan (Real-Time via Kite WebSocket)
@@ -354,6 +370,8 @@ With options:
 
 ```bash
 go run ./cmd/live-scan --top 10 --interval 2m --min-rr 2.0
+go run ./cmd/live-scan --mode breakout --top 10
+go run ./cmd/live-scan --mode all --top 10
 go run ./cmd/live-scan --interval 30s            # faster cadence
 go run ./cmd/live-scan --dev                     # disable market hours check (for testing)
 ```
@@ -375,9 +393,9 @@ What live scan does:
 - subscribes to Kite WebSocket ticks in full mode
 - keeps today's candle updated from live LTP/open/high/low/volume
 - merges that live candle with historical DB candles
-- runs the same scanner pipeline repeatedly
+- runs swing and/or breakout scanner modes repeatedly
 - shows `[NEW]` for fresh signals and `xN`/`×N` streaks for repeated signals
-- writes every emitted signal to `scan_results`
+- writes emitted swing signals to `scan_results`
 
 Available flags:
 
@@ -385,6 +403,7 @@ Available flags:
 |---|---|---|
 | `--symbols` | `config/symbols.txt` | Watchlist file |
 | `--top` | `10` | Signals to print per run |
+| `--mode` | `swing` | Scanner mode: `swing`, `breakout`, or `all` |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
 | `--interval` | `2m` | Scan interval (e.g. `30s`, `2m`, `5m`) |
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
@@ -394,6 +413,7 @@ Available flags:
 | `--max-ema50-extension` | `15.0` | Maximum % above EMA50 before filtering as extended; `<0` disables |
 | `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
 | `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
+| `--max-breakout-distance` | `3.0` | Maximum % below resistance for breakout watch candidates; `<0` disables |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -542,6 +562,7 @@ Available flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--top` | `5` | Number of top candidates to print |
+| `--mode` | `swing` | Scanner mode: `swing`, `breakout`, or `all` |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
 | `--db` | `false` | Scan candles from PostgreSQL |
 | `--symbols` | `config/symbols.txt` | Symbol file for `--db` |
@@ -556,6 +577,7 @@ Available flags:
 | `--max-ema50-extension` | `15.0` | Maximum % above EMA50 before filtering as extended; `<0` disables |
 | `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
 | `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
+| `--max-breakout-distance` | `3.0` | Maximum % below resistance for breakout watch candidates; `<0` disables |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:

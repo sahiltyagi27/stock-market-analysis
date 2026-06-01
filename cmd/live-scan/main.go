@@ -26,6 +26,7 @@
 //
 //	--symbols    path to watchlist file     (default: config/symbols.txt)
 //	--top        signals to print per run   (default: 10)
+//	--mode       swing, breakout, or all    (default: swing)
 //	--min-rr     minimum risk/reward ratio  (default: 2.0)
 //	--ema-margin minimum %% gap above EMA200 (default: 1.0, 0 = disabled)
 //	--min-volume minimum avg daily volume   (default: 0, disabled)
@@ -37,6 +38,8 @@
 //	            max % above support before filtering as extended
 //	--max-10d-move
 //	            max 10-candle move before filtering as extended
+//	--max-breakout-distance
+//	            max % below resistance for breakout watch candidates
 //	--interval   scan interval              (default: 2m)
 //	--period     historical candle window   (default: 2y)
 //	--exchange   Kite exchange              (default: NSE)
@@ -114,6 +117,7 @@ const (
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	topN := flag.Int("top", 10, "signals to print per scan run")
+	mode := flag.String("mode", "swing", "scanner mode: swing, breakout, or all")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
@@ -122,11 +126,15 @@ func main() {
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
 	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
+	maxBreakoutDistance := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
 	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
 	dev := flag.Bool("dev", false, "disable market hours check (useful for testing)")
 	flag.Parse()
+	if *mode != "swing" && *mode != "breakout" && *mode != "all" {
+		log.Fatalf("invalid --mode %q: use swing, breakout, or all", *mode)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -247,6 +255,7 @@ func main() {
 		MaxEMA50ExtensionPct:   *maxEMA50Extension,
 		MaxSupportExtensionPct: *maxSupportExtension,
 		MaxMove10DPct:          *maxMove10D,
+		MaxBreakoutDistancePct: *maxBreakoutDistance,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},
@@ -258,7 +267,7 @@ func main() {
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, state, resultStore)
+		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -281,7 +290,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, state, resultStore)
+			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
 		}
 	}
 }
@@ -353,6 +362,7 @@ func runScan(
 	symbolToken map[string]uint32,
 	opts scanner.Options,
 	topN int,
+	mode string,
 	state *scanState,
 	resultStore *store.ScanResultStore,
 ) {
@@ -373,17 +383,30 @@ func runScan(
 		inputs = append(inputs, buildInput(sym, candles, tick, volFrac))
 	}
 
-	signals, _ := scanner.ScanWithErrors(inputs, opts)
+	var signals []scanner.StockSignal
+	var breakouts []scanner.BreakoutSignal
+	if mode == "swing" || mode == "all" {
+		signals, _ = scanner.ScanWithErrors(inputs, opts)
+	}
+	if mode == "breakout" || mode == "all" {
+		breakouts, _ = scanner.ScanBreakouts(inputs, opts)
+	}
 
 	// Compute relative strength vs NIFTY 50 for every signal.
 	rsMap, niftyPct := computeRS(ws, symbolToken, signals)
 
 	newSymbols := state.advance(signals)
-	printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct)
+	if mode == "swing" || mode == "all" {
+		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct)
+	}
+	if mode == "breakout" || mode == "all" {
+		breakoutRSMap, breakoutNiftyPct := computeBreakoutRS(ws, symbolToken, breakouts)
+		printBreakoutScan(at, breakouts, topN, len(history), noTick, volFrac, breakoutRSMap, breakoutNiftyPct)
+	}
 
 	// Persist scan results asynchronously so a slow DB write can't delay the
 	// next scan tick.
-	if resultStore != nil {
+	if resultStore != nil && len(signals) > 0 {
 		rows := buildScanResultRows(at, signals, newSymbols, state.streaks, rsMap)
 		go func() {
 			if err := resultStore.Save(ctx, rows); err != nil {
@@ -403,6 +426,33 @@ func computeRS(
 	ws *kite.WSClient,
 	symbolToken map[string]uint32,
 	signals []scanner.StockSignal,
+) (rsMap map[string]float64, niftyPct float64) {
+	niftyTick, ok := ws.LatestTick(niftyToken)
+	if !ok || niftyTick.Open <= 0 || niftyTick.LastPrice <= 0 {
+		return nil, 0
+	}
+	niftyPct = (niftyTick.LastPrice - niftyTick.Open) / niftyTick.Open * 100
+
+	rsMap = make(map[string]float64, len(signals))
+	for _, sig := range signals {
+		tok, ok := symbolToken[sig.Symbol]
+		if !ok {
+			continue
+		}
+		tick, ok := ws.LatestTick(tok)
+		if !ok || tick.Open <= 0 {
+			continue
+		}
+		stockPct := (tick.LastPrice - tick.Open) / tick.Open * 100
+		rsMap[sig.Symbol] = stockPct - niftyPct
+	}
+	return rsMap, niftyPct
+}
+
+func computeBreakoutRS(
+	ws *kite.WSClient,
+	symbolToken map[string]uint32,
+	signals []scanner.BreakoutSignal,
 ) (rsMap map[string]float64, niftyPct float64) {
 	niftyTick, ok := ws.LatestTick(niftyToken)
 	if !ok || niftyTick.Open <= 0 || niftyTick.LastPrice <= 0 {
@@ -637,6 +687,100 @@ func printScan(
 	fmt.Printf("\n  %s\n", sep)
 	fmt.Printf("  %s\n",
 		display.Dim.Sprintf("Scanned: %-4d  Signals: %-4d  No tick yet: %d",
+			total, len(signals), noTick))
+	if volFrac < 1.0 {
+		fmt.Printf("  %s\n",
+			display.Dim.Sprintf("* volume projected to full-day (%d%% of session elapsed)",
+				int(volFrac*100)))
+	}
+	if rsMap != nil {
+		fmt.Printf("  %s %s\n",
+			display.Dim.Sprint("NIFTY 50:"),
+			display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(" from open"))
+	}
+	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(bannerText))))
+}
+
+func printBreakoutScan(
+	at time.Time,
+	signals []scanner.BreakoutSignal,
+	topN, total, noTick int,
+	volFrac float64,
+	rsMap map[string]float64,
+	niftyPct float64,
+) {
+	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
+	bannerText := fmt.Sprintf("━━━  Breakout Watch  %s IST  ━━━", stamp)
+	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(bannerText))
+
+	top := topN
+	if top > len(signals) {
+		top = len(signals)
+	}
+	if top == 0 {
+		fmt.Println("  No breakout watch candidates found.")
+	}
+
+	pipe := display.Dim.Sprint("├")
+	last := display.Dim.Sprint("└")
+	volLabel := "actual"
+	if volFrac < 1.0 {
+		volLabel = "est."
+	}
+
+	for i, sig := range signals[:top] {
+		sym := display.BoldWhite.Sprint(fmt.Sprintf("%-14s", sig.Symbol))
+		price := fmt.Sprintf("₹%-9.2f", sig.Price)
+		fmt.Printf("\n  %s %s %s  %s %s/100\n",
+			display.Dim.Sprintf("%d.", i+1),
+			sym, price,
+			display.Dim.Sprint("Score:"),
+			display.TotalScore(sig.Score))
+		fmt.Printf("     %s %s %.2f–%.2f (%s)  %s %s below\n",
+			pipe,
+			display.Dim.Sprint("Resistance:"),
+			sig.Resistance.Low, sig.Resistance.High,
+			display.Dim.Sprintf("%d touches", sig.Resistance.Touches),
+			display.Dim.Sprint("Distance:"),
+			display.Cyan.Sprintf("%.2f%%", sig.DistanceToResistancePct))
+		fmt.Printf("     %s %s %.2f  %s %.2f–%.2f\n",
+			pipe,
+			display.Dim.Sprint("Confirm above:"),
+			sig.BreakoutPrice,
+			display.Dim.Sprint("Support:"),
+			sig.Support.Low, sig.Support.High)
+		if rsMap != nil {
+			if rs, ok := rsMap[sig.Symbol]; ok {
+				fmt.Printf("     %s %s %s  %s %s\n",
+					pipe,
+					display.Dim.Sprint("RS vs NIFTY:"),
+					display.Sign(rs, "%+.2f%%"),
+					display.Dim.Sprint("(NIFTY:"),
+					display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(")"))
+			}
+		}
+		fmt.Printf("     %s %s EMA10 %s  EMA50 %s  Support %s  10D %s\n",
+			pipe,
+			display.Dim.Sprint("Extension:"),
+			display.Sign(sig.Extension.FromEMA10Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromEMA50Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromSupportHighPct, "%+.1f%%"),
+			formatMove10D(sig.Extension))
+		if sig.Volume.AvgVolume > 0 {
+			fmt.Printf("     %s %s %.2fx (%s %.0f vs avg %.0f)\n",
+				pipe,
+				display.Dim.Sprint("Volume:"),
+				sig.Volume.VolumeRatio,
+				display.Dim.Sprint(volLabel),
+				sig.Volume.LastVolume, sig.Volume.AvgVolume)
+		}
+		fmt.Printf("     %s %s\n", last, display.Dim.Sprint("Watch for close above resistance with volume confirmation"))
+	}
+
+	sep := display.Dim.Sprint(strings.Repeat("─", 54))
+	fmt.Printf("\n  %s\n", sep)
+	fmt.Printf("  %s\n",
+		display.Dim.Sprintf("Scanned: %-4d  Breakouts: %-4d  No tick yet: %d",
 			total, len(signals), noTick))
 	if volFrac < 1.0 {
 		fmt.Printf("  %s\n",

@@ -47,6 +47,11 @@ type Options struct {
 	// Default: 12.0. Set to < 0 to disable.
 	MaxMove10DPct float64
 
+	// MaxBreakoutDistancePct is the maximum distance below resistance for a
+	// breakout-watch candidate.
+	// Default: 3.0. Set to < 0 to disable.
+	MaxBreakoutDistancePct float64
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -80,6 +85,9 @@ func (o *Options) withDefaults() Options {
 	}
 	if out.MaxMove10DPct == 0 {
 		out.MaxMove10DPct = 12.0
+	}
+	if out.MaxBreakoutDistancePct == 0 {
+		out.MaxBreakoutDistancePct = 3.0
 	}
 	// Require resistance zones to have been tested at least twice historically.
 	// A 1-touch zone is just a single-session spike and is not a reliable target.
@@ -122,6 +130,31 @@ func ScanWithErrors(inputs []Input, opts Options) ([]StockSignal, map[string]err
 
 	sort.Slice(signals, func(i, j int) bool {
 		return signals[i].Score > signals[j].Score
+	})
+	return signals, errs
+}
+
+// ScanBreakouts returns stocks sitting just below tested resistance zones.
+// These are watchlist candidates for confirmation, not immediate trade signals.
+func ScanBreakouts(inputs []Input, opts Options) ([]BreakoutSignal, map[string]error) {
+	o := opts.withDefaults()
+	errs := make(map[string]error)
+	var signals []BreakoutSignal
+
+	for _, in := range inputs {
+		sig, err := analyzeBreakout(in, o)
+		if err != nil {
+			errs[in.Symbol] = err
+			continue
+		}
+		signals = append(signals, *sig)
+	}
+
+	sort.Slice(signals, func(i, j int) bool {
+		if signals[i].Score != signals[j].Score {
+			return signals[i].Score > signals[j].Score
+		}
+		return signals[i].DistanceToResistancePct < signals[j].DistanceToResistancePct
 	})
 	return signals, errs
 }
@@ -236,6 +269,143 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
 
 	return sig, nil
+}
+
+func analyzeBreakout(in Input, opts Options) (*BreakoutSignal, error) {
+	if len(in.Candles) == 0 {
+		return nil, fmt.Errorf("no candles")
+	}
+
+	closes := extractCloses(in.Candles)
+	highs := extractHighs(in.Candles)
+	lows := extractLows(in.Candles)
+
+	emas := analysis.ComputeEMAs(closes)
+	price := closes[len(closes)-1]
+	trend := deriveTrend(price, emas)
+	if !isConstructiveBreakoutTrend(price, emas, trend) {
+		return nil, fmt.Errorf("trend is %s, not constructive for breakout", trend)
+	}
+
+	zones := analysis.FindZones(highs, lows, opts.ZoneOpts)
+	support, resistance, err := nearestZones(price, zones)
+	if err != nil {
+		return nil, err
+	}
+
+	distancePct := pctFrom(resistance.Low, price)
+	if opts.MaxBreakoutDistancePct > 0 && distancePct > opts.MaxBreakoutDistancePct {
+		return nil, fmt.Errorf("resistance %.2f is %.2f%% above price %.2f, max %.1f%%",
+			resistance.Low, distancePct, price, opts.MaxBreakoutDistancePct)
+	}
+
+	ext := extensionDiagnostics(price, closes, emas, support)
+	if err := validateBreakoutExtension(ext, opts); err != nil {
+		return nil, err
+	}
+
+	avgVol, lastVol := volumeStats(in.Candles, opts.VolumeWindow)
+	if opts.MinAvgVolume > 0 && avgVol > 0 && avgVol < float64(opts.MinAvgVolume) {
+		return nil, fmt.Errorf("avg daily volume %.0f below minimum %d", avgVol, opts.MinAvgVolume)
+	}
+
+	var volumeRatio float64
+	if avgVol > 0 {
+		volumeRatio = lastVol / avgVol
+	}
+
+	sig := &BreakoutSignal{
+		Symbol:                  in.Symbol,
+		Price:                   price,
+		Trend:                   trend,
+		EMA:                     emas,
+		Support:                 support,
+		Resistance:              resistance,
+		DistanceToResistancePct: distancePct,
+		BreakoutPrice:           resistance.High,
+		Extension:               ext,
+		Volume: VolumeConfirmation{
+			AvgVolume:   avgVol,
+			LastVolume:  lastVol,
+			VolumeRatio: volumeRatio,
+		},
+	}
+	sig.Score = breakoutScore(sig, opts)
+	sig.Reasons = buildBreakoutReasons(sig)
+	return sig, nil
+}
+
+func isConstructiveBreakoutTrend(price float64, emas analysis.EMAResult, trend Trend) bool {
+	if trend == TrendBullish {
+		return true
+	}
+	return price > emas.EMA50 && emas.EMA50 > 0 && emas.EMA200 > 0 && emas.EMA50 >= emas.EMA200
+}
+
+func validateBreakoutExtension(ext Extension, opts Options) error {
+	var reasons []string
+	if opts.MaxEMA10ExtensionPct > 0 && ext.FromEMA10Pct > opts.MaxEMA10ExtensionPct {
+		reasons = append(reasons, fmt.Sprintf("EMA10 %.1f%% > max %.1f%%", ext.FromEMA10Pct, opts.MaxEMA10ExtensionPct))
+	}
+	if opts.MaxEMA50ExtensionPct > 0 && ext.FromEMA50Pct > opts.MaxEMA50ExtensionPct {
+		reasons = append(reasons, fmt.Sprintf("EMA50 %.1f%% > max %.1f%%", ext.FromEMA50Pct, opts.MaxEMA50ExtensionPct))
+	}
+	if opts.MaxMove10DPct > 0 && ext.HasMove10D && ext.Move10DPct > opts.MaxMove10DPct {
+		reasons = append(reasons, fmt.Sprintf("10D move %.1f%% > max %.1f%%", ext.Move10DPct, opts.MaxMove10DPct))
+	}
+	if len(reasons) > 0 {
+		return fmt.Errorf("breakout watch extended after recent rally: %s", strings.Join(reasons, "; "))
+	}
+	return nil
+}
+
+func breakoutScore(sig *BreakoutSignal, opts Options) float64 {
+	maxDist := opts.MaxBreakoutDistancePct
+	if maxDist <= 0 {
+		maxDist = 3.0
+	}
+	proximity := 1 - sig.DistanceToResistancePct/maxDist
+	if proximity < 0 {
+		proximity = 0
+	}
+	if proximity > 1 {
+		proximity = 1
+	}
+
+	touches := sig.Resistance.Touches
+	if touches > 4 {
+		touches = 4
+	}
+
+	trend := 10.0
+	if sig.Trend == TrendBullish {
+		trend = 20.0
+	}
+
+	volume := 0.0
+	switch {
+	case sig.Volume.VolumeRatio >= 1.5:
+		volume = 10.0
+	case sig.Volume.VolumeRatio >= 1.0:
+		volume = 5.0
+	}
+
+	return proximity*40.0 + float64(touches)/4.0*30.0 + trend + volume
+}
+
+func buildBreakoutReasons(sig *BreakoutSignal) []string {
+	reasons := []string{
+		fmt.Sprintf("Price is %.2f%% below resistance zone %.2f–%.2f",
+			sig.DistanceToResistancePct, sig.Resistance.Low, sig.Resistance.High),
+		fmt.Sprintf("Resistance zone touched %d times", sig.Resistance.Touches),
+		fmt.Sprintf("Breakout confirmation above %.2f", sig.BreakoutPrice),
+		fmt.Sprintf("Extension: EMA10 %.1f%%, EMA50 %.1f%%, 10D %.1f%%",
+			sig.Extension.FromEMA10Pct, sig.Extension.FromEMA50Pct, sig.Extension.Move10DPct),
+	}
+	if sig.Volume.AvgVolume > 0 {
+		reasons = append(reasons, fmt.Sprintf("Volume %.2fx rolling average", sig.Volume.VolumeRatio))
+	}
+	return reasons
 }
 
 func validateExtension(ext Extension, opts Options) error {
