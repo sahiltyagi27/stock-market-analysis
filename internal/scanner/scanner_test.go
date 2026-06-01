@@ -227,7 +227,7 @@ func TestScan_ScoreBreakdownSumsToScore(t *testing.T) {
 	}
 
 	s := signals[0]
-	total := s.Breakdown.Trend + s.Breakdown.RR + s.Breakdown.Support + s.Breakdown.Volume
+	total := s.Breakdown.Trend + s.Breakdown.RR + s.Breakdown.Support + s.Breakdown.Volume + s.Breakdown.CandleDir
 	if !floatsClose(total, s.Score) {
 		t.Errorf("breakdown total = %.2f, score = %.2f", total, s.Score)
 	}
@@ -659,6 +659,62 @@ func TestScanBreakouts_FiltersWhenTooFarFromResistance(t *testing.T) {
 	}
 	if err := errs["FAR"]; err == nil || !strings.Contains(err.Error(), "above price") {
 		t.Fatalf("expected distance rejection, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Minimum candle count guard
+// ---------------------------------------------------------------------------
+
+func TestScan_MinCandlesFilter_RejectsInsufficient(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	// Require one more candle than available — must reject.
+	opts := defaultOpts
+	opts.MinCandles = len(candles) + 1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Errorf("expected MinCandles filter to reject with %d candles (min %d), got a signal",
+			len(candles), len(candles)+1)
+	}
+}
+
+func TestScan_MinCandlesFilter_PassesWhenMet(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	// Exactly enough candles — must pass.
+	opts := defaultOpts
+	opts.MinCandles = len(candles)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Errorf("expected signal when candle count (%d) equals MinCandles", len(candles))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Bearish candle direction penalty
+// ---------------------------------------------------------------------------
+
+func TestScan_BearishCandlePenalty_Applied(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	// Force the last candle to be bearish (open > close).
+	candles[len(candles)-1].Open = candles[len(candles)-1].Close * 1.02
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced — cannot test penalty")
+	}
+	if signals[0].Breakdown.CandleDir >= 0 {
+		t.Errorf("expected negative CandleDir for bearish candle, got %.1f", signals[0].Breakdown.CandleDir)
+	}
+}
+
+func TestScan_BullishCandle_NoPenalty(t *testing.T) {
+	// makeTrendingCandles last candle has open == close (flat) — no penalty.
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Skip("no signal produced — cannot test penalty")
+	}
+	if signals[0].Breakdown.CandleDir != 0 {
+		t.Errorf("expected CandleDir=0 for flat/bullish candle, got %.1f", signals[0].Breakdown.CandleDir)
 	}
 }
 

@@ -57,6 +57,66 @@ func NewScanResultStore(db *sql.DB) (*ScanResultStore, error) {
 	return &ScanResultStore{db: db}, nil
 }
 
+// ScanResultFilter narrows the rows returned by Query.
+// Zero-value fields are ignored (no filter applied for that field).
+type ScanResultFilter struct {
+	Symbol    string     // exact match; empty = all symbols
+	From      *time.Time // inclusive lower bound on scanned_at
+	To        *time.Time // inclusive upper bound on scanned_at
+	MinStreak int        // only rows where streak >= MinStreak
+	MinScore  float64    // only rows where score >= MinScore
+	Limit     int        // max rows (default 100 when ≤ 0)
+}
+
+// Query returns scan result rows matching the filter, ordered by
+// scanned_at DESC, score DESC.
+func (s *ScanResultStore) Query(ctx context.Context, f ScanResultFilter) ([]ScanResultRow, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT scanned_at, symbol, price, score, trend, rr,
+		       ema50, ema200, rel_strength, is_new, streak
+		FROM scan_results
+		WHERE ($1 = '' OR symbol = $1)
+		  AND ($2::timestamptz IS NULL OR scanned_at >= $2)
+		  AND ($3::timestamptz IS NULL OR scanned_at <= $3)
+		  AND score    >= $4
+		  AND streak   >= $5
+		ORDER BY scanned_at DESC, score DESC
+		LIMIT $6
+	`, f.Symbol, timeOrNil(f.From), timeOrNil(f.To),
+		f.MinScore, f.MinStreak, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ScanResultRow
+	for rows.Next() {
+		var r ScanResultRow
+		var rs *float64
+		if err := rows.Scan(
+			&r.ScannedAt, &r.Symbol, &r.Price, &r.Score, &r.Trend, &r.RR,
+			&r.EMA50, &r.EMA200, &rs, &r.IsNew, &r.Streak,
+		); err != nil {
+			return nil, err
+		}
+		r.RelStrength = rs
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func timeOrNil(t *time.Time) interface{} {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
 // Save bulk-inserts rows for one complete scan run inside a single transaction.
 func (s *ScanResultStore) Save(ctx context.Context, rows []ScanResultRow) error {
 	if len(rows) == 0 {

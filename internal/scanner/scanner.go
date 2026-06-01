@@ -52,6 +52,12 @@ type Options struct {
 	// Default: 3.0. Set to < 0 to disable.
 	MaxBreakoutDistancePct float64
 
+	// MinCandles is the minimum number of candles required before a symbol is
+	// analysed. EMA200 needs ≥200 data points to be reliable; fewer candles
+	// produce an unstable trend signal and noisy zones.
+	// Default: 200.
+	MinCandles int
+
 	// ATRPeriod is the lookback for Average True Range used to size the stop
 	// loss. When > 0 the SL is placed ATRMultiplier × ATR below the support
 	// zone, adapting to each stock's actual volatility rather than a fixed %.
@@ -112,6 +118,11 @@ func (o *Options) withDefaults() Options {
 	}
 	if out.ATRMultiplier <= 0 {
 		out.ATRMultiplier = 1.5
+	}
+	// Minimum candle count: EMA200 needs at least 200 data points to be
+	// meaningful; fewer candles produce an unreliable trend signal.
+	if out.MinCandles <= 0 {
+		out.MinCandles = 200
 	}
 	return out
 }
@@ -209,6 +220,10 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	if len(in.Candles) == 0 {
 		return nil, fmt.Errorf("no candles")
 	}
+	if len(in.Candles) < opts.MinCandles {
+		return nil, fmt.Errorf("only %d candles available, need %d for reliable EMA200 and zones",
+			len(in.Candles), opts.MinCandles)
+	}
 
 	closes := extractCloses(in.Candles)
 	highs := extractHighs(in.Candles)
@@ -289,7 +304,8 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Trade:      *ta.Long,
 	}
 	sig.Extension = ext
-	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol)
+	lastCandle := in.Candles[len(in.Candles)-1]
+	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol, lastCandle.Open, lastCandle.Close)
 	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
 

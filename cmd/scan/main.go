@@ -68,6 +68,7 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
 	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
 	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
@@ -96,6 +97,7 @@ func main() {
 		MaxSupportExtensionPct: *maxSupportExtension,
 		MaxMove10DPct:          *maxMove10D,
 		MaxBreakoutDistancePct: *maxBreakoutDistance,
+		MinCandles:             *minCandles,
 		ATRPeriod:              *atrPeriod,
 		ATRMultiplier:          *atrMultiplier,
 		ZoneOpts:               analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
@@ -404,6 +406,11 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 			fmt.Printf("     %s  %s\n",
 				display.Dim.Sprint("Volume: "),
 				display.ComponentF(sig.Breakdown.Volume, 10))
+		}
+		if sig.Breakdown.CandleDir < 0 {
+			fmt.Printf("     %s  %s\n",
+				display.Dim.Sprint("Candle: "),
+				display.Red.Sprintf("%.0f (bearish — close < open)", sig.Breakdown.CandleDir))
 		}
 
 		// Price + trend.

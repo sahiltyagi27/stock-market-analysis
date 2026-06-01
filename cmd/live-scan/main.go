@@ -122,6 +122,8 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	alertScore           := flag.Float64("alert-score", 85, "highlight signals at or above this score with ⚡ (0 = disabled)")
+	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
 	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
 	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
@@ -253,6 +255,7 @@ func main() {
 		MinRR:                  *minRR,
 		EMAMarginPct:           *emaMargin,
 		MinAvgVolume:           *minVolume,
+		MinCandles:             *minCandles,
 		MaxEMA10ExtensionPct:   *maxEMA10Extension,
 		MaxEMA50ExtensionPct:   *maxEMA50Extension,
 		MaxSupportExtensionPct: *maxSupportExtension,
@@ -271,7 +274,7 @@ func main() {
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
+		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -294,7 +297,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, state, resultStore)
+			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 		}
 	}
 }
@@ -367,6 +370,7 @@ func runScan(
 	opts scanner.Options,
 	topN int,
 	mode string,
+	alertScore float64,
 	state *scanState,
 	resultStore *store.ScanResultStore,
 ) {
@@ -401,7 +405,7 @@ func runScan(
 
 	newSymbols := state.advance(signals)
 	if mode == "swing" || mode == "all" {
-		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct)
+		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct, alertScore)
 	}
 	if mode == "breakout" || mode == "all" {
 		breakoutRSMap, breakoutNiftyPct := computeBreakoutRS(ws, symbolToken, breakouts)
@@ -572,6 +576,7 @@ func printScan(
 	streaks map[string]int,
 	rsMap map[string]float64,
 	niftyPct float64,
+	alertScore float64,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	bannerText := fmt.Sprintf("━━━  Live Scan  %s IST  ━━━", stamp)
@@ -589,13 +594,16 @@ func printScan(
 	last := display.Dim.Sprint("└")
 
 	for i, sig := range signals[:top] {
-		// Persistence tag — pad before colorizing so column width is stable.
+		// ⚡ alert when score crosses threshold, then [NEW] / ×N streak.
 		tag := ""
+		if alertScore > 0 && sig.Score >= alertScore {
+			tag += "  " + display.BoldYellow.Sprint("⚡")
+		}
 		switch {
 		case newSymbols[sig.Symbol]:
-			tag = "  " + display.BoldGreen.Sprint("[NEW]")
+			tag += "  " + display.BoldGreen.Sprint("[NEW]")
 		case streaks[sig.Symbol] > 1:
-			tag = "  " + display.Cyan.Sprintf("×%d", streaks[sig.Symbol])
+			tag += "  " + display.Cyan.Sprintf("×%d", streaks[sig.Symbol])
 		}
 
 		// Pad symbol and price before applying color so alignment is preserved.
@@ -629,6 +637,13 @@ func printScan(
 			fmt.Printf("  %s %s\n",
 				display.Dim.Sprint("Volume:"),
 				display.Component(sig.Breakdown.Volume, 10))
+		}
+		// Bearish candle penalty.
+		if sig.Breakdown.CandleDir < 0 {
+			fmt.Printf("     %s %s %s\n",
+				pipe,
+				display.Dim.Sprint("Candle:"),
+				display.Red.Sprintf("%.0f (bearish — close < open)", sig.Breakdown.CandleDir))
 		}
 
 		// Relative strength vs NIFTY 50.
