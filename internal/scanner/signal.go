@@ -24,7 +24,16 @@ type StockSignal struct {
 	Resistance analysis.Zone       `json:"resistance"`
 	Trade      analysis.TradeSetup `json:"trade"` // long setup
 	Score      float64             `json:"score"`
+	Breakdown  ScoreBreakdown      `json:"breakdown"`
 	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
+}
+
+// ScoreBreakdown explains how StockSignal.Score was composed.
+type ScoreBreakdown struct {
+	Trend   float64 `json:"trend"`
+	RR      float64 `json:"rr"`
+	Support float64 `json:"support"`
+	Volume  float64 `json:"volume"`
 }
 
 // Diagnostic explains how far one stock got through the scanner pipeline,

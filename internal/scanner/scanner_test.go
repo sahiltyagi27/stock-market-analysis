@@ -1,6 +1,7 @@
 package scanner_test
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,10 @@ func containsReason(reasons []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+func floatsClose(a, b float64) bool {
+	return math.Abs(a-b) < 1e-6
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +204,23 @@ func TestScan_ScoreIsPositive(t *testing.T) {
 	}
 	if signals[0].Score <= 0 {
 		t.Errorf("score = %.2f, want > 0", signals[0].Score)
+	}
+}
+
+func TestScan_ScoreBreakdownSumsToScore(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Fatal("expected at least one signal")
+	}
+
+	s := signals[0]
+	total := s.Breakdown.Trend + s.Breakdown.RR + s.Breakdown.Support + s.Breakdown.Volume
+	if !floatsClose(total, s.Score) {
+		t.Errorf("breakdown total = %.2f, score = %.2f", total, s.Score)
+	}
+	if s.Breakdown.Trend == 0 || s.Breakdown.RR == 0 || s.Breakdown.Support == 0 {
+		t.Errorf("expected trend, R/R, and support components to be populated, got %+v", s.Breakdown)
 	}
 }
 

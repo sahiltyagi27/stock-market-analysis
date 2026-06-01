@@ -151,7 +151,8 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Resistance: resistance,
 		Trade:      *ta.Long,
 	}
-	sig.Score = score(sig, avgVol, lastVol)
+	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol)
+	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
 
 	return sig, nil
