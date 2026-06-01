@@ -54,9 +54,9 @@ func main() {
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
-	minVolume            := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
-	showFiltered         := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
+	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
 	inputs, dataErrs := loadInputs(context.Background(), inputOptions{
@@ -84,8 +84,8 @@ func main() {
 
 	fmt.Println()
 	fmt.Println(display.Dim.Sprint(strings.Repeat("─", 42)))
-	fmt.Printf("%s  %d symbols\n",  display.Dim.Sprint("Scanned: "), len(inputs))
-	fmt.Printf("%s  %d %s\n",       display.Dim.Sprint("Skipped: "), len(dataErrs)+len(scanErrs),
+	fmt.Printf("%s  %d symbols\n", display.Dim.Sprint("Scanned: "), len(inputs))
+	fmt.Printf("%s  %d %s\n", display.Dim.Sprint("Skipped: "), len(dataErrs)+len(scanErrs),
 		display.Dim.Sprintf("(data errors: %d, no setup: %d)", len(dataErrs), len(scanErrs)))
 	fmt.Printf("%s  %s\n", display.Dim.Sprint("Signals: "), display.TotalScore(float64(len(signals))))
 }
@@ -337,7 +337,13 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 
 		// Price + trend.
 		fmt.Printf("   %s  %.2f\n", display.Dim.Sprint("Price:     "), sig.Price)
-		fmt.Printf("   %s  %s\n",   display.Dim.Sprint("Trend:     "), display.Trend(string(sig.Trend)))
+		fmt.Printf("   %s  %s\n", display.Dim.Sprint("Trend:     "), display.Trend(string(sig.Trend)))
+		fmt.Printf("   %s  EMA10 %s   EMA50 %s   Support %s   10D %s\n",
+			display.Dim.Sprint("Extension: "),
+			display.Sign(sig.Extension.FromEMA10Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromEMA50Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromSupportHighPct, "%+.1f%%"),
+			formatMove10D(sig.Extension))
 
 		// R/R.
 		fmt.Printf("   %s  %s  %s\n",
@@ -367,4 +373,11 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 			fmt.Printf("     %s %s\n", display.Cyan.Sprint("•"), display.Dim.Sprint(r))
 		}
 	}
+}
+
+func formatMove10D(ext scanner.Extension) string {
+	if !ext.HasMove10D {
+		return display.Dim.Sprint("n/a")
+	}
+	return display.Sign(ext.Move10DPct, "%+.1f%%")
 }

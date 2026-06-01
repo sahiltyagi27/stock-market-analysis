@@ -81,7 +81,7 @@ func init() {
 var nseHolidays = map[string]string{
 	// 2026 — fixed
 	"2026-01-26": "Republic Day",
-	"2026-04-03": "Good Friday",        // Easter Apr 5 → GF Apr 3
+	"2026-04-03": "Good Friday", // Easter Apr 5 → GF Apr 3
 	"2026-04-14": "Dr. Ambedkar Jayanti",
 	"2026-05-01": "Maharashtra Day",
 	"2026-10-02": "Gandhi Jayanti",
@@ -105,15 +105,15 @@ const (
 
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
-	topN        := flag.Int("top", 10, "signals to print per scan run")
-	minRR       := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
-	emaMargin   := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
-	minVolume           := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	topN := flag.Int("top", 10, "signals to print per scan run")
+	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
+	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
+	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
-	interval    := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
-	period      := flag.String("period", "2y", "historical candle window for EMA/zone computation")
-	exchange    := flag.String("exchange", "NSE", "Kite exchange")
-	dev         := flag.Bool("dev", false, "disable market hours check (useful for testing)")
+	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
+	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
+	exchange := flag.String("exchange", "NSE", "Kite exchange")
+	dev := flag.Bool("dev", false, "disable market hours check (useful for testing)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -529,7 +529,7 @@ func printScan(
 		}
 
 		// Pad symbol and price before applying color so alignment is preserved.
-		sym   := display.BoldWhite.Sprint(fmt.Sprintf("%-14s", sig.Symbol))
+		sym := display.BoldWhite.Sprint(fmt.Sprintf("%-14s", sig.Symbol))
 		price := fmt.Sprintf("₹%-9.2f", sig.Price)
 		score := display.TotalScore(sig.Score)
 
@@ -546,8 +546,8 @@ func printScan(
 		}
 		fmt.Printf("     %s %s %s  %s %s  %s %s",
 			pipe,
-			display.Dim.Sprint("Trend:"),   display.Component(sig.Breakdown.Trend, 40),
-			display.Dim.Sprint("R/R:"),     display.Component(sig.Breakdown.RR, 30),
+			display.Dim.Sprint("Trend:"), display.Component(sig.Breakdown.Trend, 40),
+			display.Dim.Sprint("R/R:"), display.Component(sig.Breakdown.RR, 30),
 			display.Dim.Sprint("Support:"), display.Component(sig.Breakdown.Support, 20))
 		if sig.Breakdown.AvgVolume > 0 {
 			fmt.Printf("  %s %s (%s %.0f vs avg %.0f = %.2fx)\n",
@@ -573,8 +573,17 @@ func printScan(
 			}
 		}
 
+		// Extension diagnostics — useful for spotting late entries after a rally.
+		fmt.Printf("     %s %s EMA10 %s  EMA50 %s  Support %s  10D %s\n",
+			pipe,
+			display.Dim.Sprint("Extension:"),
+			display.Sign(sig.Extension.FromEMA10Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromEMA50Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromSupportHighPct, "%+.1f%%"),
+			formatMove10D(sig.Extension))
+
 		// Trade direction + R/R quality.
-		trend  := fmt.Sprintf("%-8s", string(sig.Trend))
+		trend := fmt.Sprintf("%-8s", string(sig.Trend))
 		fmt.Printf("     %s %s %s  %s %s %s\n",
 			pipe,
 			display.Dim.Sprint("Trend:"), display.Trend(trend),
@@ -586,7 +595,7 @@ func printScan(
 		fmt.Printf("     %s %s %-9.2f  %s %s  %s %s\n",
 			pipe,
 			display.Dim.Sprint("Entry:"), sig.Trade.Entry,
-			display.Dim.Sprint("SL:"),    display.Red.Sprintf("%-9.2f", sig.Trade.StopLoss),
+			display.Dim.Sprint("SL:"), display.Red.Sprintf("%-9.2f", sig.Trade.StopLoss),
 			display.Dim.Sprint("Target:"), display.Green.Sprintf("%.2f", sig.Trade.Target))
 
 		// Support / Resistance zones.
@@ -626,6 +635,13 @@ func printScan(
 	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(bannerText))))
 }
 
+func formatMove10D(ext scanner.Extension) string {
+	if !ext.HasMove10D {
+		return display.Dim.Sprint("n/a")
+	}
+	return display.Sign(ext.Move10DPct, "%+.1f%%")
+}
+
 // ── Market hours helpers ───────────────────────────────────────────────────────
 
 // sessionElapsedFraction returns the fraction of the NSE trading session
@@ -637,7 +653,7 @@ func printScan(
 func sessionElapsedFraction(t time.Time) float64 {
 	local := t.In(ist)
 	y, m, d := local.Date()
-	open   := time.Date(y, m, d, 9, 15, 0, 0, ist)
+	open := time.Date(y, m, d, 9, 15, 0, 0, ist)
 	close_ := time.Date(y, m, d, 15, 30, 0, 0, ist)
 
 	if local.Before(open) || local.After(close_) {
@@ -645,7 +661,7 @@ func sessionElapsedFraction(t time.Time) float64 {
 	}
 
 	const totalMins = 375.0
-	const minMins   = 30.0 // cap: don't project before 30 min of trading
+	const minMins = 30.0 // cap: don't project before 30 min of trading
 
 	elapsed := local.Sub(open).Minutes()
 	if elapsed < minMins {
@@ -666,7 +682,7 @@ func isMarketOpen(t time.Time) bool {
 		return false
 	}
 	y, m, d := local.Date()
-	open   := time.Date(y, m, d, 9, 15, 0, 0, ist)
+	open := time.Date(y, m, d, 9, 15, 0, 0, ist)
 	close_ := time.Date(y, m, d, 15, 30, 0, 0, ist)
 	return !local.Before(open) && !local.After(close_)
 }

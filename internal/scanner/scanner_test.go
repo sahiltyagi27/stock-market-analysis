@@ -227,6 +227,22 @@ func TestScan_ScoreBreakdownSumsToScore(t *testing.T) {
 	}
 }
 
+func TestScan_ExtensionDiagnosticsPopulated(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
+	if len(signals) == 0 {
+		t.Fatal("expected at least one signal")
+	}
+
+	ext := signals[0].Extension
+	if ext.FromEMA10Pct == 0 || ext.FromEMA50Pct == 0 || ext.FromSupportHighPct == 0 {
+		t.Errorf("expected extension diagnostics to be populated, got %+v", ext)
+	}
+	if !ext.HasMove10D {
+		t.Errorf("expected 10-day move diagnostic to be available, got %+v", ext)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Scan — filters
 // ---------------------------------------------------------------------------
