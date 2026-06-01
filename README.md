@@ -145,38 +145,179 @@ cd stock-market-analysis
 
 # Copy and fill environment variables
 cp .env.example .env
-
-# Load sample data and start the server
-go run ./cmd/server -load data/AAPL_sample.csv -symbol AAPL
-
-# Or just start the server (if data is already loaded)
-go run ./cmd/server
 ```
 
-### Daily scan
+### Command Cookbook
 
-For automated daily scans, sync candles from Kite Connect into PostgreSQL, then
-scan the stored candles:
+#### Start PostgreSQL
+
+If port `5432` is free:
 
 ```bash
-# First, get today's Kite access token.
-go run ./cmd/kite-token
-go run ./cmd/kite-token --request-token <request_token_from_redirect>
+docker run --name stock-market-analysis-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=stocks \
+  -p 5432:5432 \
+  -d postgres:16-alpine
+```
 
-# Then sync and scan.
+If another Postgres is already using `5432`, use `5433`:
+
+```bash
+docker run --name stock-market-analysis-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=stocks \
+  -p 5433:5432 \
+  -d postgres:16-alpine
+```
+
+Then set `.env` to match:
+
+```env
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=postgres
+DB_PASSWORD=secret
+DB_NAME=stocks
+SERVER_PORT=8080
+```
+
+Useful Docker commands:
+
+```bash
+docker ps
+docker start stock-market-analysis-postgres
+docker stop stock-market-analysis-postgres
+docker logs stock-market-analysis-postgres
+```
+
+#### Configure Kite
+
+Put your Kite app credentials in `.env`:
+
+```env
+KITE_API_KEY=your_api_key
+KITE_API_SECRET=your_api_secret
+KITE_ACCESS_TOKEN=
+KITE_BASE_URL=https://api.kite.trade
+```
+
+Use this redirect URL in the Kite developer console:
+
+```text
+http://127.0.0.1:8080/kite/callback
+```
+
+#### Refresh Kite Access Token
+
+Kite access tokens expire daily.
+
+```bash
+go run ./cmd/kite-token
+```
+
+Open the printed login URL, complete Kite login, copy `request_token` from the
+redirect URL, then exchange it:
+
+```bash
+go run ./cmd/kite-token --request-token <request_token_from_redirect>
+```
+
+Copy the printed value into `.env`:
+
+```env
+KITE_ACCESS_TOKEN=generated_access_token
+```
+
+#### Sync Kite Daily Candles
+
+```bash
 go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y
+```
+
+For another exchange:
+
+```bash
+go run ./cmd/kite-sync --exchange BSE --symbols config/symbols.txt --period 2y
+```
+
+#### Scan Synced DB Candles
+
+```bash
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --show-filtered
 ```
 
-Kite access tokens expire daily. Keep `KITE_API_KEY` and `KITE_API_SECRET` in
-`.env`, then refresh `KITE_ACCESS_TOKEN` once per day with `cmd/kite-token`.
+#### Scan Manual CSV Files
 
-The scanner also supports manual CSV fallback:
+Single Google Finance CSV:
 
 ```bash
 go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
+```
+
+Folder of CSVs named by symbol:
+
+```bash
 go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
 ```
+
+#### Start HTTP Server
+
+Load a sample CSV and start the server:
+
+```bash
+go run ./cmd/server -load data/AAPL_sample.csv -symbol AAPL
+```
+
+Start the server when data already exists:
+
+```bash
+go run ./cmd/server
+```
+
+Query endpoints:
+
+```bash
+curl http://localhost:8080/stocks/ITC/latest
+curl 'http://localhost:8080/stocks/ITC/candles?from=2025-01-01&limit=10'
+```
+
+#### Inspect PostgreSQL
+
+Open `psql` inside the Docker container:
+
+```bash
+docker exec -it stock-market-analysis-postgres psql -U postgres -d stocks
+```
+
+Useful SQL:
+
+```sql
+\dt
+
+SELECT COUNT(*) FROM candles;
+
+SELECT symbol, COUNT(*), MIN(timestamp), MAX(timestamp)
+FROM candles
+GROUP BY symbol
+ORDER BY symbol;
+
+SELECT *
+FROM candles
+WHERE symbol = 'ITC'
+ORDER BY timestamp DESC
+LIMIT 10;
+```
+
+#### Run Tests
+
+```bash
+go test ./...
+```
+
+### Daily scan
 
 Available flags:
 
