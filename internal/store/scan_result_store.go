@@ -187,6 +187,18 @@ func (s *ScanResultStore) LatestTodayScanState(ctx context.Context, ist *time.Lo
 	return snap, nil
 }
 
+// PurgeOlderThan deletes scan_results rows whose scanned_at is before cutoff.
+// Returns the number of rows deleted. Safe to call at startup — a full table
+// scan is avoided because scanned_at is indexed.
+func (s *ScanResultStore) PurgeOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM scan_results WHERE scanned_at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge scan_results: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // Save bulk-inserts rows for one complete scan run inside a single transaction.
 func (s *ScanResultStore) Save(ctx context.Context, rows []ScanResultRow) error {
 	if len(rows) == 0 {

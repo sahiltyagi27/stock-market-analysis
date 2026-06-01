@@ -123,6 +123,7 @@ func main() {
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
 	alertScore           := flag.Float64("alert-score", 85, "highlight signals at or above this score with ⚡ (0 = disabled)")
+	retentionDays        := flag.Int("retention-days", 30, "delete scan_results older than this many days on startup (0 = keep forever)")
 	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
 	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
 	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
@@ -175,6 +176,17 @@ func main() {
 		// Non-fatal: live scan still works, we just won't persist results.
 		log.Printf("warn: scan result store unavailable: %v — scan history will not be recorded", err)
 		resultStore = nil
+	}
+
+	// Purge old scan results on startup so the table doesn't grow forever.
+	// Candles are kept — they're the core dataset. Only scan_results are pruned.
+	if resultStore != nil && *retentionDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -*retentionDays)
+		if n, err := resultStore.PurgeOlderThan(ctx, cutoff); err != nil {
+			log.Printf("warn: scan_results purge failed: %v", err)
+		} else if n > 0 {
+			log.Printf("purged %d scan_results older than %d days", n, *retentionDays)
+		}
 	}
 
 	from, err := parsePeriod(*period, time.Now())
