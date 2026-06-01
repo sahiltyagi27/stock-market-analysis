@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,6 +9,9 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
+
+// errNoCandles is returned when a scanner input has an empty candle slice.
+var errNoCandles = errors.New("no candles")
 
 // Options controls scanner sensitivity.
 type Options struct {
@@ -197,7 +201,7 @@ func Diagnose(inputs []Input, opts Options) []Diagnostic {
 	for _, in := range inputs {
 		d := Diagnostic{Symbol: in.Symbol}
 		if len(in.Candles) == 0 {
-			d.Error = "no candles"
+			d.Error = errNoCandles.Error()
 			out = append(out, d)
 			continue
 		}
@@ -218,7 +222,7 @@ func Diagnose(inputs []Input, opts Options) []Diagnostic {
 // analyzeOne runs the pipeline for a single stock and applies the bullish filter.
 func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	if len(in.Candles) == 0 {
-		return nil, fmt.Errorf("no candles")
+		return nil, errNoCandles
 	}
 	if len(in.Candles) < opts.MinCandles {
 		return nil, fmt.Errorf("only %d candles available, need %d for reliable EMA200 and zones",
@@ -314,7 +318,7 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 
 func analyzeBreakout(in Input, opts Options) (*BreakoutSignal, error) {
 	if len(in.Candles) == 0 {
-		return nil, fmt.Errorf("no candles")
+		return nil, errNoCandles
 	}
 
 	closes := extractCloses(in.Candles)
@@ -472,26 +476,8 @@ func validateExtension(ext Extension, opts Options) error {
 // nearestZones returns the highest support zone below price and the lowest
 // resistance zone above price.
 func nearestZones(price float64, zones analysis.ZoneResult) (support, resistance analysis.Zone, err error) {
-	var foundSupport, foundResistance bool
-
-	// Support zones are sorted strongest-first; find the highest one below price.
-	for _, z := range zones.Support {
-		if z.High < price {
-			if !foundSupport || z.Mid > support.Mid {
-				support = z
-				foundSupport = true
-			}
-		}
-	}
-	// Resistance zones: find the lowest one above price.
-	for _, z := range zones.Resistance {
-		if z.Low > price {
-			if !foundResistance || z.Mid < resistance.Mid {
-				resistance = z
-				foundResistance = true
-			}
-		}
-	}
+	support, foundSupport := highestSupportBelow(price, zones.Support)
+	resistance, foundResistance := lowestResistanceAbove(price, zones.Resistance)
 
 	if !foundSupport {
 		return analysis.Zone{}, analysis.Zone{}, fmt.Errorf("no support zone below price %.2f", price)
@@ -500,6 +486,30 @@ func nearestZones(price float64, zones analysis.ZoneResult) (support, resistance
 		return analysis.Zone{}, analysis.Zone{}, fmt.Errorf("no resistance zone above price %.2f", price)
 	}
 	return support, resistance, nil
+}
+
+// highestSupportBelow returns the support zone whose High is below price and
+// whose Mid is the highest among all qualifying zones.
+func highestSupportBelow(price float64, zones []analysis.Zone) (best analysis.Zone, found bool) {
+	for _, z := range zones {
+		if z.High < price && (!found || z.Mid > best.Mid) {
+			best = z
+			found = true
+		}
+	}
+	return best, found
+}
+
+// lowestResistanceAbove returns the resistance zone whose Low is above price
+// and whose Mid is the lowest among all qualifying zones.
+func lowestResistanceAbove(price float64, zones []analysis.Zone) (best analysis.Zone, found bool) {
+	for _, z := range zones {
+		if z.Low > price && (!found || z.Mid < best.Mid) {
+			best = z
+			found = true
+		}
+	}
+	return best, found
 }
 
 func extensionDiagnostics(price float64, closes []float64, emas analysis.EMAResult, support analysis.Zone) Extension {
@@ -560,12 +570,12 @@ func volumeStats(candles []models.Candle, window int) (avg, last float64) {
 	if start < 0 {
 		start = 0
 	}
-	window_ := history[start:]
+	recent := history[start:]
 	var sum float64
-	for _, c := range window_ {
+	for _, c := range recent {
 		sum += float64(c.Volume)
 	}
-	avg = sum / float64(len(window_))
+	avg = sum / float64(len(recent))
 	return avg, last
 }
 

@@ -17,10 +17,6 @@ const (
 	candleDirPenalty = -5.0
 )
 
-func score(sig *StockSignal, avgVolume, lastVolume, lastOpen, lastClose float64) float64 {
-	return scoreBreakdown(sig, avgVolume, lastVolume, lastOpen, lastClose).Total()
-}
-
 func scoreBreakdown(sig *StockSignal, avgVolume, lastVolume, lastOpen, lastClose float64) ScoreBreakdown {
 	var volumeRatio float64
 	if avgVolume > 0 {
