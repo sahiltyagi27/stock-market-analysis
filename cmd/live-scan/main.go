@@ -29,6 +29,14 @@
 //	--min-rr     minimum risk/reward ratio  (default: 2.0)
 //	--ema-margin minimum %% gap above EMA200 (default: 1.0, 0 = disabled)
 //	--min-volume minimum avg daily volume   (default: 0, disabled)
+//	--max-ema10-extension
+//	            max % above EMA10 before filtering as extended
+//	--max-ema50-extension
+//	            max % above EMA50 before filtering as extended
+//	--max-support-extension
+//	            max % above support before filtering as extended
+//	--max-10d-move
+//	            max 10-candle move before filtering as extended
 //	--interval   scan interval              (default: 2m)
 //	--period     historical candle window   (default: 2y)
 //	--exchange   Kite exchange              (default: NSE)
@@ -110,6 +118,10 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
+	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
+	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
+	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
+	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
 	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
@@ -228,9 +240,13 @@ func main() {
 	}
 
 	scanOpts := scanner.Options{
-		MinRR:        *minRR,
-		EMAMarginPct: *emaMargin,
-		MinAvgVolume: *minVolume,
+		MinRR:                  *minRR,
+		EMAMarginPct:           *emaMargin,
+		MinAvgVolume:           *minVolume,
+		MaxEMA10ExtensionPct:   *maxEMA10Extension,
+		MaxEMA50ExtensionPct:   *maxEMA50Extension,
+		MaxSupportExtensionPct: *maxSupportExtension,
+		MaxMove10DPct:          *maxMove10D,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},

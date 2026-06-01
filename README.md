@@ -315,7 +315,8 @@ go run ./cmd/scan --db --symbol EXIDEIND --top 1 --show-filtered
 Use `--show-filtered` when there is no signal and you want to see the price,
 EMA10/50/200, trend, and the exact rejection reason. Reasons can include
 bearish/neutral trend, price too close to EMA200, no valid support/resistance
-zone, R/R below minimum, too few resistance touches, or low average volume.
+zone, R/R below minimum, too few resistance touches, low average volume, or a
+setup that is already extended after a recent rally.
 
 Useful stricter/looser filters:
 
@@ -324,6 +325,8 @@ go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-rr 3
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --ema-margin 0
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-volume 200000
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-resistance-touches 1
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-10d-move 15
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-ema50-extension -1
 ```
 
 Flag notes:
@@ -331,6 +334,11 @@ Flag notes:
 - `--ema-margin`: minimum percent price must be above EMA200; `0` disables it
 - `--min-volume`: minimum previous-20-day average volume; `0` disables it
 - `--min-resistance-touches`: default `2` avoids one-day spike resistance zones
+- `--max-ema10-extension`: default `8`; filters stocks already too far above EMA10
+- `--max-ema50-extension`: default `15`; filters stocks already too far above EMA50
+- `--max-support-extension`: default `5`; filters entries too far above support
+- `--max-10d-move`: default `12`; filters stocks that already rallied too much in 10 candles
+- set any `--max-*` extension flag below `0` to disable that specific guard
 
 #### Live Scan (Real-Time via Kite WebSocket)
 
@@ -382,6 +390,10 @@ Available flags:
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
 | `--min-resistance-touches` | `2` | Minimum touches for a resistance zone to qualify; `1` allows all |
+| `--max-ema10-extension` | `8.0` | Maximum % above EMA10 before filtering as extended; `<0` disables |
+| `--max-ema50-extension` | `15.0` | Maximum % above EMA50 before filtering as extended; `<0` disables |
+| `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
+| `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -540,6 +552,10 @@ Available flags:
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
 | `--min-resistance-touches` | `2` | Minimum touches for a resistance zone to qualify; `1` allows all |
+| `--max-ema10-extension` | `8.0` | Maximum % above EMA10 before filtering as extended; `<0` disables |
+| `--max-ema50-extension` | `15.0` | Maximum % above EMA50 before filtering as extended; `<0` disables |
+| `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
+| `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:
