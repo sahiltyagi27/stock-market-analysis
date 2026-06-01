@@ -75,7 +75,11 @@ func main() {
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
 	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
-	maxBreakoutDistance := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
+	maxBreakoutDistance  := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
+	maxRiskPct           := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
+	minRiskPct           := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
+	allowBearishCandle   := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
+	ema200SlopePeriod    := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
@@ -100,6 +104,10 @@ func main() {
 		MinCandles:             *minCandles,
 		ATRPeriod:              *atrPeriod,
 		ATRMultiplier:          *atrMultiplier,
+		MaxRiskPct:             *maxRiskPct,
+		MinRiskPct:             *minRiskPct,
+		AllowBearishCandle:     *allowBearishCandle,
+		EMA200SlopePeriod:      *ema200SlopePeriod,
 		ZoneOpts:               analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
 	}
 	if *mode != "swing" && *mode != "breakout" && *mode != "all" {

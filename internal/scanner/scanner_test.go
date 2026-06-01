@@ -135,6 +135,13 @@ var defaultOpts = scanner.Options{
 	MaxEMA50ExtensionPct:   -1,
 	MaxSupportExtensionPct: -1,
 	MaxMove10DPct:          -1,
+	// Disable the new quality filters for the synthetic test fixture so existing
+	// tests remain focused on the specific behaviour they were written to verify.
+	// Dedicated tests below verify each new filter in isolation.
+	MaxRiskPct:         -1,
+	MinRiskPct:         -1,
+	AllowBearishCandle: true, // preserve penalty-only behaviour in existing tests
+	EMA200SlopePeriod:  -1,
 }
 
 func withoutExtensionGuards(opts scanner.Options) scanner.Options {
@@ -142,6 +149,12 @@ func withoutExtensionGuards(opts scanner.Options) scanner.Options {
 	opts.MaxEMA50ExtensionPct = -1
 	opts.MaxSupportExtensionPct = -1
 	opts.MaxMove10DPct = -1
+	// Also disable the new quality filters so tests built on the synthetic
+	// fixture (which has intentionally wide zones) are not affected by them.
+	opts.MaxRiskPct = -1
+	opts.MinRiskPct = -1
+	opts.AllowBearishCandle = true
+	opts.EMA200SlopePeriod = -1
 	return opts
 }
 
@@ -589,6 +602,11 @@ func TestScan_ExtensionFilter_FiltersWhenTooFarAboveSupport(t *testing.T) {
 		MaxEMA50ExtensionPct:   -1,
 		MaxSupportExtensionPct: 5.0,
 		MaxMove10DPct:          -1,
+		// Disable quality filters — this test only checks the extension guard.
+		MaxRiskPct:         -1,
+		MinRiskPct:         -1,
+		AllowBearishCandle: true,
+		EMA200SlopePeriod:  -1,
 	}
 
 	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "EXTENDED", Candles: candles}}, opts)
@@ -609,6 +627,11 @@ func TestScan_ExtensionFilter_DisabledWhenNegative(t *testing.T) {
 		MaxEMA50ExtensionPct:   -1,
 		MaxSupportExtensionPct: -1,
 		MaxMove10DPct:          -1,
+		// Disable quality filters so the synthetic fixture is not blocked by them.
+		MaxRiskPct:         -1,
+		MinRiskPct:         -1,
+		AllowBearishCandle: true,
+		EMA200SlopePeriod:  -1,
 	}
 
 	signals := scanner.Scan([]scanner.Input{{Symbol: "EXTENDED", Candles: candles}}, opts)
@@ -697,12 +720,35 @@ func TestScan_BearishCandlePenalty_Applied(t *testing.T) {
 	candles := makeTrendingCandles("TEST", 100, 1_000_000)
 	// Force the last candle to be bearish (open > close).
 	candles[len(candles)-1].Open = candles[len(candles)-1].Close * 1.02
-	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, defaultOpts)
+
+	// AllowBearishCandle: true — disable the hard filter so we can verify the
+	// soft −5 score penalty is still applied when bearish candles are permitted.
+	opts := defaultOpts
+	opts.AllowBearishCandle = true
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
 	if len(signals) == 0 {
 		t.Skip("no signal produced — cannot test penalty")
 	}
 	if signals[0].Breakdown.CandleDir >= 0 {
 		t.Errorf("expected negative CandleDir for bearish candle, got %.1f", signals[0].Breakdown.CandleDir)
+	}
+}
+
+// TestScan_BearishCandle_HardRejected verifies that the default (AllowBearishCandle=false)
+// rejects a setup whose signal candle closed below its open.
+func TestScan_BearishCandle_HardRejected(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	candles[len(candles)-1].Open = candles[len(candles)-1].Close * 1.02 // bearish
+
+	// Use defaultOpts but with AllowBearishCandle explicitly false (hard filter ON).
+	opts := defaultOpts
+	opts.AllowBearishCandle = false
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatalf("expected bearish signal candle to be hard-rejected, got %d signals", len(signals))
+	}
+	if err := errs["TEST"]; err == nil || !strings.Contains(err.Error(), "bearish") {
+		t.Fatalf("expected bearish-candle rejection error, got %v", err)
 	}
 }
 
@@ -731,5 +777,126 @@ func TestScan_ScoreMaxIs100(t *testing.T) {
 	}
 	if signals[0].Score > 100 {
 		t.Errorf("score %.2f exceeds maximum of 100", signals[0].Score)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MaxRiskPct filter
+// ---------------------------------------------------------------------------
+
+// TestScan_MaxRiskPct_RejectsHighRisk sets a very tight cap (0.1 %) that the
+// synthetic fixture (risk ≈ 7–9 %) cannot satisfy.
+func TestScan_MaxRiskPct_RejectsHighRisk(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := defaultOpts
+	opts.AllowBearishCandle = true // keep bearish-candle filter out of the way
+	opts.MaxRiskPct = 0.1          // absurdly tight — must reject
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatalf("expected MaxRiskPct=0.1%% to reject signal, got %d signals", len(signals))
+	}
+	if err := errs["TEST"]; err == nil || !strings.Contains(err.Error(), "exceeds max") {
+		t.Fatalf("expected risk-cap rejection error, got %v", err)
+	}
+}
+
+// TestScan_MaxRiskPct_DisabledWhenNegative verifies that MaxRiskPct < 0 turns
+// the filter off entirely.
+func TestScan_MaxRiskPct_DisabledWhenNegative(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := defaultOpts
+	opts.MaxRiskPct = -1 // explicitly disabled
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected signal when MaxRiskPct is disabled (-1), got none")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MinRiskPct filter
+// ---------------------------------------------------------------------------
+
+// TestScan_MinRiskPct_RejectsTightStop verifies that a very high minimum
+// (e.g. 99 %) rejects any realistic setup.
+func TestScan_MinRiskPct_RejectsTightStop(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := defaultOpts
+	opts.AllowBearishCandle = true
+	opts.MinRiskPct = 99.0 // nothing can satisfy this
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatalf("expected MinRiskPct=99%% to reject signal, got %d signals", len(signals))
+	}
+	if err := errs["TEST"]; err == nil || !strings.Contains(err.Error(), "below min") {
+		t.Fatalf("expected min-risk rejection error, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// EMA200 slope filter
+// ---------------------------------------------------------------------------
+
+// TestScan_EMA200Slope_PassesRisingTrend confirms the synthetic fixture (which
+// has a genuinely rising EMA200) is not filtered.
+func TestScan_EMA200Slope_PassesRisingTrend(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := defaultOpts
+	opts.EMA200SlopePeriod = 20
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected signal when EMA200 is rising, got none")
+	}
+}
+
+// TestScan_EMA200Slope_RejectsDeclining builds a series that starts rising
+// (to satisfy the EMA200 requirement) but then gradually declines so the
+// EMA200 is lower today than it was 20 candles ago.
+func TestScan_EMA200Slope_RejectsDeclining(t *testing.T) {
+	// Phase 1 — strong rise: 220 candles so EMA200 is well-seeded and rising.
+	// Phase 2 — long decline: 60 candles that bring price down to ensure the
+	//   EMA200 today is lower than EMA200[today−20].
+	var candles []models.Candle
+	ts := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	add := func(o, h, l, c float64) {
+		candles = append(candles, models.Candle{
+			Symbol: "SLOPE", Timestamp: ts,
+			Open: o, High: h, Low: l, Close: c, Volume: 500_000,
+		})
+		ts = ts.Add(24 * time.Hour)
+	}
+
+	// Rise: 100 → 300 over 220 candles.
+	for i := range 220 {
+		p := 100 + float64(i)*200/220
+		add(p, p*1.005, p*0.995, p)
+	}
+	// Decline: 300 → 150 over 60 candles, pulling EMA200 down.
+	for i := range 60 {
+		p := 300 - float64(i)*150/60
+		add(p, p*1.005, p*0.995, p)
+	}
+
+	opts := defaultOpts
+	opts.EMAMarginPct = -1        // disable — price may be below EMA200
+	opts.EMA200SlopePeriod = 20
+	opts.AllowBearishCandle = true
+
+	_, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "SLOPE", Candles: candles}}, opts)
+	// Either filtered early (trend not bullish) or caught by EMA200 slope.
+	// At least one rejection must have occurred.
+	if _, filtered := errs["SLOPE"]; !filtered {
+		t.Fatal("expected declining series to be filtered, but a signal was produced")
+	}
+}
+
+// TestScan_EMA200Slope_DisabledWhenNegative confirms that EMA200SlopePeriod ≤ 0
+// turns the check off.
+func TestScan_EMA200Slope_DisabledWhenNegative(t *testing.T) {
+	candles := makeTrendingCandles("TEST", 100, 1_000_000)
+	opts := defaultOpts
+	opts.EMA200SlopePeriod = -1
+	signals := scanner.Scan([]scanner.Input{{Symbol: "TEST", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Error("expected signal when EMA200 slope filter is disabled (-1), got none")
 	}
 }
