@@ -25,6 +25,7 @@ type StockSignal struct {
 	Trade      analysis.TradeSetup `json:"trade"` // long setup
 	Score      float64             `json:"score"`
 	Breakdown  ScoreBreakdown      `json:"breakdown"`
+	Extension  Extension           `json:"extension"`
 	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
@@ -37,6 +38,16 @@ type ScoreBreakdown struct {
 	AvgVolume   float64 `json:"avg_volume"`
 	LastVolume  float64 `json:"last_volume"`
 	VolumeRatio float64 `json:"volume_ratio"`
+}
+
+// Extension shows whether a setup may be late after a recent rally.
+// Values are percentages, where positive means price is above the reference.
+type Extension struct {
+	FromEMA10Pct       float64 `json:"from_ema_10_pct"`
+	FromEMA50Pct       float64 `json:"from_ema_50_pct"`
+	FromSupportHighPct float64 `json:"from_support_high_pct"`
+	Move10DPct         float64 `json:"move_10d_pct"`
+	HasMove10D         bool    `json:"has_move_10d"`
 }
 
 // Diagnostic explains how far one stock got through the scanner pipeline,

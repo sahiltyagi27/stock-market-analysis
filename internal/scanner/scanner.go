@@ -194,6 +194,7 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Resistance: resistance,
 		Trade:      *ta.Long,
 	}
+	sig.Extension = extensionDiagnostics(price, closes, emas, support)
 	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol)
 	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
@@ -232,6 +233,30 @@ func nearestZones(price float64, zones analysis.ZoneResult) (support, resistance
 		return analysis.Zone{}, analysis.Zone{}, fmt.Errorf("no resistance zone above price %.2f", price)
 	}
 	return support, resistance, nil
+}
+
+func extensionDiagnostics(price float64, closes []float64, emas analysis.EMAResult, support analysis.Zone) Extension {
+	ext := Extension{
+		FromEMA10Pct:       pctFrom(price, emas.EMA10),
+		FromEMA50Pct:       pctFrom(price, emas.EMA50),
+		FromSupportHighPct: pctFrom(price, support.High),
+	}
+
+	const lookback = 10
+	if len(closes) > lookback {
+		base := closes[len(closes)-1-lookback]
+		ext.Move10DPct = pctFrom(price, base)
+		ext.HasMove10D = base > 0
+	}
+
+	return ext
+}
+
+func pctFrom(price, base float64) float64 {
+	if base <= 0 {
+		return 0
+	}
+	return (price - base) / base * 100
 }
 
 func deriveTrend(price float64, emas analysis.EMAResult) Trend {
