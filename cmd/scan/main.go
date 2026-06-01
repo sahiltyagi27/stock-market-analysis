@@ -16,6 +16,7 @@
 //	--period    DB history window           (default: 2y)
 //	--symbol    stock symbol for --csv; or filter --db to one symbol
 //	--top       max signals to print        (default: 5)
+//	--mode      swing, breakout, or all     (default: swing)
 //	--min-rr    minimum risk/reward         (default: 2.0)
 //	--max-ema10-extension
 //	            max % above EMA10 before filtering as extended
@@ -25,6 +26,8 @@
 //	            max % above support before filtering as extended
 //	--max-10d-move
 //	            max 10-candle move before filtering as extended
+//	--max-breakout-distance
+//	            max % below resistance for breakout watch candidates
 //	--show-filtered
 //	            print diagnostics for filtered symbols
 //
@@ -60,6 +63,7 @@ func main() {
 	period := flag.String("period", "2y", "DB history window (e.g. 2y, 6m, 90d)")
 	csvSymbol := flag.String("symbol", "", "stock symbol for --csv; defaults to CSV filename")
 	topN := flag.Int("top", 5, "number of top signals to print")
+	mode := flag.String("mode", "swing", "scanner mode: swing, breakout, or all")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
@@ -68,6 +72,7 @@ func main() {
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
 	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
+	maxBreakoutDistance := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
@@ -88,22 +93,52 @@ func main() {
 		MaxEMA50ExtensionPct:   *maxEMA50Extension,
 		MaxSupportExtensionPct: *maxSupportExtension,
 		MaxMove10DPct:          *maxMove10D,
+		MaxBreakoutDistancePct: *maxBreakoutDistance,
 		ZoneOpts:               analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
 	}
-	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
+	if *mode != "swing" && *mode != "breakout" && *mode != "all" {
+		log.Fatalf("invalid --mode %q: use swing, breakout, or all", *mode)
+	}
 
-	printSignals(signals, *topN)
+	var signals []scanner.StockSignal
+	var breakouts []scanner.BreakoutSignal
+	scanErrs := make(map[string]error)
+	breakoutErrs := make(map[string]error)
+
+	if *mode == "swing" || *mode == "all" {
+		signals, scanErrs = scanner.ScanWithErrors(inputs, opts)
+		printSignals(signals, *topN)
+	}
+	if *mode == "breakout" || *mode == "all" {
+		breakouts, breakoutErrs = scanner.ScanBreakouts(inputs, opts)
+		printBreakouts(breakouts, *topN)
+	}
 	if *showFiltered {
 		printDataErrors(dataErrs)
-		printDiagnostics(scanner.Diagnose(inputs, opts), scanErrs)
+		if *mode == "swing" || *mode == "all" {
+			printDiagnostics("Filtered Swing Symbols", scanner.Diagnose(inputs, opts), scanErrs)
+		}
+		if *mode == "breakout" || *mode == "all" {
+			printErrors("Filtered Breakout Symbols", breakoutErrs)
+		}
 	}
 
 	fmt.Println()
 	fmt.Println(display.Dim.Sprint(strings.Repeat("─", 42)))
 	fmt.Printf("%s  %d symbols\n", display.Dim.Sprint("Scanned: "), len(inputs))
-	fmt.Printf("%s  %d %s\n", display.Dim.Sprint("Skipped: "), len(dataErrs)+len(scanErrs),
-		display.Dim.Sprintf("(data errors: %d, no setup: %d)", len(dataErrs), len(scanErrs)))
-	fmt.Printf("%s  %s\n", display.Dim.Sprint("Signals: "), display.TotalScore(float64(len(signals))))
+	if *mode == "breakout" {
+		fmt.Printf("%s  %d %s\n", display.Dim.Sprint("Skipped: "), len(dataErrs)+len(breakoutErrs),
+			display.Dim.Sprintf("(data errors: %d, no breakout watch: %d)", len(dataErrs), len(breakoutErrs)))
+	} else {
+		fmt.Printf("%s  %d %s\n", display.Dim.Sprint("Skipped: "), len(dataErrs)+len(scanErrs),
+			display.Dim.Sprintf("(data errors: %d, no setup: %d)", len(dataErrs), len(scanErrs)))
+	}
+	if *mode == "swing" || *mode == "all" {
+		fmt.Printf("%s  %s\n", display.Dim.Sprint("Signals: "), display.TotalScore(float64(len(signals))))
+	}
+	if *mode == "breakout" || *mode == "all" {
+		fmt.Printf("%s  %s\n", display.Dim.Sprint("Breakouts:"), display.TotalScore(float64(len(breakouts))))
+	}
 }
 
 func printDataErrors(dataErrs map[string]error) {
@@ -286,13 +321,13 @@ func parsePeriod(period string, from time.Time) (time.Time, error) {
 	}
 }
 
-func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
+func printDiagnostics(title string, diags []scanner.Diagnostic, scanErrs map[string]error) {
 	if len(scanErrs) == 0 {
 		return
 	}
 
 	fmt.Println()
-	fmt.Println("Filtered Symbols")
+	fmt.Println(title)
 	for _, d := range diags {
 		if _, ok := scanErrs[d.Symbol]; !ok {
 			continue
@@ -304,6 +339,22 @@ func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
 		fmt.Printf("   EMA50:   %.2f\n", d.EMA.EMA50)
 		fmt.Printf("   EMA200:  %.2f\n", d.EMA.EMA200)
 		fmt.Printf("   Reason:  %s\n", d.Error)
+	}
+}
+
+func printErrors(title string, errs map[string]error) {
+	if len(errs) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println(title)
+	keys := make([]string, 0, len(errs))
+	for key := range errs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Printf("   %s: %v\n", key, errs[key])
 	}
 }
 
@@ -384,6 +435,62 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 			display.Dim.Sprintf("(%d touches)", sig.Resistance.Touches))
 
 		// Reasons.
+		fmt.Printf("   %s\n", display.Dim.Sprint("Reasons:"))
+		for _, r := range sig.Reasons {
+			fmt.Printf("     %s %s\n", display.Cyan.Sprint("•"), display.Dim.Sprint(r))
+		}
+	}
+}
+
+func printBreakouts(signals []scanner.BreakoutSignal, topN int) {
+	fmt.Println()
+	box := display.BoldCyan.Sprint
+	fmt.Println(box("╔══════════════════════════════════════╗"))
+	fmt.Println(box("║") + display.Bold.Sprint("         Breakout Watchlist           ") + box("║"))
+	fmt.Println(box("║") + display.Dim.Sprint("   (watch for close + volume confirm) ") + box("║"))
+	fmt.Println(box("╚══════════════════════════════════════╝"))
+
+	top := topN
+	if top > len(signals) {
+		top = len(signals)
+	}
+	if top == 0 {
+		fmt.Println("\nNo breakout watch candidates found matching the criteria.")
+	}
+
+	for i, sig := range signals[:top] {
+		fmt.Printf("\n%s %s\n",
+			display.Dim.Sprintf("%d.", i+1),
+			display.BoldWhite.Sprint(sig.Symbol))
+		fmt.Printf("   %s  %s %s\n",
+			display.Dim.Sprint("Score:     "),
+			display.TotalScore(sig.Score),
+			display.Dim.Sprint("/ 100"))
+		fmt.Printf("   %s  %.2f\n", display.Dim.Sprint("Price:     "), sig.Price)
+		fmt.Printf("   %s  %.2f – %.2f  %s\n",
+			display.Dim.Sprint("Resistance:"),
+			sig.Resistance.Low, sig.Resistance.High,
+			display.Dim.Sprintf("(%d touches)", sig.Resistance.Touches))
+		fmt.Printf("   %s  %s below zone, confirm above %.2f\n",
+			display.Dim.Sprint("Breakout:  "),
+			display.Cyan.Sprintf("%.2f%%", sig.DistanceToResistancePct),
+			sig.BreakoutPrice)
+		fmt.Printf("   %s  %.2f – %.2f  %s\n",
+			display.Dim.Sprint("Support:   "),
+			sig.Support.Low, sig.Support.High,
+			display.Dim.Sprintf("(%d touches)", sig.Support.Touches))
+		fmt.Printf("   %s  %s\n", display.Dim.Sprint("Trend:     "), display.Trend(string(sig.Trend)))
+		fmt.Printf("   %s  EMA10 %s   EMA50 %s   Support %s   10D %s\n",
+			display.Dim.Sprint("Extension: "),
+			display.Sign(sig.Extension.FromEMA10Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromEMA50Pct, "%+.1f%%"),
+			display.Sign(sig.Extension.FromSupportHighPct, "%+.1f%%"),
+			formatMove10D(sig.Extension))
+		if sig.Volume.AvgVolume > 0 {
+			fmt.Printf("   %s  latest %.0f, avg20 %.0f, %.2fx\n",
+				display.Dim.Sprint("Volume:    "),
+				sig.Volume.LastVolume, sig.Volume.AvgVolume, sig.Volume.VolumeRatio)
+		}
 		fmt.Printf("   %s\n", display.Dim.Sprint("Reasons:"))
 		for _, r := range sig.Reasons {
 			fmt.Printf("     %s %s\n", display.Cyan.Sprint("•"), display.Dim.Sprint(r))

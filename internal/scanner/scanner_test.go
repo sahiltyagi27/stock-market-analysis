@@ -617,6 +617,51 @@ func TestScan_ExtensionFilter_DisabledWhenNegative(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Breakout watch scanner
+// ---------------------------------------------------------------------------
+
+func TestScanBreakouts_ReturnsCandidateNearResistance(t *testing.T) {
+	candles := makeTrendingCandles("BREAK", 100, 1_000_000)
+	candles[len(candles)-1].Close = 255
+	candles[len(candles)-1].Open = 255
+	candles[len(candles)-1].High = 256
+	candles[len(candles)-1].Low = 252
+
+	opts := withoutExtensionGuards(scanner.Options{
+		MinRR:                  2.0,
+		VolumeWindow:           20,
+		MaxBreakoutDistancePct: 3.0,
+	})
+	signals, errs := scanner.ScanBreakouts([]scanner.Input{{Symbol: "BREAK", Candles: candles}}, opts)
+	if len(signals) != 1 {
+		t.Fatalf("expected one breakout candidate, got %d, errs=%v", len(signals), errs)
+	}
+	if signals[0].DistanceToResistancePct > 3.0 {
+		t.Errorf("distance = %.2f, want <= 3.0", signals[0].DistanceToResistancePct)
+	}
+	if signals[0].Resistance.Touches < 2 {
+		t.Errorf("resistance touches = %d, want >= 2", signals[0].Resistance.Touches)
+	}
+}
+
+func TestScanBreakouts_FiltersWhenTooFarFromResistance(t *testing.T) {
+	candles := makeTrendingCandles("FAR", 100, 1_000_000)
+	opts := withoutExtensionGuards(scanner.Options{
+		MinRR:                  2.0,
+		VolumeWindow:           20,
+		MaxBreakoutDistancePct: 3.0,
+	})
+
+	signals, errs := scanner.ScanBreakouts([]scanner.Input{{Symbol: "FAR", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatalf("expected no breakout candidates, got %d", len(signals))
+	}
+	if err := errs["FAR"]; err == nil || !strings.Contains(err.Error(), "above price") {
+		t.Fatalf("expected distance rejection, got %v", err)
+	}
+}
+
 func TestScan_ScoreMaxIs100(t *testing.T) {
 	// Score components: 40+30+20+10 = 100 max.
 	// A bullish stock with excellent R/R, 4+ touch support, and high volume

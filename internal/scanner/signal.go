@@ -29,6 +29,30 @@ type StockSignal struct {
 	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
+// BreakoutSignal is a watchlist candidate sitting below a tested resistance
+// zone. It is a "watch for confirmation" setup, not an immediate trade signal.
+type BreakoutSignal struct {
+	Symbol                  string             `json:"symbol"`
+	Price                   float64            `json:"price"`
+	Trend                   Trend              `json:"trend"`
+	EMA                     analysis.EMAResult `json:"ema"`
+	Support                 analysis.Zone      `json:"support"`
+	Resistance              analysis.Zone      `json:"resistance"`
+	Score                   float64            `json:"score"`
+	DistanceToResistancePct float64            `json:"distance_to_resistance_pct"`
+	BreakoutPrice           float64            `json:"breakout_price"`
+	Extension               Extension          `json:"extension"`
+	Volume                  VolumeConfirmation `json:"volume"`
+	Reasons                 []string           `json:"reasons"`
+}
+
+// VolumeConfirmation explains whether current volume is confirming interest.
+type VolumeConfirmation struct {
+	AvgVolume   float64 `json:"avg_volume"`
+	LastVolume  float64 `json:"last_volume"`
+	VolumeRatio float64 `json:"volume_ratio"`
+}
+
 // ScoreBreakdown explains how StockSignal.Score was composed.
 type ScoreBreakdown struct {
 	Trend       float64 `json:"trend"`
