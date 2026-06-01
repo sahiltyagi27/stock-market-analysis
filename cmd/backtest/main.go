@@ -34,6 +34,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/backtest"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -44,6 +45,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	fromStr := flag.String("from", "", "start of signal-date window, YYYY-MM-DD (empty = no lower bound)")
 	toStr := flag.String("to", "", "end of signal-date window, YYYY-MM-DD (empty = today)")
+	mode := flag.String("mode", "swing", "scanner strategy: swing or crossover")
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
@@ -67,6 +69,13 @@ func main() {
 	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
 	ema200SlopePeriod  := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
 	trailATRMult       := flag.Float64("trail-atr-mult", 1.5, "ATR multiplier for trailing stop: trailSL = highestHigh − mult×ATR (≤0 disables)")
+
+	// Crossover-mode flags (only used when --mode crossover).
+	coMaxAge     := flag.Int("co-max-age", 2, "[crossover] max candles since EMA7×21 crossover (default 2 = last 3 candles)")
+	coMinRR      := flag.Float64("co-min-rr", 1.5, "[crossover] minimum risk/reward ratio")
+	coMinCandles := flag.Int("co-min-candles", 50, "[crossover] minimum candles required before analysis")
+	coVolWindow  := flag.Int("co-vol-window", 20, "[crossover] volume rolling-average window")
+	coMinResTouches := flag.Int("co-min-resistance-touches", 1, "[crossover] minimum touches for a resistance zone target")
 
 	flag.Parse()
 
@@ -152,14 +161,28 @@ func main() {
 		},
 	}
 
+	if *mode != "swing" && *mode != "crossover" {
+		log.Fatalf("--mode must be swing or crossover, got %q", *mode)
+	}
+
+	coOpts := crossover.Options{
+		MaxCrossoverAge: *coMaxAge,
+		MinRR:           *coMinRR,
+		MinCandles:      *coMinCandles,
+		VolumeWindow:    *coVolWindow,
+		ZoneOpts:        analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
+	}
+
 	opts := backtest.Options{
 		From:               from,
 		To:                 to,
+		Mode:               *mode,
 		MinScore:           *minScore,
 		MaxHold:            *maxHold,
 		Workers:            *workers,
 		TrailATRMultiplier: *trailATRMult,
 		ScanOpts:           scanOpts,
+		CrossoverOpts:      coOpts,
 		Progress: func(done, total int) {
 			if done%50 == 0 || done == total {
 				log.Printf("  simulating: %d/%d symbols…", done, total)
@@ -175,8 +198,8 @@ func main() {
 	if !to.IsZero() {
 		toLabel = to.Format("2006-01-02")
 	}
-	log.Printf("running backtest: %s → %s | max-hold %dd | workers %d",
-		fromLabel, toLabel, *maxHold, *workers)
+	log.Printf("running backtest: %s → %s | mode: %s | max-hold %dd | workers %d",
+		fromLabel, toLabel, *mode, *maxHold, *workers)
 
 	results := backtest.Run(ctx, candlesMap, opts)
 	log.Printf("simulation complete — %d trades generated", len(results))
