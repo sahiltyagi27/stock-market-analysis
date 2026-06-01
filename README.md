@@ -38,6 +38,8 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **NSE Holiday Calendar** — automatically skips all NSE trading holidays (no false "no signals" on holidays)
 - ✅ **Signal Persistence** — new signals marked `[NEW]`; consecutive appearances show a streak counter `×N`
 - ✅ **Liquidity Filter** — optional minimum avg daily volume threshold to exclude illiquid stocks
+- ✅ **Relative Strength vs NIFTY 50** — each signal shows how much it's outperforming/underperforming the index from open
+- ✅ **Persistent Signal Log** — every scan run is written to `scan_results` (PostgreSQL) for post-hoc review and backtesting
 
 ---
 
@@ -310,6 +312,7 @@ Example output:
 
   1. HDFCBANK        ₹1625.50    Score: 87/100  ×3
      ├ Trend:   40/40  R/R: 22/30  Support: 20/20  Volume: 5/10 (est. 3500000 vs avg 2100000 = 1.67x)
+     ├ RS vs NIFTY: +1.23%  (NIFTY: +0.47%)
      ├ Trend: bullish   R/R: 2.85 (good)
      ├ Entry: 1625.50   SL: 1580.20   Target: 1750.00
      ├ Support:    1580.00–1590.00 (3 touches)
@@ -323,11 +326,13 @@ Example output:
 
   2. TATASTEEL       ₹142.30     Score: 74/100  [NEW]
      ├ Trend:   40/40  R/R: 18/30  Support: 15/20  Volume: 1/10 (est. 8200000 vs avg 9100000 = 0.90x)
+     ├ RS vs NIFTY: +0.45%  (NIFTY: +0.47%)
      ...
 
   ──────────────────────────────────────────────────────
   Scanned: 487   Signals: 6    No tick yet: 8
   * volume projected to full-day (48% of session elapsed)
+  NIFTY 50: +0.47% from open
 ```
 
 **Signal tags:**
@@ -384,6 +389,7 @@ Useful SQL:
 ```sql
 \dt
 
+-- Candles
 SELECT COUNT(*) FROM candles;
 
 SELECT symbol, COUNT(*), MIN(timestamp), MAX(timestamp)
@@ -396,6 +402,19 @@ FROM candles
 WHERE symbol = 'ITC'
 ORDER BY timestamp DESC
 LIMIT 10;
+
+-- Scan results (written by live-scan after every run)
+SELECT scanned_at, symbol, price, score, trend, rr, rel_strength, is_new, streak
+FROM scan_results
+ORDER BY scanned_at DESC, score DESC
+LIMIT 50;
+
+-- Signals for a specific symbol over time
+SELECT scanned_at, price, score, rr, rel_strength, streak
+FROM scan_results
+WHERE symbol = 'HDFCBANK'
+ORDER BY scanned_at DESC
+LIMIT 20;
 ```
 
 #### Run Tests
