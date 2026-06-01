@@ -20,11 +20,19 @@ func score(sig *StockSignal, avgVolume, lastVolume float64) float64 {
 }
 
 func scoreBreakdown(sig *StockSignal, avgVolume, lastVolume float64) ScoreBreakdown {
+	var volumeRatio float64
+	if avgVolume > 0 {
+		volumeRatio = lastVolume / avgVolume
+	}
+
 	return ScoreBreakdown{
-		Trend:   trendScore(sig.Trend),
-		RR:      rrScore(sig.Trade.Quality),
-		Support: supportScore(sig.Support),
-		Volume:  volumeScore(avgVolume, lastVolume),
+		Trend:       trendScore(sig.Trend),
+		RR:          rrScore(sig.Trade.Quality),
+		Support:     supportScore(sig.Support),
+		Volume:      volumeScore(avgVolume, lastVolume),
+		AvgVolume:   avgVolume,
+		LastVolume:  lastVolume,
+		VolumeRatio: volumeRatio,
 	}
 }
 

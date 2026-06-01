@@ -222,6 +222,9 @@ func TestScan_ScoreBreakdownSumsToScore(t *testing.T) {
 	if s.Breakdown.Trend == 0 || s.Breakdown.RR == 0 || s.Breakdown.Support == 0 {
 		t.Errorf("expected trend, R/R, and support components to be populated, got %+v", s.Breakdown)
 	}
+	if s.Breakdown.AvgVolume == 0 || s.Breakdown.LastVolume == 0 || s.Breakdown.VolumeRatio == 0 {
+		t.Errorf("expected volume diagnostics to be populated, got %+v", s.Breakdown)
+	}
 }
 
 // ---------------------------------------------------------------------------
