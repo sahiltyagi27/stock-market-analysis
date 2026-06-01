@@ -132,7 +132,6 @@ stock-market-analysis/
 ├── internal/
 │   ├── analysis/        # EMA, zone detection, trade analyzer
 │   ├── api/             # REST handlers (Chi router)
-│   ├── fetcher/         # Stooq HTTP downloader (no auth required)
 │   ├── kite/            # Kite Connect client (token, instruments, history)
 │   ├── loader/          # CSV → Candle parser
 │   ├── scanner/         # Scanner engine, scorer, signal reasons, diagnostics
@@ -165,6 +164,9 @@ cp .env.example .env
 ### Command Cookbook
 
 #### Start PostgreSQL
+
+The scanner stores Kite daily candles in PostgreSQL. Start one local database
+before running `kite-sync`, `scan --db`, `live-scan`, or the HTTP server.
 
 If port `5432` is free:
 
@@ -210,7 +212,8 @@ docker logs stock-market-analysis-postgres
 
 #### Configure Kite
 
-Put your Kite app credentials in `.env`:
+Kite is used for instrument lookup, historical daily candles, and live ticks.
+Create a Kite Connect app, then put the app credentials in `.env`:
 
 ```env
 KITE_API_KEY=your_api_key
@@ -227,7 +230,8 @@ http://127.0.0.1:8080/kite/callback
 
 #### Refresh Kite Access Token
 
-Kite access tokens expire daily.
+Kite access tokens expire daily. Run this command first to print the Kite login
+URL:
 
 ```bash
 go run ./cmd/kite-token
@@ -248,9 +252,21 @@ KITE_ACCESS_TOKEN=generated_access_token
 
 #### Sync Kite Daily Candles
 
+This downloads historical daily OHLCV candles from Kite and stores them in
+PostgreSQL. Run this after setting `KITE_ACCESS_TOKEN`, and refresh it whenever
+you want the DB cache to include the latest completed daily candle.
+
 ```bash
 go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y
 ```
+
+What it does:
+- reads symbols from `config/symbols.txt`
+- finds each NSE instrument in Kite's instrument master
+- downloads the requested historical period
+- upserts candles into the `candles` table
+
+Common variants:
 
 For another exchange:
 
@@ -258,20 +274,63 @@ For another exchange:
 go run ./cmd/kite-sync --exchange BSE --symbols config/symbols.txt --period 2y
 ```
 
+Sync only a smaller temporary watchlist:
+
+```bash
+printf "EXIDEIND\nITC\n" > /tmp/my-symbols.txt
+go run ./cmd/kite-sync --symbols /tmp/my-symbols.txt --period 2y
+```
+
 #### Scan Synced DB Candles
 
-Full watchlist:
+This runs the offline scanner against candles already stored in PostgreSQL.
+It does not call Kite. Use this for end-of-day scans, debugging one stock, or
+checking why a symbol is filtered out.
+
+Full watchlist scan:
 
 ```bash
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10
 ```
 
-Single symbol (skips the symbols file, queries just that ticker):
+What it shows:
+- only valid trade candidates by default
+- score breakdown: trend, R/R, support, volume
+- price, trend, entry, stop-loss, target
+- support/resistance zones and reasons
+- final counts for scanned, skipped, and signal symbols
+
+Single symbol scan:
 
 ```bash
 go run ./cmd/scan --db --symbol RELIANCE --top 1
-go run ./cmd/scan --db --symbol HDFCBANK --show-filtered
 ```
+
+Single symbol with rejection details:
+
+```bash
+go run ./cmd/scan --db --symbol EXIDEIND --top 1 --show-filtered
+```
+
+Use `--show-filtered` when there is no signal and you want to see the price,
+EMA10/50/200, trend, and the exact rejection reason. Reasons can include
+bearish/neutral trend, price too close to EMA200, no valid support/resistance
+zone, R/R below minimum, too few resistance touches, or low average volume.
+
+Useful stricter/looser filters:
+
+```bash
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-rr 3
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --ema-margin 0
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-volume 200000
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-resistance-touches 1
+```
+
+Flag notes:
+- `--min-rr`: minimum risk/reward required before a signal is printed
+- `--ema-margin`: minimum percent price must be above EMA200; `0` disables it
+- `--min-volume`: minimum previous-20-day average volume; `0` disables it
+- `--min-resistance-touches`: default `2` avoids one-day spike resistance zones
 
 #### Live Scan (Real-Time via Kite WebSocket)
 
@@ -290,6 +349,27 @@ go run ./cmd/live-scan --top 10 --interval 2m --min-rr 2.0
 go run ./cmd/live-scan --interval 30s            # faster cadence
 go run ./cmd/live-scan --dev                     # disable market hours check (for testing)
 ```
+
+Live scan for one stock:
+
+```bash
+printf "EXIDEIND\n" > /tmp/exideind-symbols.txt
+go run ./cmd/live-scan --symbols /tmp/exideind-symbols.txt --top 1
+```
+
+Testing one stock outside market hours:
+
+```bash
+go run ./cmd/live-scan --symbols /tmp/exideind-symbols.txt --top 1 --interval 30s --dev
+```
+
+What live scan does:
+- subscribes to Kite WebSocket ticks in full mode
+- keeps today's candle updated from live LTP/open/high/low/volume
+- merges that live candle with historical DB candles
+- runs the same scanner pipeline repeatedly
+- shows `[NEW]` for fresh signals and `xN`/`×N` streaks for repeated signals
+- writes every emitted signal to `scan_results`
 
 Available flags:
 
@@ -344,11 +424,21 @@ Example output:
 
 #### Scan Manual CSV Files
 
+CSV mode is useful when you want to test one downloaded file without Kite or
+PostgreSQL. The CSV should contain OHLCV data; Google Finance exports are
+supported by the loader.
+
 Single Google Finance CSV:
 
 ```bash
 go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
 ```
+
+What it does:
+- reads only the CSV file you pass
+- uses `--symbol` as the stock name in output
+- runs the same EMA, zone, trade, and scoring pipeline
+- does not write to PostgreSQL
 
 Folder of CSVs named by symbol:
 
@@ -356,7 +446,13 @@ Folder of CSVs named by symbol:
 go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
 ```
 
+This scans every `.csv` file in the folder and derives each symbol from the
+filename, for example `~/Desktop/nifty-data/ITC.csv` becomes `ITC`.
+
 #### Start HTTP Server
+
+The HTTP server exposes stored candles through REST endpoints. Use this when
+you want another app or UI to read candle data from the local database.
 
 Load a sample CSV and start the server:
 
@@ -378,6 +474,9 @@ curl 'http://localhost:8080/stocks/ITC/candles?from=2025-01-01&limit=10'
 ```
 
 #### Inspect PostgreSQL
+
+Use this when you want to verify that candles were synced or inspect persisted
+live-scan results.
 
 Open `psql` inside the Docker container:
 
@@ -424,7 +523,7 @@ LIMIT 20;
 go test ./...
 ```
 
-### Daily scan
+### Offline Scanner Flags
 
 Available flags:
 
@@ -503,7 +602,6 @@ go test ./...
 ```
 ok  github.com/sahiltyagi27/stock-market-analysis/config
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/analysis
-ok  github.com/sahiltyagi27/stock-market-analysis/internal/fetcher
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/kite
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/loader
 ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
