@@ -155,20 +155,27 @@ go run ./cmd/server
 
 ### Daily scan
 
-Download OHLCV CSV files from your data source, then scan one file or a folder
-of files. This works well with manually exported Google Finance sheets.
+For automated daily scans, sync candles from Kite Connect into PostgreSQL, then
+scan the stored candles:
+
+```bash
+# First, get today's Kite access token.
+go run ./cmd/kite-token
+go run ./cmd/kite-token --request-token <request_token_from_redirect>
+
+# Then sync and scan.
+go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --show-filtered
+```
+
+Kite access tokens expire daily. Keep `KITE_API_KEY` and `KITE_API_SECRET` in
+`.env`, then refresh `KITE_ACCESS_TOKEN` once per day with `cmd/kite-token`.
+
+The scanner also supports manual CSV fallback:
 
 ```bash
 go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC --top 3
 go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
-```
-
-For folder scans, name files by symbol:
-
-```text
-~/Desktop/nifty-data/ITC.csv
-~/Desktop/nifty-data/HDFCBANK.csv
-~/Desktop/nifty-data/TCS.csv
 ```
 
 Available flags:
@@ -177,9 +184,13 @@ Available flags:
 |---|---|---|
 | `--top` | `5` | Number of top candidates to print |
 | `--min-rr` | `2.0` | Minimum risk/reward ratio |
+| `--db` | `false` | Scan candles from PostgreSQL |
+| `--symbols` | `config/symbols.txt` | Symbol file for `--db` |
+| `--period` | `2y` | DB history window (`2y`, `6m`, `90d`) |
 | `--csv` | _none_ | Scan one local OHLCV CSV |
 | `--csv-dir` | _none_ | Scan all CSV files in a folder |
 | `--symbol` | CSV filename | Stock symbol for `--csv` |
+| `--show-filtered` | `false` | Print EMA/trend diagnostics for filtered symbols |
 
 Example output:
 ```
@@ -221,6 +232,10 @@ Example output:
 | `DB_PASSWORD` | _(required)_ | Database password |
 | `DB_NAME` | `stocks` | Database name |
 | `SERVER_PORT` | `8080` | HTTP listen port |
+| `KITE_API_KEY` | _(required for Kite sync)_ | Kite Connect API key |
+| `KITE_API_SECRET` | _(required for token exchange)_ | Kite Connect API secret |
+| `KITE_ACCESS_TOKEN` | _(required for Kite sync)_ | Kite Connect daily access token |
+| `KITE_BASE_URL` | `https://api.kite.trade` | Kite Connect API base URL |
 
 ---
 

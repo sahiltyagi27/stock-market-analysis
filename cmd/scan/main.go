@@ -1,18 +1,22 @@
-// Command scan loads manually downloaded OHLCV CSV files, runs the scanner
-// engine, and prints ranked signal candidates.
+// Command scan loads OHLCV candles from CSV files or PostgreSQL, runs the
+// scanner engine, and prints ranked signal candidates.
 //
 // Usage:
 //
 //	go run ./cmd/scan --csv ~/Desktop/ITC.csv --symbol ITC
 //	go run ./cmd/scan --csv-dir ~/Desktop/nifty-data --top 10
+//	go run ./cmd/scan --db --symbols config/symbols.txt --top 10
 //
 // Flags:
 //
 //	--csv       path to one OHLCV CSV file
 //	--csv-dir   path to a directory of OHLCV CSV files
+//	--db        scan candles from PostgreSQL
+//	--symbols   symbol file for --db        (default: config/symbols.txt)
+//	--period    DB history window           (default: 2y)
 //	--symbol    stock symbol for --csv; defaults to CSV filename
-//	--top       max signals to print     (default: 5)
-//	--min-rr    minimum risk/reward      (default: 2.0)
+//	--top       max signals to print        (default: 5)
+//	--min-rr    minimum risk/reward         (default: 2.0)
 //	--show-filtered
 //	            print diagnostics for filtered symbols
 //
@@ -20,6 +24,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -27,21 +33,35 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	_ "github.com/lib/pq"
+	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
 )
 
 func main() {
 	csvPath := flag.String("csv", "", "path to one OHLCV CSV file")
 	csvDir := flag.String("csv-dir", "", "path to a directory of OHLCV CSV files")
+	dbMode := flag.Bool("db", false, "scan candles from PostgreSQL")
+	symbolsFile := flag.String("symbols", "config/symbols.txt", "symbol file for --db")
+	period := flag.String("period", "2y", "DB history window (e.g. 2y, 6m, 90d)")
 	csvSymbol := flag.String("symbol", "", "stock symbol for --csv; defaults to CSV filename")
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
-	inputs, dataErrs := loadInputs(*csvPath, *csvDir, *csvSymbol)
+	inputs, dataErrs := loadInputs(context.Background(), inputOptions{
+		CSVPath:     *csvPath,
+		CSVDir:      *csvDir,
+		DBMode:      *dbMode,
+		SymbolsFile: *symbolsFile,
+		Period:      *period,
+		CSVSymbol:   *csvSymbol,
+	})
 
 	opts := scanner.Options{MinRR: *minRR}
 	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
@@ -66,44 +86,45 @@ func main() {
 	fmt.Printf("Signals:  %d\n", len(signals))
 }
 
-func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
-	if len(scanErrs) == 0 {
-		return
-	}
-
-	fmt.Println()
-	fmt.Println("Filtered Symbols")
-	for _, d := range diags {
-		if _, ok := scanErrs[d.Symbol]; !ok {
-			continue
-		}
-		fmt.Printf("\n%s\n", d.Symbol)
-		fmt.Printf("   Price:   %.2f\n", d.Price)
-		fmt.Printf("   Trend:   %s\n", d.Trend)
-		fmt.Printf("   EMA10:   %.2f\n", d.EMA.EMA10)
-		fmt.Printf("   EMA50:   %.2f\n", d.EMA.EMA50)
-		fmt.Printf("   EMA200:  %.2f\n", d.EMA.EMA200)
-		fmt.Printf("   Reason:  %s\n", d.Error)
-	}
+type inputOptions struct {
+	CSVPath     string
+	CSVDir      string
+	DBMode      bool
+	SymbolsFile string
+	Period      string
+	CSVSymbol   string
 }
 
-func loadInputs(csvPath, csvDir, csvSymbol string) ([]scanner.Input, map[string]error) {
-	if (csvPath == "") == (csvDir == "") {
-		log.Fatal("provide exactly one of --csv or --csv-dir")
+func loadInputs(ctx context.Context, opts inputOptions) ([]scanner.Input, map[string]error) {
+	modes := 0
+	for _, enabled := range []bool{opts.CSVPath != "", opts.CSVDir != "", opts.DBMode} {
+		if enabled {
+			modes++
+		}
+	}
+	if modes != 1 {
+		log.Fatal("provide exactly one of --csv, --csv-dir, or --db")
 	}
 
-	if csvPath != "" {
-		symbol := normalizeSymbol(csvSymbol)
+	switch {
+	case opts.CSVPath != "":
+		symbol := normalizeSymbol(opts.CSVSymbol)
 		if symbol == "" {
-			symbol = symbolFromPath(csvPath)
+			symbol = symbolFromPath(opts.CSVPath)
 		}
-		input, err := loadOneCSV(csvPath, symbol)
+		input, err := loadOneCSV(opts.CSVPath, symbol)
 		if err != nil {
 			log.Fatalf("load csv: %v", err)
 		}
 		return []scanner.Input{input}, nil
+	case opts.DBMode:
+		return loadDBInputs(ctx, opts.SymbolsFile, opts.Period)
+	default:
+		return loadCSVDir(opts.CSVDir)
 	}
+}
 
+func loadCSVDir(csvDir string) ([]scanner.Input, map[string]error) {
 	entries, err := os.ReadDir(csvDir)
 	if err != nil {
 		log.Fatalf("read csv dir: %v", err)
@@ -132,6 +153,49 @@ func loadInputs(csvPath, csvDir, csvSymbol string) ([]scanner.Input, map[string]
 	return inputs, dataErrs
 }
 
+func loadDBInputs(ctx context.Context, symbolsFile, period string) ([]scanner.Input, map[string]error) {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	db, err := sql.Open("postgres", cfg.DSN())
+	if err != nil {
+		log.Fatalf("db open: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatalf("db ping: %v", err)
+	}
+
+	symbols, err := config.LoadSymbols(symbolsFile)
+	if err != nil {
+		log.Fatalf("symbols: %v", err)
+	}
+	from, err := parsePeriod(period, time.Now())
+	if err != nil {
+		log.Fatalf("period: %v", err)
+	}
+
+	candleStore := store.NewCandleStore(db)
+	var inputs []scanner.Input
+	dataErrs := make(map[string]error)
+	for _, rawSymbol := range symbols {
+		symbol := normalizeSymbol(rawSymbol)
+		candles, err := candleStore.GetCandles(ctx, symbol, store.CandleFilter{From: &from})
+		if err != nil {
+			dataErrs[symbol] = err
+			continue
+		}
+		if len(candles) == 0 {
+			dataErrs[symbol] = fmt.Errorf("no candles in DB")
+			continue
+		}
+		log.Printf("loaded %d candles for %s from DB", len(candles), symbol)
+		inputs = append(inputs, scanner.Input{Symbol: symbol, Candles: candles})
+	}
+	return inputs, dataErrs
+}
+
 func loadOneCSV(path, symbol string) (scanner.Input, error) {
 	candles, err := loader.LoadCSV(path, symbol)
 	if err != nil {
@@ -156,6 +220,48 @@ func normalizeSymbol(symbol string) string {
 		symbol = before
 	}
 	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+func parsePeriod(period string, from time.Time) (time.Time, error) {
+	if len(period) < 2 {
+		return time.Time{}, fmt.Errorf("invalid period %q: must be like 2y, 6m, 90d", period)
+	}
+	unit := period[len(period)-1]
+	var n int
+	if _, err := fmt.Sscanf(period[:len(period)-1], "%d", &n); err != nil || n <= 0 {
+		return time.Time{}, fmt.Errorf("invalid period %q: number must be a positive integer", period)
+	}
+	switch unit {
+	case 'y', 'Y':
+		return from.AddDate(-n, 0, 0), nil
+	case 'm', 'M':
+		return from.AddDate(0, -n, 0), nil
+	case 'd', 'D':
+		return from.AddDate(0, 0, -n), nil
+	default:
+		return time.Time{}, fmt.Errorf("invalid period unit %q in %q: use y, m, or d", string(unit), period)
+	}
+}
+
+func printDiagnostics(diags []scanner.Diagnostic, scanErrs map[string]error) {
+	if len(scanErrs) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("Filtered Symbols")
+	for _, d := range diags {
+		if _, ok := scanErrs[d.Symbol]; !ok {
+			continue
+		}
+		fmt.Printf("\n%s\n", d.Symbol)
+		fmt.Printf("   Price:   %.2f\n", d.Price)
+		fmt.Printf("   Trend:   %s\n", d.Trend)
+		fmt.Printf("   EMA10:   %.2f\n", d.EMA.EMA10)
+		fmt.Printf("   EMA50:   %.2f\n", d.EMA.EMA50)
+		fmt.Printf("   EMA200:  %.2f\n", d.EMA.EMA200)
+		fmt.Printf("   Reason:  %s\n", d.Error)
+	}
 }
 
 func printSignals(signals []scanner.StockSignal, topN int) {
