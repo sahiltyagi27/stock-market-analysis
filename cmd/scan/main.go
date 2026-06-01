@@ -51,6 +51,7 @@ func main() {
 	csvSymbol := flag.String("symbol", "", "stock symbol for --csv; defaults to CSV filename")
 	topN := flag.Int("top", 5, "number of top signals to print")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
+	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
@@ -63,7 +64,7 @@ func main() {
 		Symbol:      *csvSymbol,
 	})
 
-	opts := scanner.Options{MinRR: *minRR}
+	opts := scanner.Options{MinRR: *minRR, EMAMarginPct: *emaMargin}
 	signals, scanErrs := scanner.ScanWithErrors(inputs, opts)
 
 	printSignals(signals, *topN)

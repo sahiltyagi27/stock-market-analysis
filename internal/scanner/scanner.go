@@ -14,6 +14,14 @@ type Options struct {
 	// Default: 2.0.
 	MinRR float64
 
+	// EMAMarginPct is the minimum percentage gap required between the current
+	// price and EMA200 before a stock qualifies as bullish.
+	// A stock where price is barely above EMA200 is fragile and can flip
+	// non-bullish on the next tick.
+	// Default: 1.0 (price must be at least 1% above EMA200).
+	// Set to 0 to disable the check entirely.
+	EMAMarginPct float64
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -29,6 +37,9 @@ func (o *Options) withDefaults() Options {
 	out := *o
 	if out.MinRR <= 0 {
 		out.MinRR = 2.0
+	}
+	if out.EMAMarginPct == 0 {
+		out.EMAMarginPct = 1.0 // default: price must be ≥1% above EMA200
 	}
 	if out.VolumeWindow <= 0 {
 		out.VolumeWindow = 20
@@ -118,6 +129,19 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	// Bullish filter: must be above both EMA50 and EMA200.
 	if trend != TrendBullish {
 		return nil, fmt.Errorf("trend is %s, not bullish", trend)
+	}
+
+	// EMA margin filter: price must be at least EMAMarginPct% above EMA200.
+	// Stocks sitting barely above EMA200 are fragile — a single tick can flip
+	// them non-bullish, making the signal unreliable.
+	if opts.EMAMarginPct > 0 && emas.EMA200 > 0 {
+		gapPct := (price - emas.EMA200) / emas.EMA200 * 100
+		if gapPct < opts.EMAMarginPct {
+			return nil, fmt.Errorf(
+				"price %.2f is only %.2f%% above EMA200 (%.2f), minimum %.1f%% required",
+				price, gapPct, emas.EMA200, opts.EMAMarginPct,
+			)
+		}
 	}
 
 	// --- Zones ---
