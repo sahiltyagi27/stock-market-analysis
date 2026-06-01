@@ -27,6 +27,14 @@ type ZoneOptions struct {
 	// ClusterPct is the maximum price distance (as a fraction of price) within
 	// which two extremes are merged into the same zone. Default: 0.02 (2 %).
 	ClusterPct float64
+
+	// MinResistanceTouches is the minimum number of local-high touches a
+	// resistance zone must have to be returned. A 1-touch zone is just a
+	// single-session spike or intraday high — not a historically tested level.
+	// Set to 0 or 1 to disable the filter (all zones returned).
+	// The scanner sets this to 2 by default; call sites that use ZoneOptions
+	// directly are unaffected.
+	MinResistanceTouches int
 }
 
 func (o *ZoneOptions) withDefaults() ZoneOptions {
@@ -54,10 +62,28 @@ func FindZones(highs, lows []float64, opts ZoneOptions) ZoneResult {
 	localLows := localMinima(lows, o.Window)
 	localHighs := localMaxima(highs, o.Window)
 
+	resistance := clusterToZones(localHighs, o.ClusterPct)
+	resistance = filterByTouches(resistance, o.MinResistanceTouches)
+
 	return ZoneResult{
 		Support:    clusterToZones(localLows, o.ClusterPct),
-		Resistance: clusterToZones(localHighs, o.ClusterPct),
+		Resistance: resistance,
 	}
+}
+
+// filterByTouches removes zones that have fewer touches than minTouches.
+// Values ≤ 1 disable the filter (all zones are returned unchanged).
+func filterByTouches(zones []Zone, minTouches int) []Zone {
+	if minTouches <= 1 {
+		return zones
+	}
+	out := zones[:0]
+	for _, z := range zones {
+		if z.Touches >= minTouches {
+			out = append(out, z)
+		}
+	}
+	return out
 }
 
 // localMinima returns the Low values that are true local minima within ±window.

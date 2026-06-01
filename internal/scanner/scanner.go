@@ -50,6 +50,12 @@ func (o *Options) withDefaults() Options {
 	if out.VolumeWindow <= 0 {
 		out.VolumeWindow = 20
 	}
+	// Require resistance zones to have been tested at least twice historically.
+	// A 1-touch zone is just a single-session spike and is not a reliable target.
+	// Set ZoneOpts.MinResistanceTouches = 1 to disable.
+	if out.ZoneOpts.MinResistanceTouches <= 0 {
+		out.ZoneOpts.MinResistanceTouches = 2
+	}
 	return out
 }
 

@@ -301,6 +301,7 @@ Available flags:
 | `--interval` | `2m` | Scan interval (e.g. `30s`, `2m`, `5m`) |
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
+| `--min-resistance-touches` | `2` | Minimum touches for a resistance zone to qualify; `1` allows all |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -439,6 +440,7 @@ Available flags:
 | `--symbol` | CSV filename | Symbol for `--csv`, or single-symbol filter for `--db` |
 | `--ema-margin` | `1.0` | Minimum % gap required between price and EMA200; `0` disables |
 | `--min-volume` | `0` | Minimum 20-day avg daily volume; `0` disables (e.g. `200000`) |
+| `--min-resistance-touches` | `2` | Minimum touches for a resistance zone to qualify; `1` allows all |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:

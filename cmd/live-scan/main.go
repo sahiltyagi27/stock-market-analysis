@@ -49,6 +49,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -106,7 +107,8 @@ func main() {
 	topN        := flag.Int("top", 10, "signals to print per scan run")
 	minRR       := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
 	emaMargin   := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
-	minVolume   := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	minVolume           := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
+	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
 	interval    := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period      := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange    := flag.String("exchange", "NSE", "Kite exchange")
@@ -228,6 +230,9 @@ func main() {
 		MinRR:        *minRR,
 		EMAMarginPct: *emaMargin,
 		MinAvgVolume: *minVolume,
+		ZoneOpts: analysis.ZoneOptions{
+			MinResistanceTouches: *minResistanceTouches,
+		},
 	}
 
 	state := newScanState()
