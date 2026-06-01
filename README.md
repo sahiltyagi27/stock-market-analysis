@@ -83,18 +83,18 @@ Historical Candles (OHLCV)
     "touches": 3
   },
   "resistance": {
-    "low": 448.00,
-    "high": 453.00,
-    "mid": 450.50,
+    "low": 485.00,
+    "high": 490.70,
+    "mid": 487.85,
     "touches": 2
   },
   "trade": {
     "direction": "long",
     "entry": 412.50,
     "stop_loss": 386.06,
-    "target": 450.50,
+    "target": 487.85,
     "risk": 26.44,
-    "reward": 38.00,
+    "reward": 75.35,
     "risk_reward": 2.85,
     "quality": "good"
   },
