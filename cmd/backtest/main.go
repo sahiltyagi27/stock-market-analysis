@@ -49,8 +49,9 @@ func main() {
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
-	topN := flag.Int("top", 30, "trades to print in terminal output (sorted by score)")
+	topN      := flag.Int("top", 30, "trades to print when --capital is disabled (sorted by score)")
 	outputCSV := flag.String("output", "", "write all trades to this CSV file (empty = no file)")
+	capital   := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -210,7 +211,11 @@ func main() {
 	}
 
 	// ── Terminal output ───────────────────────────────────────────────────────
-	printResults(results, *topN, fromLabel, toLabel)
+	if *capital > 0 {
+		printCapitalJourney(results, *capital, fromLabel, toLabel)
+	} else {
+		printResults(results, *topN, fromLabel, toLabel)
+	}
 
 	// ── CSV export ────────────────────────────────────────────────────────────
 	if *outputCSV != "" {
@@ -364,6 +369,187 @@ func outcomeLabel(o backtest.Outcome) string {
 	default:
 		return display.Yellow.Sprint("⏱ TIMEOUT")
 	}
+}
+
+// ── Capital journey ───────────────────────────────────────────────────────────
+
+// printCapitalJourney shows every trade chronologically with full P&L detail
+// as if all capital were deployed into each trade serially.  Shares bought =
+// floor(capital / entry); any remaining fractional-share cash carries forward.
+func printCapitalJourney(results []backtest.TradeResult, startCapital float64, fromLabel, toLabel string) {
+	bannerText := fmt.Sprintf("━━━  Capital Journey  %s → %s  Starting: %s  ━━━",
+		fromLabel, toLabel, formatINR(startCapital))
+	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(bannerText))
+
+	if len(results) == 0 {
+		fmt.Println("  No trades to show.")
+		return
+	}
+
+	capital := startCapital
+	var bestPnL, worstPnL float64
+	var bestIdx, worstIdx int
+	first := true
+
+	for i, r := range results {
+		shares := int(capital / r.Entry)
+		invested := float64(shares) * r.Entry
+		cash := capital - invested // leftover cash (< 1 share)
+
+		var exitValue, pnl float64
+		if shares == 0 {
+			// Can't buy even one share — skip but still show it.
+			fmt.Printf("\n  %s %s  %s → %s  (%dd)\n",
+				display.Dim.Sprintf("%3d.", i+1),
+				display.BoldWhite.Sprint(fmt.Sprintf("%-14s", r.Symbol)),
+				r.EntryDate.Format("02-Jan-2006"),
+				r.ExitDate.Format("02-Jan-2006"),
+				r.HoldDays)
+			fmt.Printf("       %s %s\n",
+				display.Dim.Sprint("└ Skipped:"),
+				display.Yellow.Sprintf("capital %s below entry ₹%.2f", formatINR(capital), r.Entry))
+			continue
+		}
+
+		exitValue = float64(shares) * r.ExitPrice
+		pnl = exitValue - invested
+		capital = exitValue + cash
+		pnlPct := pnl / invested * 100
+
+		if first || pnl > bestPnL {
+			bestPnL = pnl
+			bestIdx = i
+		}
+		if first || pnl < worstPnL {
+			worstPnL = pnl
+			worstIdx = i
+		}
+		first = false
+
+		// ── Trade header ─────────────────────────────────────────────────────
+		sym := display.BoldWhite.Sprint(fmt.Sprintf("%-14s", r.Symbol))
+		dateRange := fmt.Sprintf("%s → %s",
+			r.EntryDate.Format("02-Jan-2006"),
+			r.ExitDate.Format("02-Jan-2006"))
+		fmt.Printf("\n  %s %s  %s  %s\n",
+			display.Dim.Sprintf("%3d.", i+1),
+			sym,
+			display.Dim.Sprint(dateRange),
+			display.Dim.Sprintf("(%dd  score %.0f)", r.HoldDays, r.Score))
+
+		// ── Bought line ───────────────────────────────────────────────────────
+		fmt.Printf("       %s %s shares @ %s  =  %s\n",
+			display.Dim.Sprint("├ Bought"),
+			display.Cyan.Sprintf("%d", shares),
+			display.Cyan.Sprintf("₹%.2f", r.Entry),
+			display.Dim.Sprint(formatINR(invested)))
+
+		// ── Exit line ─────────────────────────────────────────────────────────
+		exitVerb := journeyExitVerb(r.Outcome)
+		pnlColor := display.Green.Sprintf
+		if pnl < 0 {
+			pnlColor = display.Red.Sprintf
+		}
+		fmt.Printf("       %s %s @ %s  →  %s  (%s  %s)\n",
+			display.Dim.Sprint("└"),
+			exitVerb,
+			display.Cyan.Sprintf("₹%.2f", r.ExitPrice),
+			display.Bold.Sprint(formatINR(capital)),
+			pnlColor("%+.2f", pnl),
+			pnlColor("%+.1f%%", pnlPct))
+	}
+
+	// ── Capital summary ───────────────────────────────────────────────────────
+	sep := display.Dim.Sprint(strings.Repeat("─", 56))
+	totalPnL := capital - startCapital
+	totalPct := totalPnL / startCapital * 100
+
+	fmt.Printf("\n  %s\n", sep)
+	fmt.Printf("  %s  %s\n",
+		display.Dim.Sprint("Starting capital :"),
+		display.Bold.Sprint(formatINR(startCapital)))
+
+	capColor := display.BoldGreen.Sprint
+	if capital < startCapital {
+		capColor = display.Red.Sprint
+	}
+	fmt.Printf("  %s  %s\n",
+		display.Dim.Sprint("Final capital    :"),
+		capColor(formatINR(capital)))
+
+	pnlColor2 := display.BoldGreen.Sprintf
+	if totalPnL < 0 {
+		pnlColor2 = display.Red.Sprintf
+	}
+	fmt.Printf("  %s  %s  %s\n",
+		display.Dim.Sprint("Total P&L        :"),
+		pnlColor2("%+.2f", totalPnL),
+		display.Dim.Sprintf("(%+.2f%%)", totalPct))
+
+	if !first {
+		b := results[bestIdx]
+		w := results[worstIdx]
+		fmt.Printf("  %s  %s #%d  %s\n",
+			display.Dim.Sprint("Best trade       :"),
+			display.Green.Sprint(b.Symbol),
+			bestIdx+1,
+			display.Green.Sprintf("%+.2f", bestPnL))
+		fmt.Printf("  %s  %s #%d  %s\n",
+			display.Dim.Sprint("Worst trade      :"),
+			display.Red.Sprint(w.Symbol),
+			worstIdx+1,
+			display.Red.Sprintf("%+.2f", worstPnL))
+	}
+	fmt.Printf("  %s\n\n", sep)
+
+	// Also print the standard strategy summary.
+	sum := backtest.Compute(results)
+	printSummary(sum, fromLabel, toLabel)
+}
+
+// journeyExitVerb returns a colored verb describing how the trade closed.
+func journeyExitVerb(o backtest.Outcome) string {
+	switch o {
+	case backtest.OutcomeWin:
+		return display.BoldGreen.Sprint("✅ Target hit")
+	case backtest.OutcomeLoss:
+		return display.Red.Sprint("❌ SL hit    ")
+	case backtest.OutcomeTrailStop:
+		return display.Cyan.Sprint("📈 Trail stop")
+	default:
+		return display.Yellow.Sprint("⏱ Timeout   ")
+	}
+}
+
+// formatINR formats a float as Indian rupees with the Indian numbering system
+// (e.g. 1,00,000.00 — lakh grouping, not Western thousands).
+func formatINR(v float64) string {
+	sign := ""
+	if v < 0 {
+		sign = "-"
+		v = -v
+	}
+	paise := int64(math.Round(v*100)) % 100
+	whole := int64(math.Round(v * 100)) / 100
+
+	s := fmt.Sprintf("%d", whole)
+	if len(s) <= 3 {
+		return fmt.Sprintf("%s₹%s.%02d", sign, s, paise)
+	}
+
+	// Indian grouping: last 3 digits, then pairs of 2 reading right-to-left.
+	result := s[len(s)-3:]
+	s = s[:len(s)-3]
+	for len(s) > 0 {
+		if len(s) >= 2 {
+			result = s[len(s)-2:] + "," + result
+			s = s[:len(s)-2]
+		} else {
+			result = s + "," + result
+			s = ""
+		}
+	}
+	return fmt.Sprintf("%s₹%s.%02d", sign, result, paise)
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────────
