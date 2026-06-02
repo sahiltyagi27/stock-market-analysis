@@ -59,6 +59,7 @@ func main() {
 	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
 	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
 	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
+	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -261,9 +262,10 @@ func main() {
 			StartCapital: *capital,
 			ExitMode:     *exitMode,
 			MaxHoldDays:  *maxHold,
-			CostPct:      *costPct,
-			SlippagePct:  *slippagePct,
-			EngineOpts:   opts,
+			CostPct:       *costPct,
+			SlippagePct:   *slippagePct,
+			AllocLookback: *allocLookback,
+			EngineOpts:    opts,
 		}
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",
 			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
@@ -516,8 +518,31 @@ func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fr
 		display.TotalScore(wr)+display.Dim.Sprint("%"),
 		display.Dim.Sprintf("(%d W / %d L of %d trades)", s.Wins, s.Losses, s.Trades))
 
+	fmt.Printf("  %s  %s   %s %s\n",
+		display.Dim.Sprint("Profit factor    :"), formatPF(s.ProfitFactor),
+		display.Dim.Sprint("Avg R:R          :"), display.Sign(s.AvgRR, "%+.2fR"))
 	fmt.Printf("  %s  %.1f %s\n", display.Dim.Sprint("Avg hold         :"), s.AvgHoldDays, display.Dim.Sprint("days"))
 	fmt.Printf("  %s  %d\n", display.Dim.Sprint("Peak concurrent  :"), s.MaxConcurrent)
+
+	// Opportunity loss (M10): what the slot limit cost you.
+	if s.RejectedFull > 0 {
+		fmt.Printf("  %s\n", sep)
+		fmt.Printf("  %s\n", display.Dim.Sprint("Opportunity loss (signals rejected because portfolio was full):"))
+		fmt.Printf("  %s  %d   %s %s   %s %.0f%%\n",
+			display.Dim.Sprint("  Rejected      :"), s.RejectedFull,
+			display.Dim.Sprint("avg R:R"), display.Sign(s.RejectedAvgRR, "%+.2fR"),
+			display.Dim.Sprint("win"), s.RejectedWinRate)
+		fmt.Printf("  %s  %s %s   %s %.0f%%\n",
+			display.Dim.Sprint("  vs Accepted   :"),
+			display.Dim.Sprint("avg R:R"), display.Sign(s.AvgRR, "%+.2fR"),
+			display.Dim.Sprint("win"),
+			func() float64 {
+				if s.Wins+s.Losses == 0 {
+					return 0
+				}
+				return float64(s.Wins) / float64(s.Wins+s.Losses) * 100
+			}())
+	}
 	fmt.Printf("  %s\n", sep)
 	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(banner))))
 }
