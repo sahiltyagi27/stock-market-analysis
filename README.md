@@ -288,6 +288,30 @@ Skip NIFTY benchmark sync:
 go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --include-nifty=false
 ```
 
+#### Discover Sector Index Support
+
+Before adding sector-strength filters, check which NSE sector indices Kite
+exposes and whether their daily historical candles can be fetched.
+
+```bash
+go run ./cmd/sector-index-discovery
+```
+
+What it does:
+- downloads Kite's NSE instrument master
+- looks for known NSE sector index names such as `NIFTY BANK`, `NIFTY IT`,
+  `NIFTY AUTO`, `NIFTY PHARMA`, `NIFTY FMCG`, and others
+- probes daily historical candles over the requested period
+- prints token, type, segment, candle count, latest candle date, and status
+- does not write to PostgreSQL
+
+Common variants:
+
+```bash
+go run ./cmd/sector-index-discovery --period 30d
+go run ./cmd/sector-index-discovery --indices "NIFTY BANK,NIFTY IT,NIFTY PHARMA"
+```
+
 #### Scan Synced DB Candles
 
 This runs the offline scanner against candles already stored in PostgreSQL.

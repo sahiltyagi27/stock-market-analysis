@@ -65,6 +65,33 @@ func TestParseInstrumentsAndFindEquityInstrument(t *testing.T) {
 	}
 }
 
+func TestFindInstrumentByName_MatchesIndexByTradingSymbolOrName(t *testing.T) {
+	csv := `instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
+256265,1001,NIFTY 50,NIFTY 50,0,,,0.05,1,EQ,INDICES,NSE
+260105,1002,NIFTY BANK,NIFTY BANK,0,,,0.05,1,EQ,INDICES,NSE
+261001,1003,NIFTYIT,NIFTY IT,0,,,0.05,1,EQ,INDICES,NSE
+`
+	instruments, err := ParseInstruments(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("ParseInstruments returned error: %v", err)
+	}
+	got, ok := FindInstrumentByName(instruments, "NSE", "NIFTY BANK")
+	if !ok {
+		t.Fatal("expected NIFTY BANK instrument")
+	}
+	if got.InstrumentToken != 260105 {
+		t.Errorf("InstrumentToken = %d, want 260105", got.InstrumentToken)
+	}
+
+	got, ok = FindInstrumentByName(instruments, "NSE", "nifty it")
+	if !ok {
+		t.Fatal("expected NIFTY IT instrument by display name")
+	}
+	if got.InstrumentToken != 261001 {
+		t.Errorf("InstrumentToken = %d, want 261001", got.InstrumentToken)
+	}
+}
+
 func TestParseHistoricalCandles(t *testing.T) {
 	body := `{
 		"status": "success",

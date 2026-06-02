@@ -248,6 +248,28 @@ func FindEquityInstrument(instruments []Instrument, exchange, symbol string) (In
 	return Instrument{}, false
 }
 
+// FindInstrumentByName returns an instrument by exchange and either trading
+// symbol or display name. This is useful for NSE indices, whose instrument type
+// and segment differ from equities across instrument-master rows.
+func FindInstrumentByName(instruments []Instrument, exchange, name string) (Instrument, bool) {
+	exchange = strings.ToUpper(strings.TrimSpace(exchange))
+	name = normalizeInstrumentName(name)
+	for _, inst := range instruments {
+		if inst.Exchange != exchange {
+			continue
+		}
+		if normalizeInstrumentName(inst.TradingSymbol) == name || normalizeInstrumentName(inst.Name) == name {
+			return inst, true
+		}
+	}
+	return Instrument{}, false
+}
+
+func normalizeInstrumentName(name string) string {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	return strings.Join(strings.Fields(name), " ")
+}
+
 // NormalizeSymbol strips common exchange prefixes/suffixes and uppercases.
 func NormalizeSymbol(symbol string) string {
 	symbol = strings.TrimSpace(symbol)
