@@ -132,3 +132,17 @@ func TestNormalizeSymbol(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexDBSymbol(t *testing.T) {
+	cases := map[string]string{
+		"NIFTY 50":          "NIFTY50",
+		"NIFTY BANK":        "NIFTYBANK",
+		"NIFTY FIN SERVICE": "NIFTYFINSERVICE",
+		" nifty it ":        "NIFTYIT",
+	}
+	for input, want := range cases {
+		if got := IndexDBSymbol(input); got != want {
+			t.Errorf("IndexDBSymbol(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

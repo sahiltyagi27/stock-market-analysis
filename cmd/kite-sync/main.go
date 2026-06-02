@@ -34,6 +34,8 @@ func main() {
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
 	period := flag.String("period", "2y", "history window (e.g. 2y, 6m, 90d)")
 	includeNifty := flag.Bool("include-nifty", true, "also sync NIFTY 50 index candles as NIFTY50 for relative-strength filters")
+	includeSectorIndices := flag.Bool("include-sector-indices", true, "also sync verified NSE sector index candles for sector-strength filters")
+	sectorIndicesFlag := flag.String("sector-indices", "", "comma-separated sector index names to sync (empty = default verified list)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -84,17 +86,27 @@ func main() {
 	log.Printf("loaded %d %s instruments from Kite", len(instruments), *exchange)
 
 	var synced, skipped int
+	var indexSynced, indexSkipped int
 	if *includeNifty && strings.EqualFold(*exchange, "NSE") {
 		candles, err := client.HistoricalDaily(ctx, kite.Nifty50InstrumentToken, kite.Nifty50Symbol, from, to)
 		if err != nil {
 			log.Printf("skip %s: historical fetch failed: %v", kite.Nifty50Symbol, err)
+			indexSkipped++
 		} else if len(candles) == 0 {
 			log.Printf("skip %s: Kite returned no candles", kite.Nifty50Symbol)
+			indexSkipped++
 		} else if err := candleStore.UpsertCandles(ctx, candles); err != nil {
 			log.Printf("skip %s: DB upsert failed: %v", kite.Nifty50Symbol, err)
+			indexSkipped++
 		} else {
 			log.Printf("synced %d daily candles for %s", len(candles), kite.Nifty50Symbol)
+			indexSynced++
 		}
+	}
+	if *includeSectorIndices && strings.EqualFold(*exchange, "NSE") {
+		s, k := syncSectorIndices(ctx, client, candleStore, instruments, *exchange, parseSectorIndices(*sectorIndicesFlag), from, to)
+		indexSynced += s
+		indexSkipped += k
 	}
 
 	for _, rawSymbol := range symbols {
@@ -130,6 +142,67 @@ func main() {
 	fmt.Printf("Symbols: %d\n", len(symbols))
 	fmt.Printf("Synced:  %d\n", synced)
 	fmt.Printf("Skipped: %d\n", skipped)
+	fmt.Printf("Indices synced:  %d\n", indexSynced)
+	fmt.Printf("Indices skipped: %d\n", indexSkipped)
+}
+
+func syncSectorIndices(
+	ctx context.Context,
+	client *kite.Client,
+	candleStore *store.CandleStore,
+	instruments []kite.Instrument,
+	exchange string,
+	indexNames []string,
+	from time.Time,
+	to time.Time,
+) (synced, skipped int) {
+	for _, indexName := range indexNames {
+		inst, ok := kite.FindInstrumentByName(instruments, exchange, indexName)
+		dbSymbol := kite.IndexDBSymbol(indexName)
+		if !ok {
+			log.Printf("skip %s: no %s index instrument found", indexName, exchange)
+			skipped++
+			continue
+		}
+
+		candles, err := client.HistoricalDaily(ctx, inst.InstrumentToken, dbSymbol, from, to)
+		if err != nil {
+			log.Printf("skip %s: historical fetch failed: %v", dbSymbol, err)
+			skipped++
+			continue
+		}
+		if len(candles) == 0 {
+			log.Printf("skip %s: Kite returned no candles", dbSymbol)
+			skipped++
+			continue
+		}
+		if err := candleStore.UpsertCandles(ctx, candles); err != nil {
+			log.Printf("skip %s: DB upsert failed: %v", dbSymbol, err)
+			skipped++
+			continue
+		}
+		log.Printf("synced %d daily candles for %s (%s)", len(candles), dbSymbol, indexName)
+		synced++
+	}
+	return synced, skipped
+}
+
+func parseSectorIndices(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return append([]string(nil), kite.SectorIndexNames...)
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		name := strings.Join(strings.Fields(strings.ToUpper(strings.TrimSpace(part))), " ")
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 func parsePeriod(period string, from time.Time) (time.Time, error) {

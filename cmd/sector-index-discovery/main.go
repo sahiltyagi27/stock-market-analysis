@@ -32,26 +32,6 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 )
 
-var defaultIndices = []string{
-	"NIFTY 50",
-	"NIFTY BANK",
-	"NIFTY AUTO",
-	"NIFTY FIN SERVICE",
-	"NIFTY FMCG",
-	"NIFTY IT",
-	"NIFTY MEDIA",
-	"NIFTY METAL",
-	"NIFTY PHARMA",
-	"NIFTY PSU BANK",
-	"NIFTY PVT BANK",
-	"NIFTY REALTY",
-	"NIFTY ENERGY",
-	"NIFTY INFRA",
-	"NIFTY OIL AND GAS",
-	"NIFTY HEALTHCARE",
-	"NIFTY CONSR DURBL",
-}
-
 type result struct {
 	Name         string
 	Found        bool
@@ -142,7 +122,7 @@ func probeIndex(
 
 func parseIndices(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
-		return append([]string(nil), defaultIndices...)
+		return append([]string{"NIFTY 50"}, kite.SectorIndexNames...)
 	}
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
