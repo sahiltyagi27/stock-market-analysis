@@ -1,6 +1,7 @@
 package crossover
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -237,6 +238,58 @@ func TestScan_SortedByScoreDesc(t *testing.T) {
 		if signals[i].Score > signals[i-1].Score {
 			t.Errorf("not sorted: [%d].Score=%.2f > [%d].Score=%.2f",
 				i, signals[i].Score, i-1, signals[i-1].Score)
+		}
+	}
+}
+
+// ── Volume filter (MinCurrentVolMultiple) ─────────────────────────────────────
+
+// TestScan_VolumeFilter_Rejects_LowVolume verifies that a signal is rejected
+// when today's candle volume is below the required multiple of the 10-day avg.
+func TestScan_VolumeFilter_Rejects_LowVolume(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	// Force the last candle to have very low volume (far below 3× avg).
+	cc[len(cc)-1].Volume = 1
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+	opts.MinCurrentVolMultiple = 3.0
+	opts.CurrentVolWindow = 10
+	_, errs := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if _, rejected := errs["TEST"]; !rejected {
+		t.Fatal("expected low-volume candle to be rejected by MinCurrentVolMultiple filter")
+	}
+}
+
+// TestScan_VolumeFilter_Passes_HighVolume verifies that a signal passes when
+// today's volume is well above the required multiple.
+func TestScan_VolumeFilter_Passes_HighVolume(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	// Spike last candle volume to 5× baseline (well above 3× avg of 500k).
+	cc[len(cc)-1].Volume = 2_500_000
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+	opts.MinCurrentVolMultiple = 3.0
+	opts.CurrentVolWindow = 10
+	signals, _ := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if len(signals) == 0 {
+		t.Fatal("expected signal when today's volume is 5× the rolling average")
+	}
+}
+
+// TestScan_VolumeFilter_DisabledWhenZero confirms MinCurrentVolMultiple=0
+// skips the filter entirely.
+func TestScan_VolumeFilter_DisabledWhenZero(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	cc[len(cc)-1].Volume = 1 // tiny volume — would fail if filter were active
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+	opts.MinCurrentVolMultiple = 0 // disabled
+	// We can't assert a signal is produced (it might fail for other reasons),
+	// but it should NOT be rejected specifically for volume.
+	_, errs := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if err, rejected := errs["TEST"]; rejected {
+		if strings.Contains(err.Error(), "volume") {
+			t.Fatalf("volume filter should be disabled (MinCurrentVolMultiple=0), but got: %v", err)
 		}
 	}
 }

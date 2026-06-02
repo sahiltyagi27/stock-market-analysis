@@ -35,6 +35,18 @@ type Options struct {
 	// Default: 50.
 	MinCandles int
 
+	// MinCurrentVolMultiple requires today's candle volume to be at least this
+	// many times the rolling average of the previous CurrentVolWindow candles.
+	// A fresh crossover confirmed by a high-volume candle is a much stronger
+	// signal than one occurring on below-average activity.
+	// Default: 0 (disabled).  Typical value: 3.0.
+	MinCurrentVolMultiple float64
+
+	// CurrentVolWindow is the lookback (in candles before today) used to
+	// compute the rolling average for the MinCurrentVolMultiple check.
+	// Default: 10.
+	CurrentVolWindow int
+
 	// ZoneOpts are forwarded to analysis.FindZones for resistance detection.
 	// MinResistanceTouches defaults to 1 (any single-touch zone qualifies as
 	// a candidate target — crossover plays are momentum-driven, not zone-driven).
@@ -68,6 +80,11 @@ func (o Options) withDefaults() Options {
 	// a single-touch zone is sufficient.  Callers can override to 2.
 	if out.ZoneOpts.MinResistanceTouches <= 0 {
 		out.ZoneOpts.MinResistanceTouches = 1
+	}
+	// CurrentVolWindow: 0 triggers the default of 10.
+	// MinCurrentVolMultiple: 0 means disabled — no default applied.
+	if out.CurrentVolWindow <= 0 {
+		out.CurrentVolWindow = 10
 	}
 	return out
 }
@@ -174,6 +191,34 @@ func analyzeOne(in Input, opts Options) (*Signal, error) {
 			"R/R %.2f below minimum %.2f (entry %.2f, SL %.2f, target %.2f)",
 			rr, opts.MinRR, price, sl, target,
 		)
+	}
+
+	// Current-day volume filter: today's candle must be at least
+	// MinCurrentVolMultiple × the rolling average of the previous
+	// CurrentVolWindow candles.  A high-volume crossover candle confirms that
+	// real buying interest is driving the EMA move, not just noise.
+	if opts.MinCurrentVolMultiple > 0 {
+		todayVol := float64(in.Candles[n-1].Volume)
+		start := n - 1 - opts.CurrentVolWindow
+		if start < 0 {
+			start = 0
+		}
+		var sum float64
+		count := 0
+		for k := start; k < n-1; k++ {
+			sum += float64(in.Candles[k].Volume)
+			count++
+		}
+		if count > 0 && sum > 0 {
+			avg := sum / float64(count)
+			if todayVol < opts.MinCurrentVolMultiple*avg {
+				return nil, fmt.Errorf(
+					"today's volume %.0f is only %.2fx the %d-day avg %.0f (need %.1fx)",
+					todayVol, todayVol/avg, opts.CurrentVolWindow, avg,
+					opts.MinCurrentVolMultiple,
+				)
+			}
+		}
 	}
 
 	vol := computeVolume(in.Candles, xIdx, opts.VolumeWindow)

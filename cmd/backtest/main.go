@@ -77,6 +77,8 @@ func main() {
 	coMinCandles := flag.Int("co-min-candles", 50, "[crossover] minimum candles required before analysis")
 	coVolWindow  := flag.Int("co-vol-window", 20, "[crossover] volume rolling-average window")
 	coMinResTouches := flag.Int("co-min-resistance-touches", 1, "[crossover] minimum touches for a resistance zone target")
+	coMinVolMult    := flag.Float64("co-min-vol-mult", 0, "[crossover] require today's volume ≥ this × the prev N-day avg (0 = disabled)")
+	coVolMultWindow := flag.Int("co-vol-mult-window", 10, "[crossover] candles for the today's-volume average check")
 
 	flag.Parse()
 
@@ -167,11 +169,13 @@ func main() {
 	}
 
 	coOpts := crossover.Options{
-		MaxCrossoverAge: *coMaxAge,
-		MinRR:           *coMinRR,
-		MinCandles:      *coMinCandles,
-		VolumeWindow:    *coVolWindow,
-		ZoneOpts:        analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
+		MaxCrossoverAge:       *coMaxAge,
+		MinRR:                 *coMinRR,
+		MinCandles:            *coMinCandles,
+		VolumeWindow:          *coVolWindow,
+		MinCurrentVolMultiple: *coMinVolMult,
+		CurrentVolWindow:      *coVolMultWindow,
+		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
 	}
 
 	opts := backtest.Options{

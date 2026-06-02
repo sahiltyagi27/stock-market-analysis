@@ -45,6 +45,8 @@ func main() {
 	minCandles  := flag.Int("min-candles", 50, "minimum candles required before analysis")
 	volWindow   := flag.Int("vol-window", 20, "candles used for volume rolling average")
 	minResTouches := flag.Int("min-resistance-touches", 1, "minimum touches for a resistance zone to qualify as target")
+	minVolMult    := flag.Float64("min-vol-mult", 0, "require today's volume ≥ this × the rolling avg of the previous --vol-mult-window candles (0 = disabled)")
+	volMultWindow := flag.Int("vol-mult-window", 10, "candles used for the today's-volume average check")
 	showFiltered  := flag.Bool("show-filtered", false, "print rejection reasons for every filtered symbol")
 	flag.Parse()
 
@@ -95,11 +97,13 @@ func main() {
 
 	// ── Scan ──────────────────────────────────────────────────────────────────
 	opts := crossover.Options{
-		MaxCrossoverAge: *maxAge,
-		MinRR:           *minRR,
-		VolumeWindow:    *volWindow,
-		MinCandles:      *minCandles,
-		ZoneOpts:        analysis.ZoneOptions{MinResistanceTouches: *minResTouches},
+		MaxCrossoverAge:       *maxAge,
+		MinRR:                 *minRR,
+		VolumeWindow:          *volWindow,
+		MinCandles:            *minCandles,
+		MinCurrentVolMultiple: *minVolMult,
+		CurrentVolWindow:      *volMultWindow,
+		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *minResTouches},
 	}
 
 	signals, errs := crossover.Scan(inputs, opts)
