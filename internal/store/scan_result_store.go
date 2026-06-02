@@ -140,18 +140,21 @@ func (s *ScanResultStore) LatestTodayScanState(ctx context.Context, ist *time.Lo
 	dayEnd   := dayStart.Add(24 * time.Hour)
 
 	// Find the most recent scanned_at within today's IST window.
-	var latestAt time.Time
+	// MAX() over an empty set returns SQL NULL, so scan into sql.NullTime
+	// rather than time.Time (which cannot hold NULL).
+	var latest sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
 		SELECT MAX(scanned_at)
 		FROM scan_results
 		WHERE scanned_at >= $1 AND scanned_at < $2
-	`, dayStart, dayEnd).Scan(&latestAt)
+	`, dayStart, dayEnd).Scan(&latest)
 	if err != nil {
 		return nil, fmt.Errorf("latest today scan: %w", err)
 	}
-	if latestAt.IsZero() {
+	if !latest.Valid {
 		return nil, nil // no scan recorded today
 	}
+	latestAt := latest.Time
 
 	// Load all rows from that specific scan run.
 	rows, err := s.db.QueryContext(ctx, `
