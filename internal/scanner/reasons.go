@@ -11,7 +11,8 @@ import "fmt"
 //  2. Risk/Reward (always present — signals below MinRR are filtered before this)
 //  3. Support zone strength (always present)
 //  4. Trade quality grade (always present)
-//  5. Volume confirmation (only when lastVolume > avgVolume)
+//  5. Relative strength (only when benchmark data was supplied)
+//  6. Volume confirmation (only when lastVolume > avgVolume)
 func buildReasons(
 	sig *StockSignal,
 	avgVolume float64,
@@ -48,7 +49,18 @@ func buildReasons(
 		sig.Trade.Quality,
 	))
 
-	// 5. Volume — only when above rolling average
+	// 5. Relative strength
+	if sig.RelativeStrength.Lookback > 0 {
+		rs := sig.RelativeStrength
+		reasons = append(reasons, fmt.Sprintf(
+			"Relative strength %.2f%% vs %s over %d candles",
+			rs.OutperformancePct,
+			rs.BenchmarkSymbol,
+			rs.Lookback,
+		))
+	}
+
+	// 6. Volume — only when above rolling average
 	if avgVolume > 0 && lastVolume > avgVolume {
 		ratio := lastVolume / avgVolume
 		reasons = append(reasons, fmt.Sprintf(

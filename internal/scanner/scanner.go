@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -98,6 +99,24 @@ type Options struct {
 	// Default: 20.  Set to ≤ 0 to disable.
 	EMA200SlopePeriod int
 
+	// RelativeStrengthLookback requires the stock to outperform BenchmarkCandles
+	// over the last N candles. The filter is disabled when this is <= 0 or when
+	// BenchmarkCandles is empty. CLI commands default this to 20.
+	RelativeStrengthLookback int
+
+	// MinRelativeStrengthPct is the minimum stock-vs-benchmark outperformance
+	// required over RelativeStrengthLookback. Default: 0 means the stock must at
+	// least match NIFTY over the lookback.
+	MinRelativeStrengthPct float64
+
+	// BenchmarkSymbol names the benchmark shown in output. CLI commands default
+	// this to NIFTY50.
+	BenchmarkSymbol string
+
+	// BenchmarkCandles are the benchmark OHLCV candles used by the relative
+	// strength filter. They should be sorted ascending by timestamp.
+	BenchmarkCandles []models.Candle
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -166,6 +185,9 @@ func (o *Options) withDefaults() Options {
 	// 0 triggers the default; ≤ 0 after defaulting disables the check.
 	if out.EMA200SlopePeriod == 0 {
 		out.EMA200SlopePeriod = 20
+	}
+	if out.BenchmarkSymbol == "" {
+		out.BenchmarkSymbol = "NIFTY50"
 	}
 	return out
 }
@@ -316,6 +338,23 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		}
 	}
 
+	rs, hasRS, err := relativeStrength(in.Candles, opts.BenchmarkCandles, opts.RelativeStrengthLookback, opts.BenchmarkSymbol)
+	if err != nil {
+		return nil, err
+	}
+	if hasRS && rs.OutperformancePct < opts.MinRelativeStrengthPct {
+		return nil, fmt.Errorf(
+			"relative strength %.2f%% below minimum %.2f%% over %d candles (%s %.2f%% vs %s %.2f%%)",
+			rs.OutperformancePct,
+			opts.MinRelativeStrengthPct,
+			rs.Lookback,
+			in.Symbol,
+			rs.StockReturnPct,
+			rs.BenchmarkSymbol,
+			rs.BenchmarkReturnPct,
+		)
+	}
+
 	// Bullish candle requirement: the signal candle must close at or above its
 	// open.  A bearish close means the stock is still declining into the support
 	// zone, not bouncing from it — entering into active selling pressure is a
@@ -400,6 +439,9 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		Trade:      *ta.Long,
 	}
 	sig.Extension = ext
+	if hasRS {
+		sig.RelativeStrength = rs
+	}
 	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol, lastCandle.Open, lastCandle.Close)
 	sig.Score = sig.Breakdown.Total()
 	sig.Reasons = buildReasons(sig, avgVol, lastVol, opts.MinRR)
@@ -625,6 +667,60 @@ func pctFrom(price, base float64) float64 {
 		return 0
 	}
 	return (price - base) / base * 100
+}
+
+func relativeStrength(
+	stock []models.Candle,
+	benchmark []models.Candle,
+	lookback int,
+	benchmarkSymbol string,
+) (RelativeStrength, bool, error) {
+	if lookback <= 0 || len(benchmark) == 0 {
+		return RelativeStrength{}, false, nil
+	}
+	if len(stock) <= lookback {
+		return RelativeStrength{}, false, fmt.Errorf(
+			"relative strength unavailable: only %d stock candles, need %d",
+			len(stock), lookback+1,
+		)
+	}
+
+	stockLastIdx := len(stock) - 1
+	benchLastIdx := latestBenchmarkIdx(benchmark, stock[stockLastIdx].Timestamp)
+	if benchLastIdx < 0 {
+		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: no %s candle on/before signal date", benchmarkSymbol)
+	}
+	if benchLastIdx < lookback {
+		return RelativeStrength{}, false, fmt.Errorf(
+			"relative strength unavailable: only %d %s candles through signal date, need %d",
+			benchLastIdx+1, benchmarkSymbol, lookback+1,
+		)
+	}
+
+	stockBase := stock[stockLastIdx-lookback].Close
+	stockLast := stock[stockLastIdx].Close
+	benchBase := benchmark[benchLastIdx-lookback].Close
+	benchLast := benchmark[benchLastIdx].Close
+	if stockBase <= 0 || stockLast <= 0 || benchBase <= 0 || benchLast <= 0 {
+		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: non-positive close in stock or %s candles", benchmarkSymbol)
+	}
+
+	stockRet := pctFrom(stockLast, stockBase)
+	benchRet := pctFrom(benchLast, benchBase)
+	return RelativeStrength{
+		BenchmarkSymbol:    benchmarkSymbol,
+		Lookback:           lookback,
+		StockReturnPct:     stockRet,
+		BenchmarkReturnPct: benchRet,
+		OutperformancePct:  stockRet - benchRet,
+	}, true, nil
+}
+
+func latestBenchmarkIdx(benchmark []models.Candle, signalTime time.Time) int {
+	idx := sort.Search(len(benchmark), func(i int) bool {
+		return benchmark[i].Timestamp.After(signalTime)
+	})
+	return idx - 1
 }
 
 func deriveTrend(price float64, emas analysis.EMAResult) Trend {

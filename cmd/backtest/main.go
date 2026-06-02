@@ -36,6 +36,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/backtest"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -49,14 +50,14 @@ func main() {
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
-	topN      := flag.Int("top", 30, "trades to print when --capital is disabled (sorted by score)")
+	topN := flag.Int("top", 30, "trades to print when --capital is disabled (sorted by score)")
 	outputCSV := flag.String("output", "", "write all trades to this CSV file (empty = no file)")
-	capital   := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
-	portfolio    := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
+	capital := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
+	portfolio := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
 	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
-	exitMode     := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
-	costPct      := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
-	slippagePct  := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
+	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
+	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
+	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -66,26 +67,29 @@ func main() {
 	minCandles := flag.Int("min-candles", 200, "minimum historical candles required before analysis")
 	atrPeriod := flag.Int("atr-period", 14, "ATR period for volatility-based SL (negative = fixed buffer)")
 	atrMultiplier := flag.Float64("atr-multiplier", 1.5, "ATR multiplier: SL = support.Low − multiplier × ATR")
-	maxEMA10Extension  := flag.Float64("max-ema10-extension", 8.0, "max %% above EMA10 (<0 disables)")
-	maxEMA50Extension  := flag.Float64("max-ema50-extension", 15.0, "max %% above EMA50 (<0 disables)")
+	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "max %% above EMA10 (<0 disables)")
+	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "max %% above EMA50 (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "max %% above support high (<0 disables)")
-	maxMove10D          := flag.Float64("max-10d-move", 12.0, "max 10-candle %% move (<0 disables)")
-	maxRiskPct         := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
-	minRiskPct         := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
+	maxMove10D := flag.Float64("max-10d-move", 12.0, "max 10-candle %% move (<0 disables)")
+	maxRiskPct := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
+	minRiskPct := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
 	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
-	ema200SlopePeriod  := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
-	trailATRMult       := flag.Float64("trail-atr-mult", 1.5, "ATR multiplier for trailing stop: trailSL = highestHigh − mult×ATR (≤0 disables)")
+	ema200SlopePeriod := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	trailATRMult := flag.Float64("trail-atr-mult", 1.5, "ATR multiplier for trailing stop: trailSL = highestHigh − mult×ATR (≤0 disables)")
+	rsLookback := flag.Int("rs-lookback", 20, "[swing] relative-strength lookback vs benchmark candles (0 = disabled)")
+	minRSPct := flag.Float64("min-rs-pct", 0, "[swing] minimum stock outperformance vs benchmark over --rs-lookback")
+	rsSymbol := flag.String("rs-symbol", kite.Nifty50Symbol, "[swing] benchmark DB symbol for relative-strength filter")
 
 	// Crossover-mode flags (only used when --mode crossover).
-	coMaxAge     := flag.Int("co-max-age", 2, "[crossover] max candles since EMA7×21 crossover (default 2 = last 3 candles)")
-	coMinRR      := flag.Float64("co-min-rr", 1.5, "[crossover] minimum risk/reward ratio")
+	coMaxAge := flag.Int("co-max-age", 2, "[crossover] max candles since EMA7×21 crossover (default 2 = last 3 candles)")
+	coMinRR := flag.Float64("co-min-rr", 1.5, "[crossover] minimum risk/reward ratio")
 	coMinCandles := flag.Int("co-min-candles", 50, "[crossover] minimum candles required before analysis")
-	coVolWindow  := flag.Int("co-vol-window", 20, "[crossover] volume rolling-average window")
+	coVolWindow := flag.Int("co-vol-window", 20, "[crossover] volume rolling-average window")
 	coMinResTouches := flag.Int("co-min-resistance-touches", 1, "[crossover] minimum touches for a resistance zone target")
-	coMinVolMult    := flag.Float64("co-min-vol-mult", 0, "[crossover] require today's volume ≥ this × the prev N-day avg (0 = disabled)")
+	coMinVolMult := flag.Float64("co-min-vol-mult", 0, "[crossover] require today's volume ≥ this × the prev N-day avg (0 = disabled)")
 	coVolMultWindow := flag.Int("co-vol-mult-window", 10, "[crossover] candles for the today's-volume average check")
-	coMinTargetPct  := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
-	coMinRiskPct    := flag.Float64("co-min-risk-pct", 3.0, "[crossover] min SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
+	coMinTargetPct := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
+	coMinRiskPct := flag.Float64("co-min-risk-pct", 3.0, "[crossover] min SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
 
 	flag.Parse()
 
@@ -149,23 +153,40 @@ func main() {
 		}
 	}
 	log.Printf("loaded candles for %d/%d symbols", len(candlesMap), len(symbols))
+	var benchmarkCandles []models.Candle
+	benchmarkSymbol := kite.NormalizeSymbol(*rsSymbol)
+	if *rsLookback > 0 && *mode == "swing" {
+		cc, err := candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{})
+		if err != nil {
+			log.Printf("warn: relative-strength benchmark read failed for %s: %v", benchmarkSymbol, err)
+		} else if len(cc) == 0 {
+			log.Printf("warn: relative-strength filter disabled — no %s candles in DB (run kite-sync)", benchmarkSymbol)
+		} else {
+			benchmarkCandles = cc
+			log.Printf("loaded %d %s benchmark candles for relative strength", len(benchmarkCandles), benchmarkSymbol)
+		}
+	}
 
 	// ── Run backtest ──────────────────────────────────────────────────────────
 	scanOpts := scanner.Options{
-		MinRR:                  *minRR,
-		EMAMarginPct:           *emaMargin,
-		MinAvgVolume:           *minVolume,
-		MinCandles:             *minCandles,
-		MaxEMA10ExtensionPct:   *maxEMA10Extension,
-		MaxEMA50ExtensionPct:   *maxEMA50Extension,
-		MaxSupportExtensionPct: *maxSupportExtension,
-		MaxMove10DPct:          *maxMove10D,
-		ATRPeriod:              *atrPeriod,
-		ATRMultiplier:          *atrMultiplier,
-		MaxRiskPct:             *maxRiskPct,
-		MinRiskPct:             *minRiskPct,
-		AllowBearishCandle:     *allowBearishCandle,
-		EMA200SlopePeriod:      *ema200SlopePeriod,
+		MinRR:                    *minRR,
+		EMAMarginPct:             *emaMargin,
+		MinAvgVolume:             *minVolume,
+		MinCandles:               *minCandles,
+		MaxEMA10ExtensionPct:     *maxEMA10Extension,
+		MaxEMA50ExtensionPct:     *maxEMA50Extension,
+		MaxSupportExtensionPct:   *maxSupportExtension,
+		MaxMove10DPct:            *maxMove10D,
+		ATRPeriod:                *atrPeriod,
+		ATRMultiplier:            *atrMultiplier,
+		MaxRiskPct:               *maxRiskPct,
+		MinRiskPct:               *minRiskPct,
+		AllowBearishCandle:       *allowBearishCandle,
+		EMA200SlopePeriod:        *ema200SlopePeriod,
+		RelativeStrengthLookback: *rsLookback,
+		MinRelativeStrengthPct:   *minRSPct,
+		BenchmarkSymbol:          benchmarkSymbol,
+		BenchmarkCandles:         benchmarkCandles,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},
@@ -624,7 +645,7 @@ func formatINR(v float64) string {
 		v = -v
 	}
 	paise := int64(math.Round(v*100)) % 100
-	whole := int64(math.Round(v * 100)) / 100
+	whole := int64(math.Round(v*100)) / 100
 
 	s := fmt.Sprintf("%d", whole)
 	if len(s) <= 3 {
