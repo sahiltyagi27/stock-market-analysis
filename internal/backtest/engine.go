@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
@@ -41,8 +43,16 @@ type Options struct {
 	// (stored in TradeResult.ATR).  Default: 1.5.  Set to ≤ 0 to disable.
 	TrailATRMultiplier float64
 
-	// ScanOpts are passed through to scanner.Scan on every signal day.
+	// Mode selects the scanning strategy.
+	// "swing" (default) uses the support-zone swing scanner.
+	// "crossover" uses the EMA 7×21 crossover scanner.
+	Mode string
+
+	// ScanOpts are used when Mode == "swing" (or empty).
 	ScanOpts scanner.Options
+
+	// CrossoverOpts are used when Mode == "crossover".
+	CrossoverOpts crossover.Options
 
 	// Progress is an optional callback invoked after each symbol completes.
 	// Arguments are (symbolsDone, symbolsTotal). Safe to nil; called from
@@ -123,13 +133,76 @@ func Run(_ context.Context, candles map[string][]models.Candle, opts Options) []
 	return all
 }
 
+// tradeSetup holds the fields extracted from whichever scanner produced the
+// signal.  It is the common interface between swing and crossover modes.
+type tradeSetup struct {
+	sl     float64
+	target float64
+	atr    float64 // used for trailing stop; may be 0 if scanner doesn't compute it
+	score  float64
+	trend  string
+}
+
+// getTradeSetup runs the scanner selected by opts.Mode on the given candle
+// history and returns the relevant trade fields.  ok is false when no signal
+// is produced (caller should advance i and continue).
+func getTradeSetup(sym string, candles []models.Candle, opts Options) (ts tradeSetup, ok bool) {
+	if opts.Mode == "crossover" {
+		sigs, _ := crossover.Scan(
+			[]crossover.Input{{Symbol: sym, Candles: candles}},
+			opts.CrossoverOpts,
+		)
+		if len(sigs) == 0 {
+			return ts, false
+		}
+		sig := sigs[0]
+		// Compute ATR for the trailing stop even though the SL is not ATR-based.
+		atr := analysis.ATR(candles, 14)
+		return tradeSetup{
+			sl:     sig.SL,
+			target: sig.Target,
+			atr:    atr,
+			score:  sig.Score,
+			trend:  "crossover",
+		}, true
+	}
+
+	// Swing mode (default).
+	sigs := scanner.Scan(
+		[]scanner.Input{{Symbol: sym, Candles: candles}},
+		opts.ScanOpts,
+	)
+	if len(sigs) == 0 {
+		return ts, false
+	}
+	sig := sigs[0]
+	return tradeSetup{
+		sl:     sig.Trade.StopLoss,
+		target: sig.Trade.Target,
+		atr:    sig.Trade.ATR,
+		score:  sig.Score,
+		trend:  string(sig.Trend),
+	}, true
+}
+
+// minCandles returns the minimum candle count required for the active mode.
+func (o Options) minCandles() int {
+	if o.Mode == "crossover" {
+		if o.CrossoverOpts.MinCandles > 0 {
+			return o.CrossoverOpts.MinCandles
+		}
+		return 50 // crossover default
+	}
+	if o.ScanOpts.MinCandles > 0 {
+		return o.ScanOpts.MinCandles
+	}
+	return 200 // swing default
+}
+
 // simulateSymbol runs the walk-forward loop for a single symbol.
 // It never opens a new trade while one is still active.
 func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeResult {
-	minC := opts.ScanOpts.MinCandles
-	if minC <= 0 {
-		minC = 200 // mirrors scanner.Options.withDefaults()
-	}
+	minC := opts.minCandles()
 	// Need minC candles for the signal day plus at least one more for entry.
 	if len(candles) < minC+1 {
 		return nil
@@ -151,18 +224,14 @@ func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeRe
 			break
 		}
 
-		// Run the full scanner on history up to and including day i.
-		sigs := scanner.Scan(
-			[]scanner.Input{{Symbol: sym, Candles: candles[:i+1]}},
-			opts.ScanOpts,
-		)
-		if len(sigs) == 0 {
+		// Run the selected scanner on history up to and including day i.
+		ts, ok := getTradeSetup(sym, candles[:i+1], opts)
+		if !ok {
 			i++
 			continue
 		}
-		sig := sigs[0]
 
-		if opts.MinScore > 0 && sig.Score < opts.MinScore {
+		if opts.MinScore > 0 && ts.score < opts.MinScore {
 			i++
 			continue
 		}
@@ -174,30 +243,26 @@ func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeRe
 			entry = entryCandle.Close // gap-open fallback
 		}
 
-		sl := sig.Trade.StopLoss
-		target := sig.Trade.Target
-
 		// Skip the setup if a gap has already blown through the stop or there
 		// is no room between entry and target.
-		if sl <= 0 || entry <= sl || entry >= target {
+		if ts.sl <= 0 || entry <= ts.sl || (ts.target > 0 && entry >= ts.target) {
 			i++
 			continue
 		}
 
 		// Walk forward starting from the entry candle.
 		outcome, exitPrice, holdDays := walkForward(
-			entry, sl, target,
-			sig.Trade.ATR,
+			entry, ts.sl, ts.target,
+			ts.atr,
 			candles[i+1:],
 			opts.MaxHold,
 			opts.TrailATRMultiplier,
 		)
 
 		// exitIdx is the 0-based index into candles[] where the trade closed.
-		// walkForward holdDays=1 means closed on candles[i+1], so exitIdx = i+1.
 		exitIdx := i + holdDays
 
-		risk := entry - sl
+		risk := entry - ts.sl
 		var actualRR float64
 		if risk > 0 {
 			actualRR = (exitPrice - entry) / risk
@@ -209,12 +274,12 @@ func simulateSymbol(sym string, candles []models.Candle, opts Options) []TradeRe
 			EntryDate:  entryCandle.Timestamp,
 			ExitDate:   candles[exitIdx].Timestamp,
 			Entry:      entry,
-			SL:         sl,
-			Target:     target,
+			SL:         ts.sl,
+			Target:     ts.target,
 			ExitPrice:  exitPrice,
-			Score:      sig.Score,
-			ATR:        sig.Trade.ATR,
-			Trend:      string(sig.Trend),
+			Score:      ts.score,
+			ATR:        ts.atr,
+			Trend:      ts.trend,
 			Outcome:    outcome,
 			ActualRR:   actualRR,
 			HoldDays:   holdDays,
