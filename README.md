@@ -3,22 +3,34 @@
 [![CI](https://github.com/sahiltyagi27/stock-market-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/sahiltyagi27/stock-market-analysis/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev)
 
-A backend engine written in Go that automates stock market technical analysis — from raw OHLCV candle data to ranked, explainable trade opportunities.
+A backend engine written in Go that automates stock-market technical analysis — from raw OHLCV candle data to ranked, explainable trade opportunities — **and** rigorously back-tests those signals as a realistic, cost-aware portfolio.
+
+It has two halves:
+
+1. **Scanner** — turns candle data into ranked, explainable trade signals (offline, or live via the Kite WebSocket).
+2. **Research / backtest engine** — replays the strategy as a portfolio (shared capital, position cap, transaction costs, risk-based sizing, regime gating) to measure what actually works. The full study lives in **[ANALYSIS.md](ANALYSIS.md)**.
 
 ---
 
 ## Overview
 
-Retail investors cannot manually scan hundreds of stocks every day.
+Retail investors cannot manually scan hundreds of stocks every day — and even a
+good signal is worthless if the *portfolio construction* around it is poor.
 
-This engine solves that by running a complete analysis pipeline automatically:
+This engine solves both. The scan pipeline runs automatically:
 
-1. Loads historical OHLCV candles (CSV or database)
+1. Loads historical OHLCV candles (CSV or PostgreSQL)
 2. Calculates exponential moving averages to determine trend
 3. Detects support and resistance zones from price structure
 4. Generates trade setups with entry, stop-loss, and target
-5. Scores and ranks opportunities across a universe of symbols
-6. Returns explainable reasons for every signal generated
+5. Scores and ranks opportunities across a universe of ~500 symbols
+6. Returns explainable reasons for every signal
+
+…and the **walk-forward backtest** then proves (or disproves) the strategy on
+years of history with realistic costs. The headline research result: a
+**strategy-health regime filter** plus **risk-based position sizing** beat the
+index on a risk-adjusted basis where naive market filters failed (see
+[ANALYSIS.md](ANALYSIS.md)).
 
 ---
 
@@ -41,33 +53,110 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **Relative Strength vs NIFTY 50** — swing signals can require 20D outperformance; live output also shows intraday RS from open
 - ✅ **Persistent Signal Log** — every scan run is written to `scan_results` (PostgreSQL) for post-hoc review and backtesting
 
+### Strategies & exits
+- ✅ **Swing scanner** — support-zone pullbacks with ATR stops, EMA200-slope, bullish-candle, and risk-bound quality filters
+- ✅ **Crossover scanner** (`cmd/crossover-scan`) — EMA 7×21 momentum entries with volume-confirmation and target-distance guards
+- ✅ **EMA-recross exit** — hold the trend until EMA7 crosses back below EMA21 (beats a fixed target across the study)
+
+### Backtesting & portfolio research
+- ✅ **Walk-forward backtester** (`cmd/backtest`) — no-lookahead replay of the full pipeline over years of candles
+- ✅ **Portfolio-aware engine** — one shared capital pool, concurrent-position cap, mark-to-market equity & drawdown
+- ✅ **Transaction-cost & slippage modeling** — realistic NSE-delivery costs so results reflect what you'd net
+- ✅ **Risk-based ("ATR") position sizing** — size each trade to a fixed % risk; improves return *and* drawdown
+- ✅ **Strategy-health regime gate** — pause new entries when recent realised expectancy turns negative (the project's strongest finding)
+- ✅ **Sector indices** — sync NSE sector index candles and map stocks → sectors (`cmd/sector-index-discovery`, `cmd/kite-sync`)
+
 ---
 
 ## Architecture
 
+### System overview
+
+How data flows from Kite into signals and backtest results.
+
+```mermaid
+flowchart TB
+    subgraph Sources["Data sources"]
+        KiteHist["Kite historical API"]
+        KiteWS["Kite WebSocket<br/>(live ticks, full mode)"]
+        CSV["OHLCV CSV files"]
+    end
+
+    subgraph Storage["PostgreSQL"]
+        Candles[("candles<br/>(equities, NIFTY50,<br/>sector indices)")]
+        ScanLog[("scan_results<br/>(signal history)")]
+    end
+
+    subgraph Core["Analysis core (internal/)"]
+        Analysis["analysis<br/>EMA · ATR · zones · trade setup"]
+        Scanner["scanner<br/>swing pipeline + scoring"]
+        Crossover["crossover<br/>EMA 7×21 momentum"]
+        Backtest["backtest<br/>walk-forward + portfolio engine"]
+    end
+
+    subgraph Apps["Commands (cmd/)"]
+        Sync["kite-sync"]
+        Scan["scan"]
+        Live["live-scan"]
+        BT["backtest"]
+        CO["crossover-scan"]
+        Server["server (REST API)"]
+    end
+
+    KiteHist --> Sync --> Candles
+    KiteWS --> Live
+    CSV --> Scan
+    Candles --> Scanner & Crossover & Backtest
+    Scanner --> Scan & Live & Server
+    Crossover --> CO
+    Backtest --> BT
+    Live --> ScanLog
+    Scanner --> Analysis
+    Crossover --> Analysis
+    Backtest --> Scanner
 ```
-Historical Candles (OHLCV)
-          │
-          ▼
-     EMA Engine
-  (EMA 10 / 50 / 200)
-          │
-          ▼
-   Zone Detection
-(Support & Resistance)
-          │
-          ▼
-   Trade Analyzer
-(Entry · SL · Target · R/R)
-          │
-          ▼
-  Scanner & Scoring
- (Trend + RR + Support + Volume)
-          │
-          ▼
-   Ranked Signals
-  with Reasons [ ]
+
+### Signal pipeline
+
+The per-symbol path from candles to an explainable, scored signal.
+
+```mermaid
+flowchart LR
+    A["Candles<br/>(OHLCV)"] --> B["EMA engine<br/>10 / 50 / 200"]
+    B --> C{"Bullish?<br/>price &gt; EMA50 &gt; EMA200<br/>EMA200 rising"}
+    C -- no --> X["Rejected<br/>(diagnostic reason)"]
+    C -- yes --> D["Zone detection<br/>support &amp; resistance"]
+    D --> E["Trade analyzer<br/>entry · ATR stop · target · R/R"]
+    E --> F{"Quality filters<br/>R/R · risk% · bullish candle ·<br/>extension · liquidity"}
+    F -- fail --> X
+    F -- pass --> G["Score<br/>trend + R/R + support + volume"]
+    G --> H["Ranked signal<br/>+ human-readable reasons"]
 ```
+
+### Portfolio backtest engine
+
+How a stream of signals becomes a realistic, cost-aware equity curve.
+
+```mermaid
+flowchart TB
+    Sig["Signals<br/>(per day, all symbols)"] --> Gate{"Entry gates"}
+    Gate --> RG["Market regime<br/>(optional)"]
+    Gate --> HG["Strategy-health gate<br/>last 20 trades avg R &gt; 0"]
+    RG & HG --> Slot{"Free slot?<br/>(max-positions)"}
+    Slot -- yes --> Size["Risk-based sizing<br/>risk 1% ÷ stop distance,<br/>cap 25% weight"]
+    Slot -- no --> Skip["Skip<br/>(opportunity-loss logged)"]
+    Size --> Open["Open position<br/>(costs + slippage applied)"]
+    Open --> Hold["Walk forward"]
+    Hold --> Exit{"Exit?"}
+    Exit -- "SL hit" --> Close["Close → realised R"]
+    Exit -- "EMA7 &lt; EMA21" --> Close
+    Exit -- "target / max-hold" --> Close
+    Close --> Equity["Mark-to-market equity<br/>· drawdown · profit factor"]
+    Close --> HG
+```
+
+> The full research narrative — every experiment, dead end, and the validated
+> winning configuration — is in **[ANALYSIS.md](ANALYSIS.md)**.
 
 ---
 
@@ -118,27 +207,84 @@ Historical Candles (OHLCV)
 
 ---
 
+## Backtesting & Research
+
+The `cmd/backtest` tool replays the strategy **walk-forward** (no lookahead) as a
+realistic portfolio. The default configuration is the most-validated one from the
+research — swing entry, EMA-recross exit, **risk-based 1% sizing**, max-weight 25%,
+and the **strategy-health gate** — with transaction costs on:
+
+```bash
+go run ./cmd/backtest --portfolio --mode swing \
+  --from 2022-01-01 --to 2025-12-31 \
+  --min-score 60 --min-rr 2 --max-hold 0 \
+  --exit-mode ema --max-positions 5 \
+  --cost-pct 0.25 --slippage-pct 0.20
+```
+
+```
+━━━  Portfolio Backtest  2022-01-01 → 2025-12-31  ━━━
+  Starting capital :  ₹1,00,000.00
+  Final capital    :  ₹1,72,785
+  Total return     :  +72.8%   (~14.7%/yr CAGR)
+  Max drawdown     :  -12.5%
+  Win rate         :  33%
+  Profit factor    :  2.58
+```
+
+> Risk-1% sizing and the health gate (window 20) are **on by default**; pass
+> `--risk-pct -1` for equal slices or `--health-window 0` to disable the gate.
+> For a fresh live-style start, seed the gate with `--health-warmup-from`.
+
+### Headline finding — the Strategy-Health regime filter
+
+Market-direction filters (NIFTY above EMA200, breadth, relative strength) all
+*failed* — the index can look healthy while the strategy's selected stocks bleed.
+The breakthrough was to gate on the **strategy's own equity curve** instead:
+only take new entries when the last 20 closed trades have positive average R.
+
+| Config (2022–25, costs on) | CAGR | Max DD | Profit factor |
+|---|---|---|---|
+| Baseline (equal-slice, no gate) | 9.5% | −21.8% | 1.95 |
+| + risk-1% sizing | 12.0% | −17.9% | 1.95 |
+| + strategy-health gate **(default)** | **14.7%** | **−12.5%** | **2.58** |
+
+It leaves good years untouched and roughly halves the losing ones, survives
+out-of-sample split-half validation, and is robust across a wide parameter range.
+**The complete study — every experiment, dead end, and validation — is in
+[ANALYSIS.md](ANALYSIS.md).**
+
+---
+
 ## Project Structure
 
 ```
 stock-market-analysis/
 ├── cmd/
-│   ├── kite-sync/       # Download daily candles from Kite → PostgreSQL
-│   ├── kite-token/      # Exchange Kite request_token for access_token
-│   ├── live-scan/       # Real-time scanner via Kite WebSocket (every 2 min)
-│   ├── scan/            # Offline scanner (CSV / CSV dir / DB modes)
-│   └── server/          # REST API server
-├── config/              # Environment config loader + symbols watchlist
+│   ├── kite-token/             # Exchange Kite request_token for access_token
+│   ├── kite-sync/              # Download daily candles (equities + NIFTY50 + sector indices) → PostgreSQL
+│   ├── sector-index-discovery/ # Probe which NSE sector indices are available on Kite
+│   ├── scan/                   # Offline scanner (CSV / CSV dir / DB modes)
+│   ├── crossover-scan/         # EMA 7×21 momentum scanner
+│   ├── live-scan/              # Real-time scanner via Kite WebSocket (every 2 min)
+│   ├── scan-history/           # Query the persisted scan_results log
+│   ├── backtest/               # Walk-forward + portfolio-aware backtester
+│   └── server/                 # REST API server
+├── config/                     # Env config, symbols watchlist, sector map
 ├── internal/
-│   ├── analysis/        # EMA, zone detection, trade analyzer
-│   ├── api/             # REST handlers (Chi router)
-│   ├── kite/            # Kite Connect client (token, instruments, history)
-│   ├── loader/          # CSV → Candle parser
-│   ├── scanner/         # Scanner engine, scorer, signal reasons, diagnostics
-│   ├── service/         # Application service layer
-│   └── store/           # PostgreSQL candle store
-├── pkg/models/          # Shared domain types (Candle)
-└── data/                # Sample OHLCV CSV files
+│   ├── analysis/               # EMA, ATR, zone detection, trade analyzer
+│   ├── scanner/                # Swing scanner engine, scorer, reasons, diagnostics
+│   ├── crossover/              # EMA 7×21 crossover scanner
+│   ├── backtest/               # Walk-forward engine, portfolio engine, metrics
+│   ├── kite/                   # Kite Connect client (token, instruments, history, WS)
+│   ├── store/                  # PostgreSQL candle + scan-result stores
+│   ├── display/               # Terminal colour helpers
+│   ├── loader/                 # CSV → Candle parser
+│   ├── api/                    # REST handlers (Chi router)
+│   └── service/                # Application service layer
+├── pkg/models/                 # Shared domain types (Candle)
+├── ANALYSIS.md                 # The full strategy research write-up
+└── data/                       # Sample OHLCV CSV files
 ```
 
 ---
@@ -763,14 +909,20 @@ ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
 - [x] M4 — Trade analyzer (SL, target, R/R grading)
 - [x] M5 — Scanner engine (bullish filter, scoring, explainable signals)
 - [x] M5.1 — Kite Connect sync + multi-mode scan CLI (CSV / DB)
-- [x] Live Scan — real-time scanner via Kite WebSocket (full mode, configurable interval, market hours guard)
+- [x] Live Scan — real-time scanner via Kite WebSocket (full mode, market-hours guard)
+- [x] M6 — Walk-forward backtesting engine (win rate, profit factor, R-multiples)
+- [x] Crossover scanner — EMA 7×21 momentum strategy + backtest mode
+- [x] Portfolio-aware backtest — shared capital, position cap, transaction costs
+- [x] Risk-based ("ATR") position sizing — improves return *and* drawdown
+- [x] Strategy-health regime gate — equity-curve filter (the headline finding)
+- [x] Sector indices — sync + stock→sector mapping
+- [x] Research write-up — see [ANALYSIS.md](ANALYSIS.md)
 
 **Upcoming**
-- [ ] M6 — Backtesting engine (walk-forward simulation, win rate, profit factor)
-- [ ] M7 — Concurrent worker pool (parallel scanning across 500+ stocks)
-- [ ] M8 — Daily scan scheduler + signals API
-- [ ] M9 — Kafka pipeline (market data producer → scanner consumers)
-- [ ] M10 — Production architecture (Docker, CI/CD, ClickHouse)
+- [ ] Live execution / paper-trading loop (wire the portfolio engine + health gate, seeded from the DB, to live signals)
+- [ ] Concurrent worker pool (parallel scanning across 500+ stocks)
+- [ ] Daily scan scheduler + signals API
+- [ ] Production architecture (Docker, CI/CD)
 
 ---
 
