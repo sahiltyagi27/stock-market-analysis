@@ -38,9 +38,37 @@ type PortfolioOptions struct {
 	// MaxHoldDays force-closes a position after this many candles (0 = no cap).
 	MaxHoldDays int
 
+	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
+	// as a percentage of notional, split evenly across the buy and sell legs.
+	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
+	CostPct float64
+
+	// SlippagePct is the adverse fill haircut applied to every leg: buys fill
+	// SlippagePct% higher, sells SlippagePct% lower than the candle price.
+	// e.g. 0.20. 0 = perfect fills.
+	SlippagePct float64
+
 	// EngineOpts carries Mode + ScanOpts + CrossoverOpts for signal generation.
 	EngineOpts Options
 }
+
+// slip is the per-leg slippage fraction.
+func (o PortfolioOptions) slip() float64 { return o.SlippagePct / 100 }
+
+// legCost is the per-leg transaction cost fraction (half the round-trip).
+func (o PortfolioOptions) legCost() float64 { return o.CostPct / 100 / 2 }
+
+// buyFill returns the effective purchase price after slippage (worse = higher).
+func buyFill(price, slip float64) float64 { return price * (1 + slip) }
+
+// sellFill returns the effective sale price after slippage (worse = lower).
+func sellFill(price, slip float64) float64 { return price * (1 - slip) }
+
+// cashOut is the total cash spent buying `shares` at `fill` incl. leg cost.
+func cashOut(shares, fill, legCost float64) float64 { return shares * fill * (1 + legCost) }
+
+// cashIn is the net cash received selling `shares` at `fill` after leg cost.
+func cashIn(shares, fill, legCost float64) float64 { return shares * fill * (1 - legCost) }
 
 // PortfolioStats summarises a portfolio run.
 type PortfolioStats struct {
@@ -154,11 +182,12 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			if !ok {
 				continue // no bar for this symbol today; hold
 			}
-			exitPrice, outcome, exited := checkExit(pos, sd, idx, opts)
+			exitTrigger, outcome, exited := checkExit(pos, sd, idx, opts)
 			if !exited {
 				continue
 			}
-			cash += pos.shares * exitPrice
+			exitPrice := sellFill(exitTrigger, opts.slip())
+			cash += cashIn(pos.shares, exitPrice, opts.legCost())
 			risk := pos.entry - pos.sl
 			rr := 0.0
 			if risk > 0 {
@@ -216,30 +245,33 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			if alloc > cash {
 				alloc = cash
 			}
-			shares := alloc / sig.entry
+			entryPrice := buyFill(sig.entry, opts.slip())
+			shares := alloc / (entryPrice * (1 + opts.legCost()))
 			if shares <= 0 {
 				continue
 			}
+			cash -= cashOut(shares, entryPrice, opts.legCost())
+			risk := entryPrice - sig.sl
+
 			// Same-day gap-down stop check.
 			sd := data[sig.symbol]
 			ec := sd.candles[sig.entryIdx]
 			if ec.Low <= sig.sl {
-				// Entered and stopped same day.
-				risk := sig.entry - sig.sl
+				exitPrice := sellFill(sig.sl, opts.slip())
+				cash += cashIn(shares, exitPrice, opts.legCost())
 				rr := 0.0
 				if risk > 0 {
-					rr = (sig.sl - sig.entry) / risk
+					rr = (exitPrice - entryPrice) / risk
 				}
 				trades = append(trades, TradeResult{
 					Symbol: sig.symbol, SignalDate: sig.entryDate, EntryDate: sig.entryDate,
-					ExitDate: day, Entry: sig.entry, SL: sig.sl, Target: sig.target,
-					ExitPrice: sig.sl, Outcome: OutcomeLoss, ActualRR: rr, HoldDays: 0,
+					ExitDate: day, Entry: entryPrice, SL: sig.sl, Target: sig.target,
+					ExitPrice: exitPrice, Outcome: OutcomeLoss, ActualRR: rr, HoldDays: 0,
 				})
 				continue
 			}
-			cash -= shares * sig.entry
 			positions[sig.symbol] = &pfPosition{
-				symbol: sig.symbol, shares: shares, entry: sig.entry, sl: sig.sl,
+				symbol: sig.symbol, shares: shares, entry: entryPrice, sl: sig.sl,
 				target: sig.target, entryIdx: sig.entryIdx, entryDate: sig.entryDate,
 			}
 		}
@@ -253,8 +285,8 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	for sym, pos := range positions {
 		sd := data[sym]
 		lastIdx := len(sd.candles) - 1
-		exitPrice := sd.candles[lastIdx].Close
-		cash += pos.shares * exitPrice
+		exitPrice := sellFill(sd.candles[lastIdx].Close, opts.slip())
+		cash += cashIn(pos.shares, exitPrice, opts.legCost())
 		risk := pos.entry - pos.sl
 		rr := 0.0
 		if risk > 0 {

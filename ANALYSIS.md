@@ -208,20 +208,37 @@ either can't get a slot or block five other trades for months.
 
 ### The humbling benchmark
 NIFTY 50 buy-and-hold over 2022–2025 ≈ **~10%/yr** (~9% price + dividends),
-~−15% drawdowns. Against that:
+~−15% drawdowns. Against that (frictionless):
 - **Swing + EMA-hold (13.9%/yr, −16% DD): modestly beats the index.**
-- **Crossover (8–8.6%/yr): _underperforms_ buy-and-hold** — and trades far more
-  (129–133 vs 110 vs 1), so cost-adjusted it's worse still.
+- **Crossover (8–8.6%/yr): _underperforms_ buy-and-hold.**
+
+### Transaction costs make it real (and worse)
+Frictionless backtests lie. Modeling NSE-delivery round-trip cost (0.25%:
+brokerage + STT + fees) and slippage (0.20%/leg) — flags `--cost-pct`,
+`--slippage-pct`:
+
+| Strategy (portfolio, 5 slots) | Frictionless | With costs |
+|---|---|---|
+| Swing + EMA | 13.9%/yr (₹1.68L) | **9.4%/yr (₹1.43L)** |
+| Crossover + EMA | 8.6%/yr (₹1.39L) | **2.4%/yr (₹1.10L)** |
+
+- Costs hit **crossover ~3× harder** (−6.2 pts/yr vs swing's −4.5): it trades more
+  (129 vs 110) and its per-trade winners are smaller, so fees eat a bigger slice.
+- Drawdowns deepen (slippage worsens every stop): swing −21.5%, crossover −27.7%.
+- **Cost-adjusted, crossover (2.4%/yr) is near-worthless vs the index (~10%/yr),
+  and even swing (9.4%/yr) only roughly _matches_ buy-and-hold — with a deeper
+  drawdown.** Trading less (or not at all) is a serious benchmark.
 
 ---
 
 ## 8. Conclusions
 
-1. **Winner: the original swing strategy + EMA-recross exit** — ~14%/yr at −16%
-   drawdown, modestly ahead of the index. The first thing we built, with a
-   better exit, beat the fancy new idea.
-2. **Crossover is not worth pursuing standalone** — it doesn't clear the index
-   hurdle once capital is realistically constrained, and trades more (higher costs).
+1. **Winner: the original swing strategy + EMA-recross exit** — frictionless
+   ~14%/yr at −16% DD; **cost-adjusted ~9.4%/yr at −21% DD**, which only roughly
+   *matches* the index. The first thing we built, with a better exit, beat the
+   fancy new idea — but barely beats doing nothing once costs are real.
+2. **Crossover is not worth pursuing standalone** — even frictionless it lags the
+   index, and **cost-adjusted it collapses to ~2.4%/yr**. It trades too much.
 3. **EMA-recross hold > fixed target** — validated across 2 strategies × 4 years
    × serial & portfolio. The fixed target was strangling both strategies.
 4. **Drop:** ATR trailing exit, partial exit, and the market-breadth/absolute
@@ -236,9 +253,13 @@ NIFTY 50 buy-and-hold over 2022–2025 ≈ **~10%/yr** (~9% price + dividends),
   data still endorses; needs NIFTY 50 index candles (separate fetch, not EQ).
 - **`--max-positions` sensitivity** (3 / 5 / 8 / 10) — slots are the binding
   constraint; the optimum is unknown.
-- **Transaction costs / slippage / STCG tax** — not yet modeled; will hurt the
-  higher-frequency crossover most.
 - **Why did 2024 lose across the board?** Exit-independent; worth a dedicated look.
+- **Beat the index at all?** Cost-adjusted swing only ties NIFTY. Open question
+  whether any refinement (relative strength, lower turnover, fewer/larger
+  positions) yields a durable edge over buy-and-hold.
+
+_Done in this investigation: transaction-cost & slippage modeling
+(`--cost-pct` 0.25, `--slippage-pct` 0.20) — see §7._
 
 ---
 
@@ -249,17 +270,21 @@ NIFTY 50 buy-and-hold over 2022–2025 ≈ **~10%/yr** (~9% price + dividends),
 go run ./cmd/kite-token                 # refresh access token, paste into .env
 go run ./cmd/kite-sync --period 5y
 
-# Portfolio backtest — the winner
+# Portfolio backtest — the winner (cost-adjusted by default: 0.25% + 0.20% slip)
 go run ./cmd/backtest --portfolio --mode swing \
   --from 2022-01-01 --to 2025-12-31 \
   --min-score 60 --min-rr 2 \
-  --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000
+  --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20
 
 # Crossover, for comparison
 go run ./cmd/backtest --portfolio --mode crossover \
   --from 2022-01-01 --to 2025-12-31 \
   --min-score 80 --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
-  --co-min-rr 3 --co-min-vol-mult 3 --co-min-target-pct 8 --co-min-risk-pct 3
+  --co-min-rr 3 --co-min-vol-mult 3 --co-min-target-pct 8 --co-min-risk-pct 3 \
+  --cost-pct 0.25 --slippage-pct 0.20
+
+# Frictionless (reproduces §1–§7 numbers): add --cost-pct 0 --slippage-pct 0
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

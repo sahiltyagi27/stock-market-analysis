@@ -86,6 +86,45 @@ func TestCheckExit_MaxHoldTimeout(t *testing.T) {
 	}
 }
 
+func TestCostMath_SlippageDirection(t *testing.T) {
+	// Buys fill higher, sells fill lower.
+	if got := buyFill(100, 0.002); got != 100.2 {
+		t.Fatalf("buyFill = %.4f, want 100.2", got)
+	}
+	if got := sellFill(100, 0.002); got != 99.8 {
+		t.Fatalf("sellFill = %.4f, want 99.8", got)
+	}
+	// Zero slippage = candle price.
+	if buyFill(100, 0) != 100 || sellFill(100, 0) != 100 {
+		t.Fatal("zero slippage must leave price unchanged")
+	}
+}
+
+func TestCostMath_RoundTripLosesToCosts(t *testing.T) {
+	// Buy and sell 10 shares at the same price 100, with cost but no slippage.
+	// A frictionless round-trip nets zero; with cost it must lose money.
+	legCost := 0.25 / 100 / 2 // 0.25% round-trip
+	out := cashOut(10, 100, legCost)
+	in := cashIn(10, 100, legCost)
+	if in >= out {
+		t.Fatalf("round-trip should lose to costs: out=%.4f in=%.4f", out, in)
+	}
+	// Frictionless: in == out.
+	if cashIn(10, 100, 0) != cashOut(10, 100, 0) {
+		t.Fatal("frictionless round-trip must net zero")
+	}
+}
+
+func TestPortfolioOptions_CostHelpers(t *testing.T) {
+	o := PortfolioOptions{CostPct: 0.25, SlippagePct: 0.20}
+	if o.slip() != 0.002 {
+		t.Fatalf("slip = %.5f, want 0.002", o.slip())
+	}
+	if o.legCost() != 0.00125 {
+		t.Fatalf("legCost = %.6f, want 0.00125", o.legCost())
+	}
+}
+
 func TestCheckExit_NoExit(t *testing.T) {
 	sd := buildSymData(
 		[]models.Candle{pfTestCandle(100, 105, 99, 103), pfTestCandle(103, 106, 100, 104)},

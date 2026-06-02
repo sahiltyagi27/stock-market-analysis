@@ -55,6 +55,8 @@ func main() {
 	portfolio    := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
 	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
 	exitMode     := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
+	costPct      := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
+	slippagePct  := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -223,12 +225,14 @@ func main() {
 			StartCapital: *capital,
 			ExitMode:     *exitMode,
 			MaxHoldDays:  *maxHold,
+			CostPct:      *costPct,
+			SlippagePct:  *slippagePct,
 			EngineOpts:   opts,
 		}
-		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f",
-			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital)
+		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",
+			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
 		trades, stats := backtest.RunPortfolio(ctx, candlesMap, pf)
-		printPortfolio(trades, stats, fromLabel, toLabel, *mode, *exitMode, *maxPositions)
+		printPortfolio(trades, stats, fromLabel, toLabel, *mode, *exitMode, *maxPositions, *costPct, *slippagePct)
 		if *outputCSV != "" {
 			if err := writeCSV(*outputCSV, trades); err != nil {
 				log.Printf("warn: CSV write failed: %v", err)
@@ -384,12 +388,13 @@ func printSummary(s backtest.Summary, fromLabel, toLabel string) {
 	fmt.Println()
 }
 
-func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fromLabel, toLabel, mode, exitMode string, maxPos int) {
+func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fromLabel, toLabel, mode, exitMode string, maxPos int, costPct, slippagePct float64) {
 	sep := display.Dim.Sprint(strings.Repeat("─", 60))
 	banner := fmt.Sprintf("━━━  Portfolio Backtest  %s → %s  ━━━", fromLabel, toLabel)
 	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(banner))
 
 	fmt.Printf("  %s\n", display.Dim.Sprintf("mode: %s   exit: %s   max-positions: %d", mode, exitMode, maxPos))
+	fmt.Printf("  %s\n", display.Dim.Sprintf("costs: %.2f%% round-trip   slippage: %.2f%%/leg", costPct, slippagePct))
 	fmt.Printf("\n  %s\n", sep)
 
 	fmt.Printf("  %s  %s\n", display.Dim.Sprint("Starting capital :"), display.Bold.Sprint(formatINR(s.StartCapital)))
