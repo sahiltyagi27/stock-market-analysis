@@ -16,17 +16,18 @@ const (
 
 // StockSignal is the full output for a single symbol after the scan pipeline.
 type StockSignal struct {
-	Symbol     string              `json:"symbol"`
-	Price      float64             `json:"price"`
-	Trend      Trend               `json:"trend"`
-	EMA        analysis.EMAResult  `json:"ema"`
-	Support    analysis.Zone       `json:"support"`
-	Resistance analysis.Zone       `json:"resistance"`
-	Trade      analysis.TradeSetup `json:"trade"` // long setup
-	Score      float64             `json:"score"`
-	Breakdown  ScoreBreakdown      `json:"breakdown"`
-	Extension  Extension           `json:"extension"`
-	Reasons    []string            `json:"reasons"` // human-readable explanation of why this signal was selected
+	Symbol           string              `json:"symbol"`
+	Price            float64             `json:"price"`
+	Trend            Trend               `json:"trend"`
+	EMA              analysis.EMAResult  `json:"ema"`
+	Support          analysis.Zone       `json:"support"`
+	Resistance       analysis.Zone       `json:"resistance"`
+	Trade            analysis.TradeSetup `json:"trade"` // long setup
+	Score            float64             `json:"score"`
+	Breakdown        ScoreBreakdown      `json:"breakdown"`
+	Extension        Extension           `json:"extension"`
+	RelativeStrength RelativeStrength    `json:"relative_strength,omitempty"`
+	Reasons          []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
 // BreakoutSignal is a watchlist candidate sitting below a tested resistance
@@ -55,10 +56,10 @@ type VolumeConfirmation struct {
 
 // ScoreBreakdown explains how StockSignal.Score was composed.
 type ScoreBreakdown struct {
-	Trend     float64 `json:"trend"`
-	RR        float64 `json:"rr"`
-	Support   float64 `json:"support"`
-	Volume    float64 `json:"volume"`
+	Trend   float64 `json:"trend"`
+	RR      float64 `json:"rr"`
+	Support float64 `json:"support"`
+	Volume  float64 `json:"volume"`
 	// CandleDir is 0 for a bullish/flat last candle and -5 for a bearish one
 	// (close < open). A red candle on a support zone is a weaker setup.
 	CandleDir   float64 `json:"candle_dir,omitempty"`
@@ -75,6 +76,16 @@ type Extension struct {
 	FromSupportHighPct float64 `json:"from_support_high_pct"`
 	Move10DPct         float64 `json:"move_10d_pct"`
 	HasMove10D         bool    `json:"has_move_10d"`
+}
+
+// RelativeStrength compares a stock's recent return with a benchmark's recent
+// return over the same lookback window.
+type RelativeStrength struct {
+	BenchmarkSymbol    string  `json:"benchmark_symbol,omitempty"`
+	Lookback           int     `json:"lookback,omitempty"`
+	StockReturnPct     float64 `json:"stock_return_pct,omitempty"`
+	BenchmarkReturnPct float64 `json:"benchmark_return_pct,omitempty"`
+	OutperformancePct  float64 `json:"outperformance_pct,omitempty"`
 }
 
 // Diagnostic explains how far one stock got through the scanner pipeline,

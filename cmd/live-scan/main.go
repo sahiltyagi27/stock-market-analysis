@@ -110,7 +110,7 @@ var nseHolidays = map[string]string{
 // We subscribe to it alongside the equity watchlist so we can compute each
 // signal's relative strength vs the broad market.
 const (
-	niftyToken  = uint32(256265)
+	niftyToken  = uint32(kite.Nifty50InstrumentToken)
 	niftySymbol = "NIFTY 50"
 )
 
@@ -122,20 +122,23 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
-	alertScore           := flag.Float64("alert-score", 85, "highlight signals at or above this score with ⚡ (0 = disabled)")
-	retentionDays        := flag.Int("retention-days", 30, "delete scan_results older than this many days on startup (0 = keep forever)")
-	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
-	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
-	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
+	alertScore := flag.Float64("alert-score", 85, "highlight signals at or above this score with ⚡ (0 = disabled)")
+	retentionDays := flag.Int("retention-days", 30, "delete scan_results older than this many days on startup (0 = keep forever)")
+	minCandles := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
+	atrPeriod := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
+	atrMultiplier := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
 	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
-	maxBreakoutDistance  := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
-	maxRiskPct           := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
-	minRiskPct           := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
-	allowBearishCandle   := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
-	ema200SlopePeriod    := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	maxBreakoutDistance := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
+	maxRiskPct := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
+	minRiskPct := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
+	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
+	ema200SlopePeriod := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	rsLookback := flag.Int("rs-lookback", 20, "relative-strength lookback vs NIFTY benchmark candles (0 = disabled)")
+	minRSPct := flag.Float64("min-rs-pct", 0, "minimum stock outperformance vs NIFTY over --rs-lookback")
+	rsSymbol := flag.String("rs-symbol", kite.Nifty50Symbol, "benchmark DB symbol for relative-strength filter")
 	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
@@ -212,6 +215,18 @@ func main() {
 		}
 	}
 	log.Printf("cached history for %d/%d symbols", len(historyCache), len(symbols))
+	var benchmarkHistory []models.Candle
+	benchmarkSymbol := kite.NormalizeSymbol(*rsSymbol)
+	if *rsLookback > 0 {
+		benchmarkHistory, err = candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{From: &from})
+		if err != nil {
+			log.Printf("warn: relative-strength benchmark read failed for %s: %v", benchmarkSymbol, err)
+		} else if len(benchmarkHistory) == 0 {
+			log.Printf("warn: relative-strength filter disabled — no %s candles in DB (run kite-sync)", benchmarkSymbol)
+		} else {
+			log.Printf("loaded %d %s benchmark candles for relative strength", len(benchmarkHistory), benchmarkSymbol)
+		}
+	}
 
 	// ── Kite: instrument token map ────────────────────────────────────────────
 	kiteClient := kite.NewClient(cfg.KiteBaseURL, cfg.KiteAPIKey, cfg.KiteAccessToken)
@@ -268,21 +283,24 @@ func main() {
 	}
 
 	scanOpts := scanner.Options{
-		MinRR:                  *minRR,
-		EMAMarginPct:           *emaMargin,
-		MinAvgVolume:           *minVolume,
-		MinCandles:             *minCandles,
-		MaxEMA10ExtensionPct:   *maxEMA10Extension,
-		MaxEMA50ExtensionPct:   *maxEMA50Extension,
-		MaxSupportExtensionPct: *maxSupportExtension,
-		MaxMove10DPct:          *maxMove10D,
-		MaxBreakoutDistancePct: *maxBreakoutDistance,
-		ATRPeriod:              *atrPeriod,
-		ATRMultiplier:          *atrMultiplier,
-		MaxRiskPct:             *maxRiskPct,
-		MinRiskPct:             *minRiskPct,
-		AllowBearishCandle:     *allowBearishCandle,
-		EMA200SlopePeriod:      *ema200SlopePeriod,
+		MinRR:                    *minRR,
+		EMAMarginPct:             *emaMargin,
+		MinAvgVolume:             *minVolume,
+		MinCandles:               *minCandles,
+		MaxEMA10ExtensionPct:     *maxEMA10Extension,
+		MaxEMA50ExtensionPct:     *maxEMA50Extension,
+		MaxSupportExtensionPct:   *maxSupportExtension,
+		MaxMove10DPct:            *maxMove10D,
+		MaxBreakoutDistancePct:   *maxBreakoutDistance,
+		ATRPeriod:                *atrPeriod,
+		ATRMultiplier:            *atrMultiplier,
+		MaxRiskPct:               *maxRiskPct,
+		MinRiskPct:               *minRiskPct,
+		AllowBearishCandle:       *allowBearishCandle,
+		EMA200SlopePeriod:        *ema200SlopePeriod,
+		RelativeStrengthLookback: *rsLookback,
+		MinRelativeStrengthPct:   *minRSPct,
+		BenchmarkSymbol:          benchmarkSymbol,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},
@@ -298,7 +316,7 @@ func main() {
 			log.Printf("warn: could not restore scan state from DB: %v", err)
 		} else if snap != nil {
 			state.prevSymbols = snap.PrevSymbols
-			state.streaks     = snap.Streaks
+			state.streaks = snap.Streaks
 			state.initialized = true
 			maxStreak := 0
 			for _, n := range snap.Streaks {
@@ -317,7 +335,7 @@ func main() {
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(ctx, now, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
+		runScan(ctx, now, ws, historyCache, benchmarkHistory, benchmarkSymbol, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -340,7 +358,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(ctx, t, ws, historyCache, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
+			runScan(ctx, t, ws, historyCache, benchmarkHistory, benchmarkSymbol, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 		}
 	}
 }
@@ -409,6 +427,8 @@ func runScan(
 	at time.Time,
 	ws *kite.WSClient,
 	history map[string][]models.Candle,
+	benchmarkHistory []models.Candle,
+	benchmarkSymbol string,
 	symbolToken map[string]uint32,
 	opts scanner.Options,
 	topN int,
@@ -436,6 +456,7 @@ func runScan(
 
 	var signals []scanner.StockSignal
 	var breakouts []scanner.BreakoutSignal
+	opts.BenchmarkCandles = liveBenchmarkCandles(ws, benchmarkHistory, benchmarkSymbol, volFrac)
 	if mode == "swing" || mode == "all" {
 		signals, _ = scanner.ScanWithErrors(inputs, opts)
 	}
@@ -525,6 +546,22 @@ func computeBreakoutRS(
 		rsMap[sig.Symbol] = stockPct - niftyPct
 	}
 	return rsMap, niftyPct
+}
+
+func liveBenchmarkCandles(
+	ws *kite.WSClient,
+	historical []models.Candle,
+	symbol string,
+	volFrac float64,
+) []models.Candle {
+	if len(historical) == 0 {
+		return nil
+	}
+	tick, ok := ws.LatestTick(niftyToken)
+	if !ok || tick.LastPrice <= 0 {
+		return historical
+	}
+	return buildInput(symbol, historical, tick, volFrac).Candles
 }
 
 // buildScanResultRows converts the scanner output into rows ready for DB insert.
@@ -699,6 +736,15 @@ func printScan(
 					display.Dim.Sprint("(NIFTY:"),
 					display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(")"))
 			}
+		}
+		if sig.RelativeStrength.Lookback > 0 {
+			rs := sig.RelativeStrength
+			fmt.Printf("     %s %s %s  %s\n",
+				pipe,
+				display.Dim.Sprintf("RS %dD:", rs.Lookback),
+				display.Sign(rs.OutperformancePct, "%+.2f%%"),
+				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
+					sig.Symbol, rs.StockReturnPct, rs.BenchmarkSymbol, rs.BenchmarkReturnPct))
 		}
 
 		// Extension diagnostics — useful for spotting late entries after a rally.

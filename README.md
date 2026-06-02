@@ -38,7 +38,7 @@ This engine solves that by running a complete analysis pipeline automatically:
 - ✅ **NSE Holiday Calendar** — automatically skips all NSE trading holidays (no false "no signals" on holidays)
 - ✅ **Signal Persistence** — new signals marked `[NEW]`; consecutive appearances show a streak counter `×N`
 - ✅ **Liquidity Filter** — optional minimum avg daily volume threshold to exclude illiquid stocks
-- ✅ **Relative Strength vs NIFTY 50** — each signal shows how much it's outperforming/underperforming the index from open
+- ✅ **Relative Strength vs NIFTY 50** — swing signals can require 20D outperformance; live output also shows intraday RS from open
 - ✅ **Persistent Signal Log** — every scan run is written to `scan_results` (PostgreSQL) for post-hoc review and backtesting
 
 ---
@@ -265,6 +265,7 @@ What it does:
 - finds each NSE instrument in Kite's instrument master
 - downloads the requested historical period
 - upserts candles into the `candles` table
+- also syncs NIFTY 50 index candles as `NIFTY50` by default for relative-strength filters
 
 Common variants:
 
@@ -279,6 +280,12 @@ Sync only a smaller temporary watchlist:
 ```bash
 printf "EXIDEIND\nITC\n" > /tmp/my-symbols.txt
 go run ./cmd/kite-sync --symbols /tmp/my-symbols.txt --period 2y
+```
+
+Skip NIFTY benchmark sync:
+
+```bash
+go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --include-nifty=false
 ```
 
 #### Scan Synced DB Candles
@@ -309,6 +316,7 @@ What it shows:
 - only valid swing trade candidates by default
 - breakout watch candidates when `--mode breakout` or `--mode all` is used
 - score breakdown: trend, R/R, support, volume
+- historical relative strength vs `NIFTY50` for swing signals when benchmark candles are available
 - price, trend, entry, stop-loss, target
 - support/resistance zones and reasons
 - final counts for scanned, skipped, and signal symbols
@@ -329,7 +337,9 @@ Use `--show-filtered` when there is no signal and you want to see the price,
 EMA10/50/200, trend, and the exact rejection reason. Reasons can include
 bearish/neutral trend, price too close to EMA200, no valid support/resistance
 zone, R/R below minimum, too few resistance touches, low average volume, or a
-setup that is already extended after a recent rally.
+setup that is already extended after a recent rally. With the default
+relative-strength filter, a stock can also be rejected when it has not
+outperformed `NIFTY50` over the last 20 candles.
 
 Useful stricter/looser filters:
 
@@ -340,6 +350,8 @@ go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-volume 200000
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --min-resistance-touches 1
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-10d-move 15
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-ema50-extension -1
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --rs-lookback 50
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --rs-lookback 0
 go run ./cmd/scan --db --symbols config/symbols.txt --mode breakout --max-breakout-distance 2
 ```
 
@@ -354,6 +366,9 @@ Flag notes:
 - `--max-support-extension`: default `5`; filters entries too far above support
 - `--max-10d-move`: default `12`; filters stocks that already rallied too much in 10 candles
 - `--max-breakout-distance`: default `3`; max percent below resistance for breakout watch
+- `--rs-lookback`: default `20`; swing stocks must outperform the benchmark over this many candles; `0` disables
+- `--min-rs-pct`: default `0`; minimum outperformance vs benchmark over `--rs-lookback`
+- `--rs-symbol`: default `NIFTY50`; benchmark symbol loaded from PostgreSQL or a matching CSV file
 - set any `--max-*` extension flag below `0` to disable that specific guard
 
 #### Live Scan (Real-Time via Kite WebSocket)
@@ -394,6 +409,7 @@ What live scan does:
 - keeps today's candle updated from live LTP/open/high/low/volume
 - merges that live candle with historical DB candles
 - runs swing and/or breakout scanner modes repeatedly
+- filters swing signals by 20D relative strength vs `NIFTY50` when benchmark candles exist
 - shows `[NEW]` for fresh signals and `xN`/`×N` streaks for repeated signals
 - writes emitted swing signals to `scan_results`
 
@@ -414,6 +430,9 @@ Available flags:
 | `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
 | `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
 | `--max-breakout-distance` | `3.0` | Maximum % below resistance for breakout watch candidates; `<0` disables |
+| `--rs-lookback` | `20` | Swing relative-strength lookback vs benchmark; `0` disables |
+| `--min-rs-pct` | `0` | Minimum stock outperformance vs benchmark over `--rs-lookback` |
+| `--rs-symbol` | `NIFTY50` | Benchmark DB symbol for relative-strength filter |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -578,6 +597,9 @@ Available flags:
 | `--max-support-extension` | `5.0` | Maximum % above support high before filtering as extended; `<0` disables |
 | `--max-10d-move` | `12.0` | Maximum 10-candle % move before filtering as extended; `<0` disables |
 | `--max-breakout-distance` | `3.0` | Maximum % below resistance for breakout watch candidates; `<0` disables |
+| `--rs-lookback` | `20` | Swing relative-strength lookback vs benchmark; `0` disables |
+| `--min-rs-pct` | `0` | Minimum stock outperformance vs benchmark over `--rs-lookback` |
+| `--rs-symbol` | `NIFTY50` | Benchmark symbol for relative-strength filter |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:

@@ -53,6 +53,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/loader"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
+	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
 func main() {
@@ -68,18 +69,21 @@ func main() {
 	emaMargin := flag.Float64("ema-margin", 1.0, "minimum %% gap required between price and EMA200 (0 = disabled)")
 	minVolume := flag.Int64("min-volume", 0, "minimum 20-day avg daily volume to qualify (0 = disabled)")
 	minResistanceTouches := flag.Int("min-resistance-touches", 2, "minimum touches required for a resistance zone to qualify (1 = allow all)")
-	minCandles           := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
-	atrPeriod            := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
-	atrMultiplier        := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
+	minCandles := flag.Int("min-candles", 200, "minimum candles required per symbol before analysis (0 = use default 200)")
+	atrPeriod := flag.Int("atr-period", 14, "ATR period for volatility-based SL sizing (negative = use fixed SL buffer)")
+	atrMultiplier := flag.Float64("atr-multiplier", 1.5, "ATR multiplier for SL distance: SL = support.Low − multiplier × ATR")
 	maxEMA10Extension := flag.Float64("max-ema10-extension", 8.0, "maximum %% above EMA10 before filtering as extended (<0 disables)")
 	maxEMA50Extension := flag.Float64("max-ema50-extension", 15.0, "maximum %% above EMA50 before filtering as extended (<0 disables)")
 	maxSupportExtension := flag.Float64("max-support-extension", 5.0, "maximum %% above support high before filtering as extended (<0 disables)")
 	maxMove10D := flag.Float64("max-10d-move", 12.0, "maximum 10-candle %% move before filtering as extended (<0 disables)")
-	maxBreakoutDistance  := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
-	maxRiskPct           := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
-	minRiskPct           := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
-	allowBearishCandle   := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
-	ema200SlopePeriod    := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	maxBreakoutDistance := flag.Float64("max-breakout-distance", 3.0, "maximum %% below resistance for breakout watch candidates (<0 disables)")
+	maxRiskPct := flag.Float64("max-risk-pct", 8.0, "maximum SL distance as %% of entry price (<0 disables)")
+	minRiskPct := flag.Float64("min-risk-pct", 1.5, "minimum SL distance as %% of entry price (<0 disables)")
+	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
+	ema200SlopePeriod := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
+	rsLookback := flag.Int("rs-lookback", 20, "relative-strength lookback vs benchmark candles (0 = disabled)")
+	minRSPct := flag.Float64("min-rs-pct", 0, "minimum stock outperformance vs benchmark over --rs-lookback")
+	rsSymbol := flag.String("rs-symbol", "NIFTY50", "benchmark symbol for relative-strength filter")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
@@ -91,24 +95,35 @@ func main() {
 		Period:      *period,
 		Symbol:      *csvSymbol,
 	})
+	benchmarkCandles := benchmarkFromInputs(&inputs, normalizeSymbol(*rsSymbol))
+	if *rsLookback > 0 && *dbMode {
+		benchmarkCandles = loadDBBenchmark(context.Background(), *period, normalizeSymbol(*rsSymbol))
+	}
+	if *rsLookback > 0 && len(benchmarkCandles) == 0 {
+		log.Printf("warn: relative-strength filter disabled — no %s benchmark candles found", normalizeSymbol(*rsSymbol))
+	}
 
 	opts := scanner.Options{
-		MinRR:                  *minRR,
-		EMAMarginPct:           *emaMargin,
-		MinAvgVolume:           *minVolume,
-		MaxEMA10ExtensionPct:   *maxEMA10Extension,
-		MaxEMA50ExtensionPct:   *maxEMA50Extension,
-		MaxSupportExtensionPct: *maxSupportExtension,
-		MaxMove10DPct:          *maxMove10D,
-		MaxBreakoutDistancePct: *maxBreakoutDistance,
-		MinCandles:             *minCandles,
-		ATRPeriod:              *atrPeriod,
-		ATRMultiplier:          *atrMultiplier,
-		MaxRiskPct:             *maxRiskPct,
-		MinRiskPct:             *minRiskPct,
-		AllowBearishCandle:     *allowBearishCandle,
-		EMA200SlopePeriod:      *ema200SlopePeriod,
-		ZoneOpts:               analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
+		MinRR:                    *minRR,
+		EMAMarginPct:             *emaMargin,
+		MinAvgVolume:             *minVolume,
+		MaxEMA10ExtensionPct:     *maxEMA10Extension,
+		MaxEMA50ExtensionPct:     *maxEMA50Extension,
+		MaxSupportExtensionPct:   *maxSupportExtension,
+		MaxMove10DPct:            *maxMove10D,
+		MaxBreakoutDistancePct:   *maxBreakoutDistance,
+		MinCandles:               *minCandles,
+		ATRPeriod:                *atrPeriod,
+		ATRMultiplier:            *atrMultiplier,
+		MaxRiskPct:               *maxRiskPct,
+		MinRiskPct:               *minRiskPct,
+		AllowBearishCandle:       *allowBearishCandle,
+		EMA200SlopePeriod:        *ema200SlopePeriod,
+		RelativeStrengthLookback: *rsLookback,
+		MinRelativeStrengthPct:   *minRSPct,
+		BenchmarkSymbol:          normalizeSymbol(*rsSymbol),
+		BenchmarkCandles:         benchmarkCandles,
+		ZoneOpts:                 analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
 	}
 	if *mode != "swing" && *mode != "breakout" && *mode != "all" {
 		log.Fatalf("invalid --mode %q: use swing, breakout, or all", *mode)
@@ -289,6 +304,49 @@ func loadDBInputs(ctx context.Context, symbolsFile, period, singleSymbol string)
 	return inputs, dataErrs
 }
 
+func loadDBBenchmark(ctx context.Context, period, symbol string) []models.Candle {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	db, err := sql.Open("postgres", cfg.DSN())
+	if err != nil {
+		log.Fatalf("db open: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatalf("db ping: %v", err)
+	}
+
+	from, err := parsePeriod(period, time.Now())
+	if err != nil {
+		log.Fatalf("period: %v", err)
+	}
+	candles, err := store.NewCandleStore(db).GetCandles(ctx, symbol, store.CandleFilter{From: &from})
+	if err != nil {
+		log.Printf("warn: load benchmark %s: %v", symbol, err)
+		return nil
+	}
+	return candles
+}
+
+func benchmarkFromInputs(inputs *[]scanner.Input, benchmarkSymbol string) []models.Candle {
+	if benchmarkSymbol == "" {
+		return nil
+	}
+	var benchmark []models.Candle
+	kept := (*inputs)[:0]
+	for _, in := range *inputs {
+		if normalizeSymbol(in.Symbol) == benchmarkSymbol {
+			benchmark = in.Candles
+			continue
+		}
+		kept = append(kept, in)
+	}
+	*inputs = kept
+	return benchmark
+}
+
 func loadOneCSV(path, symbol string) (scanner.Input, error) {
 	candles, err := loader.LoadCSV(path, symbol)
 	if err != nil {
@@ -430,6 +488,14 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 			display.Sign(sig.Extension.FromEMA50Pct, "%+.1f%%"),
 			display.Sign(sig.Extension.FromSupportHighPct, "%+.1f%%"),
 			formatMove10D(sig.Extension))
+		if sig.RelativeStrength.Lookback > 0 {
+			rs := sig.RelativeStrength
+			fmt.Printf("   %s  %s  %s\n",
+				display.Dim.Sprintf("RS %dD:    ", rs.Lookback),
+				display.Sign(rs.OutperformancePct, "%+.2f%%"),
+				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
+					sig.Symbol, rs.StockReturnPct, rs.BenchmarkSymbol, rs.BenchmarkReturnPct))
+		}
 
 		// R/R.
 		fmt.Printf("   %s  %s  %s\n",

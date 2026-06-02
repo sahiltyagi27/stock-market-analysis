@@ -20,6 +20,11 @@ import (
 const (
 	defaultBaseURL = "https://api.kite.trade"
 	kiteVersion    = "3"
+
+	// Nifty50InstrumentToken is Kite's NSE index token for NIFTY 50.
+	Nifty50InstrumentToken = int64(256265)
+	// Nifty50Symbol is the normalized DB symbol used for NIFTY 50 candles.
+	Nifty50Symbol = "NIFTY50"
 )
 
 // Client calls Kite Connect APIs.

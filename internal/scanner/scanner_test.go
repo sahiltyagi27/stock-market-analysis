@@ -128,6 +128,27 @@ func makeBearishCandles(symbol string, basePrice float64) []models.Candle {
 	return candles
 }
 
+func makeBenchmarkCandlesLike(stock []models.Candle, start, end float64) []models.Candle {
+	out := make([]models.Candle, len(stock))
+	denom := float64(len(stock) - 1)
+	for i, c := range stock {
+		close := start
+		if denom > 0 {
+			close = start + (end-start)*float64(i)/denom
+		}
+		out[i] = models.Candle{
+			Symbol:    "NIFTY50",
+			Timestamp: c.Timestamp,
+			Open:      close,
+			High:      close + 1,
+			Low:       close - 1,
+			Close:     close,
+			Volume:    0,
+		}
+	}
+	return out
+}
+
 var defaultOpts = scanner.Options{
 	MinRR:                  2.0,
 	VolumeWindow:           20,
@@ -170,6 +191,43 @@ func TestScan_BullishSignalReturned(t *testing.T) {
 	}
 	if signals[0].Symbol != "AAPL" {
 		t.Errorf("symbol = %q, want AAPL", signals[0].Symbol)
+	}
+}
+
+func TestScan_RelativeStrengthPassesWhenStockOutperformsBenchmark(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := defaultOpts
+	opts.RelativeStrengthLookback = 20
+	opts.MinRelativeStrengthPct = 0
+	opts.BenchmarkSymbol = "NIFTY50"
+	opts.BenchmarkCandles = makeBenchmarkCandlesLike(candles, 100, 101)
+
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Fatal("expected relative-strength leader to pass")
+	}
+	if signals[0].RelativeStrength.Lookback != 20 {
+		t.Fatalf("relative strength lookback = %d, want 20", signals[0].RelativeStrength.Lookback)
+	}
+	if signals[0].RelativeStrength.OutperformancePct < 0 {
+		t.Fatalf("outperformance = %.2f, want >= 0", signals[0].RelativeStrength.OutperformancePct)
+	}
+}
+
+func TestScan_RelativeStrengthRejectsUnderperformer(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := defaultOpts
+	opts.RelativeStrengthLookback = 20
+	opts.MinRelativeStrengthPct = 0
+	opts.BenchmarkSymbol = "NIFTY50"
+	opts.BenchmarkCandles = makeBenchmarkCandlesLike(candles, 100, 500)
+
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatal("expected relative-strength laggard to be filtered")
+	}
+	if errs["AAPL"] == nil || !strings.Contains(errs["AAPL"].Error(), "relative strength") {
+		t.Fatalf("expected relative strength rejection, got %v", errs["AAPL"])
 	}
 }
 
@@ -877,7 +935,7 @@ func TestScan_EMA200Slope_RejectsDeclining(t *testing.T) {
 	}
 
 	opts := defaultOpts
-	opts.EMAMarginPct = -1        // disable — price may be below EMA200
+	opts.EMAMarginPct = -1 // disable — price may be below EMA200
 	opts.EMA200SlopePeriod = 20
 	opts.AllowBearishCandle = true
 

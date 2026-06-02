@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
 	period := flag.String("period", "2y", "history window (e.g. 2y, 6m, 90d)")
+	includeNifty := flag.Bool("include-nifty", true, "also sync NIFTY 50 index candles as NIFTY50 for relative-strength filters")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -82,6 +84,19 @@ func main() {
 	log.Printf("loaded %d %s instruments from Kite", len(instruments), *exchange)
 
 	var synced, skipped int
+	if *includeNifty && strings.EqualFold(*exchange, "NSE") {
+		candles, err := client.HistoricalDaily(ctx, kite.Nifty50InstrumentToken, kite.Nifty50Symbol, from, to)
+		if err != nil {
+			log.Printf("skip %s: historical fetch failed: %v", kite.Nifty50Symbol, err)
+		} else if len(candles) == 0 {
+			log.Printf("skip %s: Kite returned no candles", kite.Nifty50Symbol)
+		} else if err := candleStore.UpsertCandles(ctx, candles); err != nil {
+			log.Printf("skip %s: DB upsert failed: %v", kite.Nifty50Symbol, err)
+		} else {
+			log.Printf("synced %d daily candles for %s", len(candles), kite.Nifty50Symbol)
+		}
+	}
+
 	for _, rawSymbol := range symbols {
 		symbol := kite.NormalizeSymbol(rawSymbol)
 		inst, ok := kite.FindEquityInstrument(instruments, *exchange, symbol)
