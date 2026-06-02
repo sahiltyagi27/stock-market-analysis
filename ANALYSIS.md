@@ -326,6 +326,33 @@ signals are low quality).
 it swaps +0.50R for −0.12R. Rotation is a dead end; not worth building.** One cheap
 measurement killed a multi-week feature that would have reduced returns.
 
+### M12 — risk-based ("ATR") position sizing (`--risk-pct`) — the breakthrough
+Instead of equal 1/N slices, size each position so a stop-out costs a fixed % of
+equity: `notional = equity × risk% ÷ ((entry−SL)/entry)`, capped at
+`--max-weight-pct` (25%). Tight stop → larger position; wide/volatile stop →
+smaller. Entries, exits, and trade set are unchanged — only capital allocation.
+
+| Sizing | CAGR | Max DD | PF | Win% |
+|---|---|---|---|---|
+| equal-slice (baseline) | 9.5% | −21.8% | 1.95 | 29% |
+| risk 0.5% | 5.9% | −9.7% | 1.95 | 29% |
+| **risk 1.0%** | **12.1%** | **−17.9%** | 1.95 | 29% |
+| risk 1.5% | 10.7% | −25.4% | 1.99 | 29% |
+| risk 2.0% | 8.9% | −27.0% | 1.97 | 29% |
+
+**risk 1.0% improves return AND drawdown simultaneously** (9.5→12.1% CAGR,
+−21.8→−17.9% DD) — the only lever in the whole study to do both. Same win rate
+and R:R (sizing doesn't change trades, only weights). It's a smooth hump (1.5%
+also beats baseline CAGR; weight-cap 25–30% all ~12%), not a lonely spike.
+
+Robustness: the **drawdown improvement holds across sub-periods** (2023–2025:
+9.4% at −17.9% DD). The CAGR *uplift* is partly 2022-driven (2023–25 return ≈
+baseline), but risk-adjusted it wins in every cut — full-period return/DD 0.68 vs
+baseline 0.44. This is the first config to beat the index (~10%/yr) on return and
+on risk-adjusted terms. **Mechanism: down-weighting volatile (wide-stop) names
+and up-weighting tight-stop ones is genuinely better than equal weighting** —
+portfolio construction, exactly where the edge was hiding.
+
 ---
 
 ## 10. Conclusions (entry & exit)
@@ -343,28 +370,28 @@ measurement killed a multi-week feature that would have reduced returns.
    dominated or counterproductive.
 5. **Retire the overlap-blind serial backtest** — it is actively misleading.
 6. **Portfolio construction > signal tuning (§9).** `max-positions 5` is the CAGR
-   peak; RS-allocation only helps under scarce slots; and **opportunity-loss (M10)
-   shows the slot limit isn't costing anything (rejected signals −0.12R vs taken
-   +0.50R) — so rotation is a dead end.** The remaining construction lever worth
-   testing is risk-based (ATR) position sizing.
+   peak; RS-allocation only helps under scarce slots; opportunity-loss (M10) rules
+   out rotation. **The win is risk-based position sizing (M12): `--risk-pct 1.0`
+   lifts CAGR 9.5→12.1% AND cuts drawdown 21.8→17.9% — the first lever to beat the
+   index on return and risk-adjusted terms.** Best config to date:
+   **swing + EMA exit + risk-1% sizing + max-positions 5 + costs.**
 
 ---
 
 ## 11. Open questions / next steps
 
-- **ATR / risk-based position sizing** — instead of equal 1/N slices, size each
-  trade to a fixed % risk (e.g. 1% of equity ÷ entry-to-SL distance). Most likely
-  to move *risk-adjusted* returns; next experiment to run.
+- **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
+  (percentile rank of 50–100D return across all 500), distinct from the
+  time-series RS filters that failed in §8. Worth a test as a slot tiebreak.
 - **Turnover reduction** — costs are a persistent drag; anything that lifts profit
   factor without adding trades is interesting.
 - **Why did 2024 lose across the board?** Exit-independent; worth a dedicated look.
-- **Beat the index at all?** Cost-adjusted swing only ties NIFTY; RS/sector (§8)
-  and rotation (§9/M10) are ruled out. Open whether ATR sizing / lower turnover
-  yields a durable edge — or whether indexing is the rational conclusion.
+- **Push risk-sizing further** — combine M12 risk-1% sizing with the max-positions
+  sweep and a volatility (ATR) target; confirm out-of-sample on more years.
 
-_Done in this investigation: transaction-cost & slippage modeling (§7);
-relative-strength & sector-strength filter evaluation (§8); portfolio
-allocation, max-positions sweep, and M10 opportunity-loss (§9)._
+_Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
+allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
+risk-based sizing — the breakthrough** (§9)._
 
 ---
 
@@ -409,6 +436,12 @@ go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31
 go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31 \
   --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
   --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 --alloc-lookback 100
+
+# §9 / M12 — BEST CONFIG TO DATE: risk-based sizing (12.1%/yr, −17.9% DD)
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
+  --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
+  --risk-pct 1.0 --max-weight-pct 25
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

@@ -125,6 +125,39 @@ func TestPortfolioOptions_CostHelpers(t *testing.T) {
 	}
 }
 
+func TestPositionNotional_EqualSlice(t *testing.T) {
+	// RiskPct 0 → equity / MaxPositions, capped at cash.
+	o := PortfolioOptions{MaxPositions: 5}
+	got := positionNotional(100000, 100000, 100, 90, o)
+	if got != 20000 {
+		t.Fatalf("equal slice = %.2f, want 20000", got)
+	}
+	// Capped at available cash.
+	got = positionNotional(100000, 15000, 100, 90, o)
+	if got != 15000 {
+		t.Fatalf("cash-capped = %.2f, want 15000", got)
+	}
+}
+
+func TestPositionNotional_RiskBased(t *testing.T) {
+	// risk 1%, stop 5% away → notional = equity*0.01/0.05 = 20% of equity.
+	o := PortfolioOptions{MaxPositions: 5, RiskPct: 1, MaxWeightPct: 25}
+	got := positionNotional(100000, 100000, 100, 95, o)
+	if got != 20000 {
+		t.Fatalf("risk-based = %.2f, want 20000 (20%%)", got)
+	}
+	// Tighter stop (2% away) → 50% raw, capped at MaxWeightPct 25% = 25000.
+	got = positionNotional(100000, 100000, 100, 98, o)
+	if got != 25000 {
+		t.Fatalf("max-weight-capped = %.2f, want 25000", got)
+	}
+	// Wide stop (10% away) → 10% of equity = 10000 (smaller position).
+	got = positionNotional(100000, 100000, 100, 90, o)
+	if got != 10000 {
+		t.Fatalf("wide-stop = %.2f, want 10000 (10%%)", got)
+	}
+}
+
 func TestCheckExit_NoExit(t *testing.T) {
 	sd := buildSymData(
 		[]models.Candle{pfTestCandle(100, 105, 99, 103), pfTestCandle(103, 106, 100, 104)},

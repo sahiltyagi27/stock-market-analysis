@@ -60,6 +60,8 @@ func main() {
 	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
 	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
+	riskPct := flag.Float64("risk-pct", 0, "[portfolio] risk-based sizing: size each trade so a stop-out costs this %% of equity (0 = equal 1/N slices)")
+	maxWeightPct := flag.Float64("max-weight-pct", 25, "[portfolio] cap any single position at this %% of equity under risk-based sizing")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -265,6 +267,8 @@ func main() {
 			CostPct:       *costPct,
 			SlippagePct:   *slippagePct,
 			AllocLookback: *allocLookback,
+			RiskPct:       *riskPct,
+			MaxWeightPct:  *maxWeightPct,
 			EngineOpts:    opts,
 		}
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",

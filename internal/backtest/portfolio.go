@@ -47,6 +47,20 @@ type PortfolioOptions struct {
 	// slots on the strongest long-term leaders among today's signals.
 	AllocLookback int
 
+	// RiskPct enables risk-based ("ATR-style") position sizing. When > 0, each
+	// position is sized so that being stopped out costs RiskPct% of equity:
+	//
+	//   notional = equity × RiskPct% ÷ ((entry − SL) / entry)
+	//
+	// A tight stop → larger position; a wide (volatile) stop → smaller position.
+	// Capped at MaxWeightPct of equity and at available cash.
+	// 0 (default) uses equal 1/MaxPositions slices.
+	RiskPct float64
+
+	// MaxWeightPct caps any single position at this % of equity under risk-based
+	// sizing (prevents a very tight stop from over-concentrating). Default: 25.
+	MaxWeightPct float64
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -147,6 +161,9 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	}
 	if opts.ExitMode == "" {
 		opts.ExitMode = "ema"
+	}
+	if opts.MaxWeightPct <= 0 {
+		opts.MaxWeightPct = 25
 	}
 
 	// Precompute per-symbol series.
@@ -285,11 +302,8 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			if cash <= 0 {
 				continue
 			}
-			alloc := equity / float64(opts.MaxPositions)
-			if alloc > cash {
-				alloc = cash
-			}
 			entryPrice := buyFill(sig.entry, opts.slip())
+			alloc := positionNotional(equity, cash, entryPrice, sig.sl, opts)
 			shares := alloc / (entryPrice * (1 + opts.legCost()))
 			if shares <= 0 {
 				continue
@@ -455,6 +469,33 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 		out[dk] = sigs
 	}
 	return out
+}
+
+// positionNotional decides how much cash to deploy into a new position.
+//
+//   - RiskPct == 0: equal slice = equity / MaxPositions (capped at cash).
+//   - RiskPct  > 0: risk-based — size so a stop-out costs RiskPct% of equity:
+//     notional = equity × RiskPct% ÷ ((entry − sl) / entry), capped at
+//     MaxWeightPct of equity and at available cash. A tighter stop earns a
+//     larger position; a wider (more volatile) stop a smaller one.
+func positionNotional(equity, cash, entry, sl float64, opts PortfolioOptions) float64 {
+	var alloc float64
+	if opts.RiskPct > 0 {
+		riskFrac := (entry - sl) / entry
+		if riskFrac <= 0 {
+			return 0
+		}
+		alloc = equity * (opts.RiskPct / 100) / riskFrac
+		if cap := equity * (opts.MaxWeightPct / 100); alloc > cap {
+			alloc = cap
+		}
+	} else {
+		alloc = equity / float64(opts.MaxPositions)
+	}
+	if alloc > cash {
+		alloc = cash
+	}
+	return alloc
 }
 
 // simulateHypo computes the hypothetical R:R of a rejected signal as if it had
