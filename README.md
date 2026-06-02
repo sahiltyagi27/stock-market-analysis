@@ -304,8 +304,14 @@ go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --sector-indices
 Sector index candles are stored using compact DB symbols such as `NIFTYBANK`,
 `NIFTYIT`, `NIFTYPHARMA`, `NIFTYMETAL`, and `NIFTYFINSERVICE`.
 
-To enable sector-strength filtering, create `config/sector-map.csv` from the
-example file:
+A starter Nifty 500 sector map is included at `config/sector-map.csv`. It maps
+the NSE Industry column to the closest Kite-supported sector index where the
+proxy is clear. Symbols from ambiguous industries such as chemicals, textiles,
+consumer services, diversified, services, and capital goods are intentionally
+left unmapped, so they still scan normally but skip the sector-strength filter.
+
+To customize the mapping, edit `config/sector-map.csv` directly or start from
+the example file:
 
 ```bash
 cp config/sector-map.csv.example config/sector-map.csv
