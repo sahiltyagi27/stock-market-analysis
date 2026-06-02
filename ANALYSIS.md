@@ -231,7 +231,52 @@ brokerage + STT + fees) and slippage (0.20%/leg) — flags `--cost-pct`,
 
 ---
 
-## 8. Conclusions
+## 8. Relative-strength & sector-strength entry filters (PRs #38–#42)
+
+After the core investigation, RS and sector-strength swing filters were added
+(scanner `RelativeStrengthLookback`/`MinRelativeStrengthPct`,
+`SectorStrengthLookback`/`MinSectorStrengthPct`; a NIFTY50 benchmark sync, and a
+Nifty 500 stock→sector map). Both were swept against the portfolio baseline
+(swing + EMA exit + costs, 5 slots, 2022–2025).
+
+### Stock relative strength (stock vs NIFTY) — hurts
+| Config | CAGR | Win% | Trades |
+|---|---|---|---|
+| no-RS (baseline) | **9.4%** | 29% | 110 |
+| RS L20 min0 | 6.4% | 28% | 88 |
+| RS L20 min5 | 5.0% | 34% | 67 |
+| RS L50 min0 | 4.8% | 31% | 88 |
+
+Every setting underperforms. Win rate rises as the filter tightens but total
+return falls — it removes volatile winners. Cause: RS demands recent
+*out*performance, while swing buys pullbacks (recent *under*performance). The two
+are opposed; RS filters out the dip-buy setups the strategy relies on.
+
+### Sector strength (mapped sector index vs NIFTY) — also hurts
+Using the full Nifty 500 sector map (PR #42, 361 symbols):
+
+| Config | CAGR | Max DD | Win% |
+|---|---|---|---|
+| no-sector (baseline) | **9.5%** | −21.8% | 29% |
+| sector L20 min0 | 6.1% | −19.2% | 29% |
+| sector L50 min0 | 8.1% | −20.5% | 31% |
+| sector L75 min0 | 6.0% | −17.1% | 29% |
+| sector L50 min3 | −1.9% | −20.7% | 27% |
+
+Every setting underperforms too. (A partial 53-symbol map briefly showed a
++0.6 pt blip at L50/min0; the full 361-symbol map erased it — it was a mapping
+artifact, a good reminder to test with complete data.)
+
+### Verdict
+Neither filter yields a durable edge; both reduce returns. The honest ceiling is
+unchanged: **swing + EMA-recross + costs ≈ 9.5%/yr ≈ the index.** The
+relative-strength / sector machinery — the most promising lever the analysis
+identified — does **not** beat buy-and-hold on this data. A valuable negative
+result: the added complexity is not paying off here.
+
+---
+
+## 9. Conclusions
 
 1. **Winner: the original swing strategy + EMA-recross exit** — frictionless
    ~14%/yr at −16% DD; **cost-adjusted ~9.4%/yr at −21% DD**, which only roughly
@@ -241,29 +286,31 @@ brokerage + STT + fees) and slippage (0.20%/leg) — flags `--cost-pct`,
    index, and **cost-adjusted it collapses to ~2.4%/yr**. It trades too much.
 3. **EMA-recross hold > fixed target** — validated across 2 strategies × 4 years
    × serial & portfolio. The fixed target was strangling both strategies.
-4. **Drop:** ATR trailing exit, partial exit, and the market-breadth/absolute
-   regime filter — all dominated or counterproductive.
+4. **Drop:** ATR trailing exit, partial exit, the market-breadth/absolute regime
+   filter, **and the stock-RS / sector-strength entry filters (§8)** — all
+   dominated or counterproductive.
 5. **Retire the overlap-blind serial backtest** — it is actively misleading.
 
 ---
 
-## 9. Open questions / next steps
+## 10. Open questions / next steps
 
-- **Relative-strength entry filter** (stock vs NIFTY) — the only entry filter the
-  data still endorses; needs NIFTY 50 index candles (separate fetch, not EQ).
 - **`--max-positions` sensitivity** (3 / 5 / 8 / 10) — slots are the binding
   constraint; the optimum is unknown.
 - **Why did 2024 lose across the board?** Exit-independent; worth a dedicated look.
-- **Beat the index at all?** Cost-adjusted swing only ties NIFTY. Open question
-  whether any refinement (relative strength, lower turnover, fewer/larger
-  positions) yields a durable edge over buy-and-hold.
+- **Beat the index at all?** Cost-adjusted swing only ties NIFTY, and the
+  RS/sector filters (§8) failed to add an edge. Open question whether any
+  refinement (lower turnover, fewer/larger positions, a different entry family)
+  yields a durable edge over buy-and-hold — or whether indexing is the rational
+  conclusion for this signal set.
 
 _Done in this investigation: transaction-cost & slippage modeling
-(`--cost-pct` 0.25, `--slippage-pct` 0.20) — see §7._
+(`--cost-pct` 0.25, `--slippage-pct` 0.20, §7); relative-strength & sector-strength
+filter evaluation (§8)._
 
 ---
 
-## 10. Reproduce
+## 11. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -285,6 +332,16 @@ go run ./cmd/backtest --portfolio --mode crossover \
   --cost-pct 0.25 --slippage-pct 0.20
 
 # Frictionless (reproduces §1–§7 numbers): add --cost-pct 0 --slippage-pct 0
+
+# §8 — relative-strength / sector-strength sweeps (both underperform baseline)
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
+  --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
+  --rs-lookback 20 --min-rs-pct 0                       # stock RS (hurts)
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
+  --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
+  --sector-map config/sector-map.csv --sector-rs-lookback 50 --min-sector-rs-pct 0  # sector (hurts)
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
