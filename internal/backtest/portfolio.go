@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"context"
+	"math"
 	"sort"
 	"time"
 
@@ -37,6 +38,14 @@ type PortfolioOptions struct {
 
 	// MaxHoldDays force-closes a position after this many candles (0 = no cap).
 	MaxHoldDays int
+
+	// AllocLookback controls how same-day candidates compete for free slots.
+	// 0 (default): rank by scanner score (current behaviour).
+	// >0: rank by the stock's leadership = its return over the last AllocLookback
+	// candles ending on the signal day (descending), with score as the tiebreak.
+	// This is "Variant D": buy the pullback (entries unchanged), but spend scarce
+	// slots on the strongest long-term leaders among today's signals.
+	AllocLookback int
 
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
@@ -81,6 +90,16 @@ type PortfolioStats struct {
 	Losses         int
 	AvgHoldDays    float64
 	MaxConcurrent  int
+	ProfitFactor   float64 // sum(+R) / |sum(−R)|; +Inf when no losers
+	AvgRR          float64 // mean ActualRR across all trades
+
+	// Opportunity loss (M10): signals rejected because the portfolio was full,
+	// with their hypothetical outcomes (same exit + costs). Compare RejectedAvgRR
+	// vs AvgRR — if rejected ≈ accepted, the slot limit isn't costing you and
+	// rotation won't help.
+	RejectedFull    int
+	RejectedAvgRR   float64
+	RejectedWinRate float64
 }
 
 // symData holds precomputed per-symbol series for the portfolio walk.
@@ -100,6 +119,9 @@ type pfSignal struct {
 	target    float64
 	atr       float64
 	score     float64
+	// rankRet is the stock's return over AllocLookback candles ending on the
+	// signal day — used to order same-day candidates when AllocLookback > 0.
+	rankRet float64
 }
 
 type pfPosition struct {
@@ -172,6 +194,12 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	var maxConcurrent int
 	var totalHold int
 
+	// Opportunity-loss tracking (M10): hypothetical outcomes of signals rejected
+	// because the portfolio was full. hypoOpenUntil dedups per symbol.
+	hypoOpenUntil := map[string]time.Time{}
+	var rejCount, rejWins, rejLosses int
+	var rejSumRR float64
+
 	for _, day := range calendar {
 		dk := day.Format(dayFmt)
 
@@ -230,16 +258,32 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			}
 		}
 
-		// 3. Entries (best score first).
+		// 3. Entries (best first per allocation ranking).
 		for _, sig := range signalsByDate[dk] {
-			if len(positions) >= opts.MaxPositions {
-				break
-			}
 			if _, held := positions[sig.symbol]; held {
 				continue
 			}
+			// Opportunity-loss (M10): when the portfolio is full, this qualifying
+			// signal is rejected. Simulate its hypothetical outcome (same exit +
+			// costs) so we can compare what we skipped vs what we took. Dedup per
+			// symbol until its hypothetical trade would have closed.
+			if len(positions) >= opts.MaxPositions {
+				sd := data[sig.symbol]
+				if until, busy := hypoOpenUntil[sig.symbol]; !busy || !day.Before(until) {
+					rr, exitIdx := simulateHypo(sd, sig, opts)
+					rejCount++
+					rejSumRR += rr
+					if rr > 0 {
+						rejWins++
+					} else if rr < 0 {
+						rejLosses++
+					}
+					hypoOpenUntil[sig.symbol] = sd.candles[exitIdx].Timestamp
+				}
+				continue
+			}
 			if cash <= 0 {
-				break
+				continue
 			}
 			alloc := equity / float64(opts.MaxPositions)
 			if alloc > cash {
@@ -309,16 +353,34 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		MaxConcurrent:  maxConcurrent,
 	}
 	stats.ReturnPct = (cash - opts.StartCapital) / opts.StartCapital * 100
+	var sumPos, sumNeg, sumRR float64
 	for _, t := range trades {
+		sumRR += t.ActualRR
 		switch {
 		case t.ActualRR > 0:
 			stats.Wins++
+			sumPos += t.ActualRR
 		case t.ActualRR < 0:
 			stats.Losses++
+			sumNeg += t.ActualRR
 		}
 	}
 	if len(trades) > 0 {
 		stats.AvgHoldDays = float64(totalHold) / float64(len(trades))
+		stats.AvgRR = sumRR / float64(len(trades))
+	}
+	switch {
+	case sumNeg < 0:
+		stats.ProfitFactor = sumPos / (-sumNeg)
+	case sumPos > 0:
+		stats.ProfitFactor = math.Inf(1)
+	}
+	stats.RejectedFull = rejCount
+	if rejCount > 0 {
+		stats.RejectedAvgRR = rejSumRR / float64(rejCount)
+		if rejWins+rejLosses > 0 {
+			stats.RejectedWinRate = float64(rejWins) / float64(rejWins+rejLosses) * 100
+		}
 	}
 	return trades, stats
 }
@@ -357,21 +419,72 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 			if ts.sl <= 0 || entry <= ts.sl || (ts.target > 0 && entry >= ts.target) {
 				continue
 			}
+			// Leadership return over AllocLookback candles ending on the signal
+			// day (index i). Used only when AllocLookback > 0.
+			var rankRet float64
+			if opts.AllocLookback > 0 {
+				base := i - opts.AllocLookback
+				if base >= 0 && cc[base].Close > 0 {
+					rankRet = cc[i].Close/cc[base].Close - 1
+				}
+			}
+
 			dk := ec.Timestamp.UTC().Format(dayFmt)
 			out[dk] = append(out[dk], pfSignal{
 				entryDate: ec.Timestamp, entryIdx: i + 1, symbol: sym,
-				entry: entry, sl: ts.sl, target: ts.target, atr: ts.atr, score: ts.score,
+				entry: entry, sl: ts.sl, target: ts.target, atr: ts.atr,
+				score: ts.score, rankRet: rankRet,
 			})
 		}
 	}
 
-	// Sort each day's signals by score descending so the best fill first.
+	// Order each day's candidates so the best fill free slots first.
 	for dk := range out {
 		sigs := out[dk]
-		sort.SliceStable(sigs, func(a, b int) bool { return sigs[a].score > sigs[b].score })
+		if opts.AllocLookback > 0 {
+			// Variant D: leadership-ranked allocation, score as tiebreak.
+			sort.SliceStable(sigs, func(a, b int) bool {
+				if sigs[a].rankRet != sigs[b].rankRet {
+					return sigs[a].rankRet > sigs[b].rankRet
+				}
+				return sigs[a].score > sigs[b].score
+			})
+		} else {
+			sort.SliceStable(sigs, func(a, b int) bool { return sigs[a].score > sigs[b].score })
+		}
 		out[dk] = sigs
 	}
 	return out
+}
+
+// simulateHypo computes the hypothetical R:R of a rejected signal as if it had
+// been entered (same SL/target/exit + slippage), independent of the portfolio's
+// slot/cash state. Returns the realised R:R and the candle index of the exit.
+func simulateHypo(sd *symData, sig pfSignal, opts PortfolioOptions) (rr float64, exitIdx int) {
+	entryPrice := buyFill(sig.entry, opts.slip())
+	risk := entryPrice - sig.sl
+	rrFrom := func(trigger float64) float64 {
+		if risk <= 0 {
+			return 0
+		}
+		return (sellFill(trigger, opts.slip()) - entryPrice) / risk
+	}
+
+	// Same-day gap-down stop.
+	if sd.candles[sig.entryIdx].Low <= sig.sl {
+		return rrFrom(sig.sl), sig.entryIdx
+	}
+	pos := &pfPosition{
+		symbol: sig.symbol, entry: entryPrice, sl: sig.sl,
+		target: sig.target, entryIdx: sig.entryIdx,
+	}
+	for idx := sig.entryIdx + 1; idx < len(sd.candles); idx++ {
+		if trigger, _, exited := checkExit(pos, sd, idx, opts); exited {
+			return rrFrom(trigger), idx
+		}
+	}
+	last := len(sd.candles) - 1
+	return rrFrom(sd.candles[last].Close), last
 }
 
 // checkExit evaluates a position against the candle at idx. SL is checked first

@@ -276,7 +276,59 @@ result: the added complexity is not paying off here.
 
 ---
 
-## 9. Conclusions
+## 9. Portfolio construction: allocation, position count, opportunity loss
+
+The portfolio backtest pointed at *construction* (not signals) as the bigger
+lever. Three experiments (swing + EMA + costs, 2022–2025):
+
+### Variant D — leadership-ranked slot allocation (`--alloc-lookback N`)
+Rank same-day candidates for free slots by N-candle leadership return (score as
+tiebreak). Entries/exits unchanged — only *which* competing signals get funded.
+
+| maxpos | alloc | CAGR | Max DD | PF | Trades |
+|---|---|---|---|---|---|
+| 5 | score | 9.4% | −21.8% | 1.95 | 110 |
+| 5 | RS 100D | 9.4% | −21.5% | 1.95 | 110 |
+| 3 | score | 8.8% | −32.0% | 1.97 | 80 |
+| 3 | RS 100D | 9.9% | −31.9% | 2.07 | 79 |
+
+At 5 slots, D does **nothing** (identical 110 trades) — the constraint rarely
+forces a same-day choice, so re-ordering candidates changes nothing. At 3 slots
+(constraint binds) D **helps** (CAGR 8.8→9.9%, PF 1.97→2.07). Concept validated,
+but only where slots are genuinely scarce.
+
+### Max-positions sweep
+| maxpos | CAGR | Max DD |
+|---|---|---|
+| 3 | 8.9% | −32.0% |
+| **5** | **9.4%** | −21.8% |
+| 7 | 8.3% | −19.5% |
+| 10 | 5.4% | −14.5% |
+
+5 is the CAGR peak. Fewer = worse return *and* much deeper drawdown
+(concentration risk > selection edge); more = lower return, smaller drawdown.
+
+### M10 — opportunity-loss: does the slot limit cost anything?
+When the portfolio is full, qualifying signals are rejected. Each rejected signal
+was simulated with the same exit + costs and compared to the trades taken:
+
+| | avg R:R | win% |
+|---|---|---|
+| Accepted (taken) | **+0.50R** | 29% |
+| Rejected (full) | **−0.12R** | 33% |
+
+**Rejected signals were *worse* than accepted ones.** The slot limit isn't costing
+you — the signals skipped while full would have lost money on average (likely
+because "full" correlates with signal-rich, extended markets where marginal
+signals are low quality).
+
+**Implication: rotation (sell a holding to chase a rejected signal) would HURT —
+it swaps +0.50R for −0.12R. Rotation is a dead end; not worth building.** One cheap
+measurement killed a multi-week feature that would have reduced returns.
+
+---
+
+## 10. Conclusions (entry & exit)
 
 1. **Winner: the original swing strategy + EMA-recross exit** — frictionless
    ~14%/yr at −16% DD; **cost-adjusted ~9.4%/yr at −21% DD**, which only roughly
@@ -290,27 +342,33 @@ result: the added complexity is not paying off here.
    filter, **and the stock-RS / sector-strength entry filters (§8)** — all
    dominated or counterproductive.
 5. **Retire the overlap-blind serial backtest** — it is actively misleading.
+6. **Portfolio construction > signal tuning (§9).** `max-positions 5` is the CAGR
+   peak; RS-allocation only helps under scarce slots; and **opportunity-loss (M10)
+   shows the slot limit isn't costing anything (rejected signals −0.12R vs taken
+   +0.50R) — so rotation is a dead end.** The remaining construction lever worth
+   testing is risk-based (ATR) position sizing.
 
 ---
 
-## 10. Open questions / next steps
+## 11. Open questions / next steps
 
-- **`--max-positions` sensitivity** (3 / 5 / 8 / 10) — slots are the binding
-  constraint; the optimum is unknown.
+- **ATR / risk-based position sizing** — instead of equal 1/N slices, size each
+  trade to a fixed % risk (e.g. 1% of equity ÷ entry-to-SL distance). Most likely
+  to move *risk-adjusted* returns; next experiment to run.
+- **Turnover reduction** — costs are a persistent drag; anything that lifts profit
+  factor without adding trades is interesting.
 - **Why did 2024 lose across the board?** Exit-independent; worth a dedicated look.
-- **Beat the index at all?** Cost-adjusted swing only ties NIFTY, and the
-  RS/sector filters (§8) failed to add an edge. Open question whether any
-  refinement (lower turnover, fewer/larger positions, a different entry family)
-  yields a durable edge over buy-and-hold — or whether indexing is the rational
-  conclusion for this signal set.
+- **Beat the index at all?** Cost-adjusted swing only ties NIFTY; RS/sector (§8)
+  and rotation (§9/M10) are ruled out. Open whether ATR sizing / lower turnover
+  yields a durable edge — or whether indexing is the rational conclusion.
 
-_Done in this investigation: transaction-cost & slippage modeling
-(`--cost-pct` 0.25, `--slippage-pct` 0.20, §7); relative-strength & sector-strength
-filter evaluation (§8)._
+_Done in this investigation: transaction-cost & slippage modeling (§7);
+relative-strength & sector-strength filter evaluation (§8); portfolio
+allocation, max-positions sweep, and M10 opportunity-loss (§9)._
 
 ---
 
-## 11. Reproduce
+## 12. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -342,6 +400,15 @@ go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31
   --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
   --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
   --sector-map config/sector-map.csv --sector-rs-lookback 50 --min-sector-rs-pct 0  # sector (hurts)
+
+# §9 — portfolio construction
+#   --alloc-lookback N   rank same-day candidates by N-candle leadership return
+#   --max-positions K    concurrent-position cap (5 = CAGR peak)
+# The run also prints an "Opportunity loss" block (M10) whenever the portfolio
+# fills up: rejected-signal avg R:R vs accepted — used to rule out rotation.
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
+  --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 --alloc-lookback 100
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
