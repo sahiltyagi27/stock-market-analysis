@@ -62,6 +62,22 @@ type PortfolioOptions struct {
 	// sizing (prevents a very tight stop from over-concentrating). Default: 25.
 	MaxWeightPct float64
 
+	// RegimeMode is a market-level "should we be trading at all?" gate evaluated
+	// on RegimeBenchmark (NIFTY) each day:
+	//   ""/"off"  — always trade (default)
+	//   "price"   — only open new positions when NIFTY close > EMA(RegimeSlow)
+	//   "ema"     — only open new positions when EMA(RegimeFast) > EMA(RegimeSlow)
+	// Existing positions are always managed to their normal exit; the gate only
+	// blocks NEW entries on unhealthy-regime days.
+	RegimeMode string
+
+	// RegimeBenchmark is the index used for the regime gate (NIFTY candles).
+	RegimeBenchmark []models.Candle
+
+	// RegimeFast/RegimeSlow are the EMA periods for the gate. Default 50/200.
+	RegimeFast int
+	RegimeSlow int
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -171,6 +187,15 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	if opts.RiskPct == 0 {
 		opts.RiskPct = 1.0
 	}
+	if opts.RegimeFast <= 0 {
+		opts.RegimeFast = 50
+	}
+	if opts.RegimeSlow <= 0 {
+		opts.RegimeSlow = 200
+	}
+
+	// Precompute the market-regime gate (date → may we open new positions?).
+	regimeOn := buildRegimeGate(opts)
 
 	// Precompute per-symbol series.
 	data := make(map[string]*symData, len(candles))
@@ -281,8 +306,14 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			}
 		}
 
-		// 3. Entries (best first per allocation ranking).
+		// 3. Entries (best first per allocation ranking) — gated by market regime.
+		// regimeOn == nil means the gate is disabled (always trade). Existing
+		// positions are still managed above; only NEW entries are blocked.
+		regimeOK := regimeOn == nil || regimeOn[dk]
 		for _, sig := range signalsByDate[dk] {
+			if !regimeOK {
+				break
+			}
 			if _, held := positions[sig.symbol]; held {
 				continue
 			}
@@ -475,6 +506,39 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 		out[dk] = sigs
 	}
 	return out
+}
+
+// buildRegimeGate returns a map date→true (may open new positions) from the
+// benchmark's trend. Returns nil when the gate is disabled, so callers treat
+// nil as "always trade". Dates with insufficient EMA history default to true
+// (benefit of the doubt — don't block before the slow EMA is seeded).
+func buildRegimeGate(opts PortfolioOptions) map[string]bool {
+	if opts.RegimeMode == "" || opts.RegimeMode == "off" || len(opts.RegimeBenchmark) == 0 {
+		return nil
+	}
+	bc := opts.RegimeBenchmark
+	closes := make([]float64, len(bc))
+	for i, c := range bc {
+		closes[i] = c.Close
+	}
+	fast, _ := analysis.EMA(closes, opts.RegimeFast)
+	slow, _ := analysis.EMA(closes, opts.RegimeSlow)
+
+	on := make(map[string]bool, len(bc))
+	for i, c := range bc {
+		dk := c.Timestamp.UTC().Format(dayFmt)
+		if slow[i] <= 0 { // slow EMA not seeded yet → don't block
+			on[dk] = true
+			continue
+		}
+		switch opts.RegimeMode {
+		case "ema":
+			on[dk] = fast[i] > 0 && fast[i] > slow[i]
+		default: // "price"
+			on[dk] = closes[i] > slow[i]
+		}
+	}
+	return on
 }
 
 // positionNotional decides how much cash to deploy into a new position.
