@@ -52,6 +52,9 @@ func main() {
 	topN      := flag.Int("top", 30, "trades to print when --capital is disabled (sorted by score)")
 	outputCSV := flag.String("output", "", "write all trades to this CSV file (empty = no file)")
 	capital   := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
+	portfolio    := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
+	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
+	exitMode     := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -207,6 +210,35 @@ func main() {
 	if !to.IsZero() {
 		toLabel = to.Format("2006-01-02")
 	}
+	// ── Portfolio-aware mode ────────────────────────────────────────────────────
+	if *portfolio {
+		if *exitMode != "ema" && *exitMode != "target" {
+			log.Fatalf("--exit-mode must be ema or target, got %q", *exitMode)
+		}
+		pf := backtest.PortfolioOptions{
+			From:         from,
+			To:           to,
+			MinScore:     *minScore,
+			MaxPositions: *maxPositions,
+			StartCapital: *capital,
+			ExitMode:     *exitMode,
+			MaxHoldDays:  *maxHold,
+			EngineOpts:   opts,
+		}
+		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f",
+			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital)
+		trades, stats := backtest.RunPortfolio(ctx, candlesMap, pf)
+		printPortfolio(trades, stats, fromLabel, toLabel, *mode, *exitMode, *maxPositions)
+		if *outputCSV != "" {
+			if err := writeCSV(*outputCSV, trades); err != nil {
+				log.Printf("warn: CSV write failed: %v", err)
+			} else {
+				log.Printf("CSV written to %s (%d rows)", *outputCSV, len(trades))
+			}
+		}
+		return
+	}
+
 	log.Printf("running backtest: %s → %s | mode: %s | max-hold %dd | workers %d",
 		fromLabel, toLabel, *mode, *maxHold, *workers)
 
@@ -351,6 +383,55 @@ func printSummary(s backtest.Summary, fromLabel, toLabel string) {
 	fmt.Printf("  %s\n", sep)
 	fmt.Println()
 }
+
+func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fromLabel, toLabel, mode, exitMode string, maxPos int) {
+	sep := display.Dim.Sprint(strings.Repeat("─", 60))
+	banner := fmt.Sprintf("━━━  Portfolio Backtest  %s → %s  ━━━", fromLabel, toLabel)
+	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(banner))
+
+	fmt.Printf("  %s\n", display.Dim.Sprintf("mode: %s   exit: %s   max-positions: %d", mode, exitMode, maxPos))
+	fmt.Printf("\n  %s\n", sep)
+
+	fmt.Printf("  %s  %s\n", display.Dim.Sprint("Starting capital :"), display.Bold.Sprint(formatINR(s.StartCapital)))
+
+	capColor := display.BoldGreen.Sprint
+	if s.FinalCapital < s.StartCapital {
+		capColor = display.Red.Sprint
+	}
+	fmt.Printf("  %s  %s\n", display.Dim.Sprint("Final capital    :"), capColor(formatINR(s.FinalCapital)))
+
+	retColor := display.BoldGreen.Sprintf
+	if s.ReturnPct < 0 {
+		retColor = display.Red.Sprintf
+	}
+	years := 4.0
+	cagr := 0.0
+	if s.StartCapital > 0 && s.FinalCapital > 0 {
+		cagr = (pow(s.FinalCapital/s.StartCapital, 1.0/years) - 1) * 100
+	}
+	fmt.Printf("  %s  %s   %s\n",
+		display.Dim.Sprint("Total return     :"),
+		retColor("%+.1f%%", s.ReturnPct),
+		display.Dim.Sprintf("(~%.1f%%/yr CAGR)", cagr))
+
+	fmt.Printf("  %s  %s\n", display.Dim.Sprint("Max drawdown     :"), display.Red.Sprintf("-%.1f%%", s.MaxDrawdownPct))
+
+	wr := 0.0
+	if s.Wins+s.Losses > 0 {
+		wr = float64(s.Wins) / float64(s.Wins+s.Losses) * 100
+	}
+	fmt.Printf("  %s  %s  %s\n",
+		display.Dim.Sprint("Win rate         :"),
+		display.TotalScore(wr)+display.Dim.Sprint("%"),
+		display.Dim.Sprintf("(%d W / %d L of %d trades)", s.Wins, s.Losses, s.Trades))
+
+	fmt.Printf("  %s  %.1f %s\n", display.Dim.Sprint("Avg hold         :"), s.AvgHoldDays, display.Dim.Sprint("days"))
+	fmt.Printf("  %s  %d\n", display.Dim.Sprint("Peak concurrent  :"), s.MaxConcurrent)
+	fmt.Printf("  %s\n", sep)
+	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(banner))))
+}
+
+func pow(x, y float64) float64 { return math.Pow(x, y) }
 
 func formatPF(pf float64) string {
 	if math.IsInf(pf, 1) {

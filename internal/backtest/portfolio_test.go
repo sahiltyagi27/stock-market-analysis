@@ -1,0 +1,99 @@
+package backtest
+
+import (
+	"testing"
+	"time"
+
+	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
+)
+
+// pfTestCandle is a small helper for portfolio exit tests.
+func pfTestCandle(o, h, l, c float64) models.Candle {
+	return models.Candle{Open: o, High: h, Low: l, Close: c}
+}
+
+// buildSymData wraps candles + EMA series into a *symData for checkExit tests.
+func buildSymData(candles []models.Candle, ema7, ema21 []float64) *symData {
+	di := make(map[string]int, len(candles))
+	for i := range candles {
+		di[time.Time{}.AddDate(0, 0, i).Format(dayFmt)] = i
+	}
+	return &symData{candles: candles, ema7: ema7, ema21: ema21, dateIdx: di}
+}
+
+func TestCheckExit_StopLossFirst(t *testing.T) {
+	// Candle hits both SL and a target — SL must win (pessimistic).
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 130, 85, 100)},
+		[]float64{110}, []float64{105},
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 120, entryIdx: -1}
+	price, outcome, exited := checkExit(pos, sd, 0, PortfolioOptions{ExitMode: "target"})
+	if !exited || outcome != OutcomeLoss || price != 90 {
+		t.Fatalf("expected SL loss at 90, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}
+
+func TestCheckExit_TargetMode(t *testing.T) {
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 125, 99, 124)},
+		[]float64{110}, []float64{105},
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 120, entryIdx: -1}
+	price, outcome, exited := checkExit(pos, sd, 0, PortfolioOptions{ExitMode: "target"})
+	if !exited || outcome != OutcomeWin || price != 120 {
+		t.Fatalf("expected target win at 120, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}
+
+func TestCheckExit_EMARecross(t *testing.T) {
+	// EMA7 below EMA21 at idx 1 → exit at close. idx must be > entryIdx.
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 105, 99, 102), pfTestCandle(102, 106, 100, 101)},
+		[]float64{110, 104}, // ema7
+		[]float64{105, 106}, // ema21: at idx1, 104 < 106 → recross
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 200, entryIdx: 0}
+	price, outcome, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "ema"})
+	if !exited || outcome != OutcomeWin || price != 101 {
+		t.Fatalf("expected EMA-recross exit at close 101, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}
+
+func TestCheckExit_EMA_NoExitOnEntryDay(t *testing.T) {
+	// Even if EMA7<EMA21 on the entry candle, no exit (idx == entryIdx).
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 105, 99, 102)},
+		[]float64{104}, []float64{106},
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 200, entryIdx: 0}
+	_, _, exited := checkExit(pos, sd, 0, PortfolioOptions{ExitMode: "ema"})
+	if exited {
+		t.Fatal("must not exit on the entry day itself")
+	}
+}
+
+func TestCheckExit_MaxHoldTimeout(t *testing.T) {
+	// No SL/target/recross, but hold cap reached.
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 105, 99, 103), pfTestCandle(103, 106, 100, 104)},
+		[]float64{110, 110}, []float64{105, 105}, // ema7 stays above ema21
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 200, entryIdx: 0}
+	price, outcome, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "ema", MaxHoldDays: 1})
+	if !exited || outcome != OutcomeTimeout || price != 104 {
+		t.Fatalf("expected timeout at close 104, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}
+
+func TestCheckExit_NoExit(t *testing.T) {
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 105, 99, 103), pfTestCandle(103, 106, 100, 104)},
+		[]float64{110, 110}, []float64{105, 105},
+	)
+	pos := &pfPosition{entry: 100, sl: 90, target: 200, entryIdx: 0}
+	_, _, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "ema"})
+	if exited {
+		t.Fatal("expected no exit when SL/target/recross/timeout none triggered")
+	}
+}
