@@ -49,11 +49,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -139,6 +141,10 @@ func main() {
 	rsLookback := flag.Int("rs-lookback", 20, "relative-strength lookback vs NIFTY benchmark candles (0 = disabled)")
 	minRSPct := flag.Float64("min-rs-pct", 0, "minimum stock outperformance vs NIFTY over --rs-lookback")
 	rsSymbol := flag.String("rs-symbol", kite.Nifty50Symbol, "benchmark DB symbol for relative-strength filter")
+	sectorMapPath := flag.String("sector-map", "config/sector-map.csv", "CSV mapping stock symbols to sector index DB symbols")
+	sectorRSLookback := flag.Int("sector-rs-lookback", 20, "sector-strength lookback vs NIFTY benchmark candles (0 = disabled)")
+	minSectorRSPct := flag.Float64("min-sector-rs-pct", 0, "minimum sector index outperformance vs NIFTY over --sector-rs-lookback")
+	sectorRSStrict := flag.Bool("sector-rs-strict", false, "reject mapped stocks when sector candles are unavailable")
 	interval := flag.Duration("interval", 2*time.Minute, "scan interval (e.g. 2m, 30s)")
 	period := flag.String("period", "2y", "historical candle window for EMA/zone computation")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
@@ -217,7 +223,7 @@ func main() {
 	log.Printf("cached history for %d/%d symbols", len(historyCache), len(symbols))
 	var benchmarkHistory []models.Candle
 	benchmarkSymbol := kite.NormalizeSymbol(*rsSymbol)
-	if *rsLookback > 0 {
+	if *rsLookback > 0 || *sectorRSLookback > 0 {
 		benchmarkHistory, err = candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{From: &from})
 		if err != nil {
 			log.Printf("warn: relative-strength benchmark read failed for %s: %v", benchmarkSymbol, err)
@@ -226,6 +232,11 @@ func main() {
 		} else {
 			log.Printf("loaded %d %s benchmark candles for relative strength", len(benchmarkHistory), benchmarkSymbol)
 		}
+	}
+	sectorMap := loadOptionalSectorMap(*sectorMapPath, *sectorRSLookback)
+	sectorHistory := map[string][]models.Candle{}
+	if *sectorRSLookback > 0 && len(sectorMap) > 0 {
+		sectorHistory = loadSectorHistory(ctx, candleStore, from, sectorMap)
 	}
 
 	// ── Kite: instrument token map ────────────────────────────────────────────
@@ -239,7 +250,7 @@ func main() {
 	// tokenSymbol and tokens include the NIFTY 50 index so we can compute
 	// relative strength for each signal (IsTradable=false ticks are now stored
 	// by WSClient since ws.go no longer filters by IsTradable).
-	tokenSymbol := make(map[uint32]string, len(symbols)+1)
+	tokenSymbol := make(map[uint32]string, len(symbols)+1+len(sectorHistory))
 	symbolToken := make(map[string]uint32, len(symbols)+1)
 	tokens := []uint32{niftyToken}
 	tokenSymbol[niftyToken] = niftySymbol
@@ -255,7 +266,20 @@ func main() {
 		symbolToken[sym] = tok
 		tokens = append(tokens, tok)
 	}
-	log.Printf("mapped %d/%d symbols to instrument tokens (+ NIFTY 50 index)", len(tokens)-1, len(symbols))
+	sectorTokens := map[string]uint32{}
+	for sectorSymbol := range sectorHistory {
+		displayName := sectorIndexDisplayName(sectorSymbol)
+		inst, ok := kite.FindInstrumentByName(instruments, *exchange, displayName)
+		if !ok {
+			log.Printf("warn: no %s index instrument found for mapped sector %s", *exchange, sectorSymbol)
+			continue
+		}
+		tok := uint32(inst.InstrumentToken)
+		sectorTokens[sectorSymbol] = tok
+		tokenSymbol[tok] = sectorSymbol
+		tokens = append(tokens, tok)
+	}
+	log.Printf("mapped %d/%d symbols to instrument tokens (+ NIFTY 50 index, %d sector indices)", len(symbolToken), len(symbols), len(sectorTokens))
 	if len(tokens) <= 1 { // only Nifty token, no equities
 		log.Fatal("no equity instrument tokens resolved — check KITE_ACCESS_TOKEN and exchange")
 	}
@@ -301,6 +325,10 @@ func main() {
 		RelativeStrengthLookback: *rsLookback,
 		MinRelativeStrengthPct:   *minRSPct,
 		BenchmarkSymbol:          benchmarkSymbol,
+		SectorStrengthLookback:   *sectorRSLookback,
+		MinSectorStrengthPct:     *minSectorRSPct,
+		SectorIndexBySymbol:      sectorMap,
+		SectorStrengthStrict:     *sectorRSStrict,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},
@@ -335,7 +363,7 @@ func main() {
 	// not after waiting a full interval.
 	now := time.Now()
 	if *dev || isMarketOpen(now) {
-		runScan(ctx, now, ws, historyCache, benchmarkHistory, benchmarkSymbol, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
+		runScan(ctx, now, ws, historyCache, benchmarkHistory, benchmarkSymbol, sectorHistory, sectorTokens, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 	}
 
 	ticker := time.NewTicker(*interval)
@@ -358,7 +386,7 @@ func main() {
 				}
 				continue
 			}
-			runScan(ctx, t, ws, historyCache, benchmarkHistory, benchmarkSymbol, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
+			runScan(ctx, t, ws, historyCache, benchmarkHistory, benchmarkSymbol, sectorHistory, sectorTokens, symbolToken, scanOpts, *topN, *mode, *alertScore, state, resultStore)
 		}
 	}
 }
@@ -429,6 +457,8 @@ func runScan(
 	history map[string][]models.Candle,
 	benchmarkHistory []models.Candle,
 	benchmarkSymbol string,
+	sectorHistory map[string][]models.Candle,
+	sectorTokens map[string]uint32,
 	symbolToken map[string]uint32,
 	opts scanner.Options,
 	topN int,
@@ -457,6 +487,7 @@ func runScan(
 	var signals []scanner.StockSignal
 	var breakouts []scanner.BreakoutSignal
 	opts.BenchmarkCandles = liveBenchmarkCandles(ws, benchmarkHistory, benchmarkSymbol, volFrac)
+	opts.SectorIndexCandles = liveSectorIndexCandles(ws, sectorHistory, sectorTokens, volFrac)
 	if mode == "swing" || mode == "all" {
 		signals, _ = scanner.ScanWithErrors(inputs, opts)
 	}
@@ -562,6 +593,92 @@ func liveBenchmarkCandles(
 		return historical
 	}
 	return buildInput(symbol, historical, tick, volFrac).Candles
+}
+
+func liveSectorIndexCandles(
+	ws *kite.WSClient,
+	history map[string][]models.Candle,
+	tokens map[string]uint32,
+	volFrac float64,
+) map[string][]models.Candle {
+	if len(history) == 0 {
+		return nil
+	}
+	out := make(map[string][]models.Candle, len(history))
+	for sectorSymbol, candles := range history {
+		tok, ok := tokens[sectorSymbol]
+		if !ok {
+			out[sectorSymbol] = candles
+			continue
+		}
+		tick, ok := ws.LatestTick(tok)
+		if !ok || tick.LastPrice <= 0 {
+			out[sectorSymbol] = candles
+			continue
+		}
+		out[sectorSymbol] = buildInput(sectorSymbol, candles, tick, volFrac).Candles
+	}
+	return out
+}
+
+func loadOptionalSectorMap(path string, lookback int) map[string]string {
+	if lookback <= 0 || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	sectorMap, err := config.LoadSectorMap(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("warn: sector-strength filter disabled — sector map %s not found", path)
+			return nil
+		}
+		log.Printf("warn: sector-strength filter disabled — %v", err)
+		return nil
+	}
+	log.Printf("loaded %d sector mappings from %s", len(sectorMap), path)
+	return sectorMap
+}
+
+func loadSectorHistory(ctx context.Context, candleStore *store.CandleStore, from time.Time, sectorMap map[string]string) map[string][]models.Candle {
+	out := map[string][]models.Candle{}
+	for _, sectorSymbol := range uniqueSectorSymbols(sectorMap) {
+		candles, err := candleStore.GetCandles(ctx, sectorSymbol, store.CandleFilter{From: &from})
+		if err != nil {
+			log.Printf("warn: sector candles read failed for %s: %v", sectorSymbol, err)
+			continue
+		}
+		if len(candles) == 0 {
+			log.Printf("warn: no sector candles found for %s (run kite-sync)", sectorSymbol)
+			continue
+		}
+		out[sectorSymbol] = candles
+	}
+	log.Printf("loaded candles for %d/%d mapped sector indices", len(out), len(uniqueSectorSymbols(sectorMap)))
+	return out
+}
+
+func uniqueSectorSymbols(sectorMap map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, sectorSymbol := range sectorMap {
+		sectorSymbol = kite.NormalizeSymbol(sectorSymbol)
+		if sectorSymbol == "" || seen[sectorSymbol] {
+			continue
+		}
+		seen[sectorSymbol] = true
+		out = append(out, sectorSymbol)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sectorIndexDisplayName(dbSymbol string) string {
+	dbSymbol = kite.NormalizeSymbol(dbSymbol)
+	for _, name := range kite.SectorIndexNames {
+		if kite.IndexDBSymbol(name) == dbSymbol {
+			return name
+		}
+	}
+	return dbSymbol
 }
 
 // buildScanResultRows converts the scanner output into rows ready for DB insert.
@@ -745,6 +862,15 @@ func printScan(
 				display.Sign(rs.OutperformancePct, "%+.2f%%"),
 				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
 					sig.Symbol, rs.StockReturnPct, rs.BenchmarkSymbol, rs.BenchmarkReturnPct))
+		}
+		if sig.SectorStrength.Lookback > 0 {
+			ss := sig.SectorStrength
+			fmt.Printf("     %s %s %s  %s\n",
+				pipe,
+				display.Dim.Sprintf("Sector RS %dD:", ss.Lookback),
+				display.Sign(ss.OutperformancePct, "%+.2f%%"),
+				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
+					ss.SectorIndexSymbol, ss.SectorReturnPct, ss.BenchmarkSymbol, ss.BenchmarkReturnPct))
 		}
 
 		// Extension diagnostics — useful for spotting late entries after a rally.

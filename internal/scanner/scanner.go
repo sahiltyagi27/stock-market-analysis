@@ -117,6 +117,27 @@ type Options struct {
 	// strength filter. They should be sorted ascending by timestamp.
 	BenchmarkCandles []models.Candle
 
+	// SectorStrengthLookback requires the stock's mapped sector index to
+	// outperform BenchmarkCandles over the last N candles. Disabled when <= 0,
+	// or when no sector mapping exists for the symbol.
+	SectorStrengthLookback int
+
+	// MinSectorStrengthPct is the minimum sector-index-vs-benchmark
+	// outperformance required over SectorStrengthLookback.
+	MinSectorStrengthPct float64
+
+	// SectorIndexBySymbol maps stock symbols to compact sector index DB symbols,
+	// for example HDFCBANK -> NIFTYBANK.
+	SectorIndexBySymbol map[string]string
+
+	// SectorIndexCandles maps compact sector index DB symbols to OHLCV candles.
+	SectorIndexCandles map[string][]models.Candle
+
+	// SectorStrengthStrict rejects mapped symbols when the mapped sector candles
+	// are unavailable. When false, missing mapping/data disables the sector
+	// filter for that stock.
+	SectorStrengthStrict bool
+
 	// ZoneOpts are passed through to FindZones.
 	ZoneOpts analysis.ZoneOptions
 
@@ -355,6 +376,23 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 		)
 	}
 
+	sectorRS, hasSectorRS, err := sectorStrength(in.Symbol, in.Candles, opts)
+	if err != nil {
+		return nil, err
+	}
+	if hasSectorRS && sectorRS.OutperformancePct < opts.MinSectorStrengthPct {
+		return nil, fmt.Errorf(
+			"sector strength %.2f%% below minimum %.2f%% over %d candles (%s %.2f%% vs %s %.2f%%)",
+			sectorRS.OutperformancePct,
+			opts.MinSectorStrengthPct,
+			sectorRS.Lookback,
+			sectorRS.SectorIndexSymbol,
+			sectorRS.SectorReturnPct,
+			sectorRS.BenchmarkSymbol,
+			sectorRS.BenchmarkReturnPct,
+		)
+	}
+
 	// Bullish candle requirement: the signal candle must close at or above its
 	// open.  A bearish close means the stock is still declining into the support
 	// zone, not bouncing from it — entering into active selling pressure is a
@@ -441,6 +479,9 @@ func analyzeOne(in Input, opts Options) (*StockSignal, error) {
 	sig.Extension = ext
 	if hasRS {
 		sig.RelativeStrength = rs
+	}
+	if hasSectorRS {
+		sig.SectorStrength = sectorRS
 	}
 	sig.Breakdown = scoreBreakdown(sig, avgVol, lastVol, lastCandle.Open, lastCandle.Close)
 	sig.Score = sig.Breakdown.Total()
@@ -685,28 +726,16 @@ func relativeStrength(
 		)
 	}
 
-	stockLastIdx := len(stock) - 1
-	benchLastIdx := latestBenchmarkIdx(benchmark, stock[stockLastIdx].Timestamp)
-	if benchLastIdx < 0 {
-		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: no %s candle on/before signal date", benchmarkSymbol)
+	asOf := stock[len(stock)-1].Timestamp
+	stockRet, err := returnOverLookback(stock, lookback, asOf, "stock")
+	if err != nil {
+		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: %w", err)
 	}
-	if benchLastIdx < lookback {
-		return RelativeStrength{}, false, fmt.Errorf(
-			"relative strength unavailable: only %d %s candles through signal date, need %d",
-			benchLastIdx+1, benchmarkSymbol, lookback+1,
-		)
+	benchRet, err := returnOverLookback(benchmark, lookback, asOf, benchmarkSymbol)
+	if err != nil {
+		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: %w", err)
 	}
 
-	stockBase := stock[stockLastIdx-lookback].Close
-	stockLast := stock[stockLastIdx].Close
-	benchBase := benchmark[benchLastIdx-lookback].Close
-	benchLast := benchmark[benchLastIdx].Close
-	if stockBase <= 0 || stockLast <= 0 || benchBase <= 0 || benchLast <= 0 {
-		return RelativeStrength{}, false, fmt.Errorf("relative strength unavailable: non-positive close in stock or %s candles", benchmarkSymbol)
-	}
-
-	stockRet := pctFrom(stockLast, stockBase)
-	benchRet := pctFrom(benchLast, benchBase)
 	return RelativeStrength{
 		BenchmarkSymbol:    benchmarkSymbol,
 		Lookback:           lookback,
@@ -716,11 +745,90 @@ func relativeStrength(
 	}, true, nil
 }
 
+func sectorStrength(symbol string, stock []models.Candle, opts Options) (SectorStrength, bool, error) {
+	if opts.SectorStrengthLookback <= 0 || len(opts.SectorIndexBySymbol) == 0 {
+		return SectorStrength{}, false, nil
+	}
+	sectorSymbol, ok := opts.SectorIndexBySymbol[normalizeScannerSymbol(symbol)]
+	if !ok || sectorSymbol == "" {
+		return SectorStrength{}, false, nil
+	}
+
+	sectorCandles := opts.SectorIndexCandles[sectorSymbol]
+	if len(sectorCandles) == 0 {
+		if opts.SectorStrengthStrict {
+			return SectorStrength{}, false, fmt.Errorf("sector strength unavailable: no candles for mapped sector index %s", sectorSymbol)
+		}
+		return SectorStrength{}, false, nil
+	}
+	if len(opts.BenchmarkCandles) == 0 {
+		if opts.SectorStrengthStrict {
+			return SectorStrength{}, false, fmt.Errorf("sector strength unavailable: no %s benchmark candles", opts.BenchmarkSymbol)
+		}
+		return SectorStrength{}, false, nil
+	}
+	if len(stock) == 0 {
+		return SectorStrength{}, false, nil
+	}
+
+	asOf := stock[len(stock)-1].Timestamp
+	sectorRet, err := returnOverLookback(sectorCandles, opts.SectorStrengthLookback, asOf, sectorSymbol)
+	if err != nil {
+		if opts.SectorStrengthStrict {
+			return SectorStrength{}, false, fmt.Errorf("sector strength unavailable: %w", err)
+		}
+		return SectorStrength{}, false, nil
+	}
+	benchmarkRet, err := returnOverLookback(opts.BenchmarkCandles, opts.SectorStrengthLookback, asOf, opts.BenchmarkSymbol)
+	if err != nil {
+		if opts.SectorStrengthStrict {
+			return SectorStrength{}, false, fmt.Errorf("sector strength unavailable: %w", err)
+		}
+		return SectorStrength{}, false, nil
+	}
+
+	return SectorStrength{
+		SectorIndexSymbol:  sectorSymbol,
+		BenchmarkSymbol:    opts.BenchmarkSymbol,
+		Lookback:           opts.SectorStrengthLookback,
+		SectorReturnPct:    sectorRet,
+		BenchmarkReturnPct: benchmarkRet,
+		OutperformancePct:  sectorRet - benchmarkRet,
+	}, true, nil
+}
+
+func returnOverLookback(candles []models.Candle, lookback int, asOf time.Time, label string) (float64, error) {
+	idx := latestBenchmarkIdx(candles, asOf)
+	if idx < 0 {
+		return 0, fmt.Errorf("no %s candle on/before signal date", label)
+	}
+	if idx < lookback {
+		return 0, fmt.Errorf("only %d %s candles through signal date, need %d", idx+1, label, lookback+1)
+	}
+	base := candles[idx-lookback].Close
+	last := candles[idx].Close
+	if base <= 0 || last <= 0 {
+		return 0, fmt.Errorf("non-positive close in %s candles", label)
+	}
+	return pctFrom(last, base), nil
+}
+
 func latestBenchmarkIdx(benchmark []models.Candle, signalTime time.Time) int {
 	idx := sort.Search(len(benchmark), func(i int) bool {
 		return benchmark[i].Timestamp.After(signalTime)
 	})
 	return idx - 1
+}
+
+func normalizeScannerSymbol(symbol string) string {
+	symbol = strings.TrimSpace(symbol)
+	if _, after, ok := strings.Cut(symbol, ":"); ok {
+		symbol = after
+	}
+	if before, _, ok := strings.Cut(symbol, "."); ok {
+		symbol = before
+	}
+	return strings.ToUpper(strings.TrimSpace(symbol))
 }
 
 func deriveTrend(price float64, emas analysis.EMAResult) Trend {

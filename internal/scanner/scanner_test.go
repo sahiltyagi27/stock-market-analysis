@@ -231,6 +231,69 @@ func TestScan_RelativeStrengthRejectsUnderperformer(t *testing.T) {
 	}
 }
 
+func TestScan_SectorStrengthPassesWhenSectorOutperformsBenchmark(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := defaultOpts
+	opts.SectorStrengthLookback = 20
+	opts.MinSectorStrengthPct = 0
+	opts.BenchmarkSymbol = "NIFTY50"
+	opts.BenchmarkCandles = makeBenchmarkCandlesLike(candles, 100, 101)
+	opts.SectorIndexBySymbol = map[string]string{"AAPL": "NIFTYIT"}
+	opts.SectorIndexCandles = map[string][]models.Candle{
+		"NIFTYIT": makeBenchmarkCandlesLike(candles, 100, 120),
+	}
+
+	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) == 0 {
+		t.Fatal("expected stock in strong sector to pass")
+	}
+	if signals[0].SectorStrength.SectorIndexSymbol != "NIFTYIT" {
+		t.Fatalf("sector index = %q, want NIFTYIT", signals[0].SectorStrength.SectorIndexSymbol)
+	}
+	if signals[0].SectorStrength.OutperformancePct < 0 {
+		t.Fatalf("sector outperformance = %.2f, want >= 0", signals[0].SectorStrength.OutperformancePct)
+	}
+}
+
+func TestScan_SectorStrengthRejectsWeakSector(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := defaultOpts
+	opts.SectorStrengthLookback = 20
+	opts.MinSectorStrengthPct = 0
+	opts.BenchmarkSymbol = "NIFTY50"
+	opts.BenchmarkCandles = makeBenchmarkCandlesLike(candles, 100, 150)
+	opts.SectorIndexBySymbol = map[string]string{"AAPL": "NIFTYIT"}
+	opts.SectorIndexCandles = map[string][]models.Candle{
+		"NIFTYIT": makeBenchmarkCandlesLike(candles, 100, 101),
+	}
+
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatal("expected weak sector to be filtered")
+	}
+	if errs["AAPL"] == nil || !strings.Contains(errs["AAPL"].Error(), "sector strength") {
+		t.Fatalf("expected sector strength rejection, got %v", errs["AAPL"])
+	}
+}
+
+func TestScan_SectorStrengthStrictRejectsMissingSectorCandles(t *testing.T) {
+	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
+	opts := defaultOpts
+	opts.SectorStrengthLookback = 20
+	opts.SectorStrengthStrict = true
+	opts.BenchmarkSymbol = "NIFTY50"
+	opts.BenchmarkCandles = makeBenchmarkCandlesLike(candles, 100, 101)
+	opts.SectorIndexBySymbol = map[string]string{"AAPL": "NIFTYIT"}
+
+	signals, errs := scanner.ScanWithErrors([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, opts)
+	if len(signals) != 0 {
+		t.Fatal("expected strict missing sector data to be filtered")
+	}
+	if errs["AAPL"] == nil || !strings.Contains(errs["AAPL"].Error(), "no candles for mapped sector index") {
+		t.Fatalf("expected strict missing sector data rejection, got %v", errs["AAPL"])
+	}
+}
+
 func TestScan_TrendIsBullish(t *testing.T) {
 	candles := makeTrendingCandles("AAPL", 100, 1_000_000)
 	signals := scanner.Scan([]scanner.Input{{Symbol: "AAPL", Candles: candles}}, defaultOpts)
