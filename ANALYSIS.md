@@ -395,9 +395,44 @@ picked fell. Same lesson as the breadth (§5) and RS (§8) filters:
 **market-direction is not the strategy's actual risk.** Kept as a default-off
 diagnostic (`--regime`), not promoted.
 
-The losing years remain an **open problem** — but the answer is evidently not a
-market-direction gate. A volatility-based or stock-level risk measure may fare
-better; market trend does not.
+### Strategy-health gate (equity-curve filter) — THE WIN (`--health-window`)
+Instead of asking "is the *market* healthy?", ask "is the *strategy* working?"
+Only open new positions when the last N closed trades show positive expectancy
+(`avgr`: mean R ≥ 0, or `pf`: profit factor ≥ threshold). Purely causal — uses
+only realised, closed-trade R up to the decision day.
+
+| Config | CAGR | Max DD | PF |
+|---|---|---|---|
+| no gate | 12.0% | −17.9% | 1.95 |
+| **health avgR>0, W20** | **14.7%** | **−12.5%** | **2.58** |
+| health PF>1.2, W30 | 13.9% | −15.0% | 2.26 |
+
+**Higher return, lower drawdown, higher profit factor — all at once.** Per-year,
+it leaves the good years untouched and roughly halves the losing ones:
+
+| Year | no gate | health-W20 |
+|---|---|---|
+| 2022 | +11.1% | +10.4% |
+| 2023 | +72.9% | +72.9% (identical) |
+| 2024 | −14.0% (DD −16%) | **−8.5% (DD −10.5%)** |
+| 2025 | −6.0% (DD −7.3%) | **−3.2% (DD −4.9%)** |
+
+When the strategy is working the gate stays open (2023 literally unchanged); when
+the *selected stocks* start bleeding (negative recent expectancy) it pauses —
+**regardless of what NIFTY is doing.** This is why it succeeds where the market
+gates (§5/§8/§9-regime) failed: it measures the strategy's *own* risk, not the
+market's. Robust across a broad window plateau (W15–W40 all beat baseline; W20
+peak). Short windows (≤12) whipsaw — too few trades, reacts to noise.
+
+**Caveat (live use):** the gate reopens when in-flight positions close as winners.
+A prolonged downturn that closes every open position as a loss could, in theory,
+lock it shut (no new trades → no new closed R → stuck). Didn't occur in 2022–25
+(recoveries kept the pipeline updating), but a live deployment should add a
+time-based reopen or a small always-on probe. Default `--health-window 0` (off);
+`20` recommended.
+
+The losing-years problem is finally addressed — not by a market gate, but by the
+strategy watching its own equity curve.
 
 ---
 
@@ -425,11 +460,15 @@ better; market trend does not.
 7. **The headline return is regime-dependent.** Per-year (§9), 2022 (+10%) and
    2023 (+73%) were positive; 2024 (−14%) and 2025 (−6%) lost. Risk-sizing makes
    the losing years less bad but can't manufacture an edge.
-8. **A NIFTY-trend regime gate does NOT fix the losing years (§9).** It cuts
-   return more than it saves — the index stayed healthy while the strategy's
-   stocks fell in 2024. Market-direction is not the strategy's risk; that idea is
-   now exhausted (breadth §5, RS §8, regime gate §9 all failed). Any future edge
-   on the down years must come from volatility or stock-level risk, not market trend.
+8. **Market-direction gates all fail (breadth §5, RS §8, NIFTY-trend §9).** The
+   index stayed healthy while the strategy's stocks fell in 2024 — market
+   direction is not the strategy's risk. That whole idea is exhausted.
+9. **The strategy-health gate (equity-curve filter) is the answer (§9).**
+   `--health-window 20` (only trade when the last 20 closed trades have avg R ≥ 0)
+   lifts CAGR 12.0→14.7%, cuts drawdown 17.9→12.5%, raises PF 1.95→2.58, and
+   roughly halves the losing years while leaving the good ones untouched. The
+   strategy reading its *own* expectancy beats any market proxy. Robust across
+   W15–W40. **Recommended addition to the default config.**
 
 ---
 
