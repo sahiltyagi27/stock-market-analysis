@@ -68,6 +68,7 @@ func lenientOpts() Options {
 		MinCandles:      30,
 		VolumeWindow:    10,
 		MinTargetPct:    -1, // disabled; dedicated tests verify it separately
+		MinRiskPct:      -1, // disabled; dedicated tests verify it separately
 		ZoneOpts:        analysis.ZoneOptions{MinResistanceTouches: 1},
 	}
 }
@@ -345,6 +346,69 @@ func TestScan_InsufficientCandlesRejected(t *testing.T) {
 	_, errs := Scan([]Input{{Symbol: "SHORT", Candles: cc}}, opts)
 	if _, rejected := errs["SHORT"]; !rejected {
 		t.Fatal("expected insufficient candles to be rejected")
+	}
+}
+
+// ── MinRiskPct floor ──────────────────────────────────────────────────────────
+
+// TestScan_MinRiskPct_WidensTightStop verifies that when the previous-candle
+// Low is within MinRiskPct of price, the stop is widened to the floor.
+func TestScan_MinRiskPct_WidensTightStop(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+
+	// First get the natural (un-floored) SL.
+	natural, _ := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if len(natural) == 0 {
+		t.Skip("no signal — cannot test floor")
+	}
+	naturalSL := natural[0].SL
+	price := natural[0].Price
+
+	// Now demand a 10% minimum risk — far wider than the fixture's tight stop,
+	// so the floor must kick in and lower the SL.
+	opts.MinRiskPct = 10.0
+	floored, _ := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if len(floored) == 0 {
+		t.Skip("no signal with floor applied")
+	}
+	flooredSL := floored[0].SL
+	wantFloor := price * (1 - 0.10)
+
+	if flooredSL >= naturalSL {
+		t.Fatalf("floor should widen the stop: floored SL %.2f should be < natural SL %.2f",
+			flooredSL, naturalSL)
+	}
+	if floored[0].SL > wantFloor+0.01 || floored[0].SL < wantFloor-0.01 {
+		t.Fatalf("floored SL = %.2f, want ≈ %.2f (price %.2f × 0.90)",
+			flooredSL, wantFloor, price)
+	}
+}
+
+// TestScan_MinRiskPct_KeepsWideStop verifies that a previous-candle Low that is
+// already wider than MinRiskPct is left untouched (whichever is lower wins).
+func TestScan_MinRiskPct_KeepsWideStop(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+
+	natural, _ := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if len(natural) == 0 {
+		t.Skip("no signal")
+	}
+	naturalSL := natural[0].SL
+
+	// A tiny 0.1% floor is far tighter than the natural stop, so the natural
+	// (lower) stop must be kept unchanged.
+	opts.MinRiskPct = 0.1
+	floored, _ := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if len(floored) == 0 {
+		t.Skip("no signal")
+	}
+	if floored[0].SL != naturalSL {
+		t.Fatalf("wide natural stop should be kept: got %.2f, want %.2f",
+			floored[0].SL, naturalSL)
 	}
 }
 

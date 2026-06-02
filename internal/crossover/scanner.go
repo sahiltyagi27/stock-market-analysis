@@ -55,6 +55,17 @@ type Options struct {
 	// Default: 4.0.  Set to < 0 to disable.
 	MinTargetPct float64
 
+	// MinRiskPct is the minimum stop-loss distance as a percentage of price.
+	// The base stop is the Low of the candle before the crossover, but when that
+	// sits within MinRiskPct of price the stop is widened to the floor so it is
+	// not triggered by routine intraday noise. The stop used is whichever is
+	// LOWER (further from price) of:
+	//
+	//	previous-candle Low   and   price × (1 − MinRiskPct/100)
+	//
+	// Default: 3.0.  Set to < 0 to disable (always use previous-candle Low).
+	MinRiskPct float64
+
 	// ZoneOpts are forwarded to analysis.FindZones for resistance detection.
 	// MinResistanceTouches defaults to 1 (any single-touch zone qualifies as
 	// a candidate target — crossover plays are momentum-driven, not zone-driven).
@@ -97,6 +108,10 @@ func (o Options) withDefaults() Options {
 	// MinTargetPct: 0 triggers the default of 4%; negative disables the filter.
 	if out.MinTargetPct == 0 {
 		out.MinTargetPct = 4.0
+	}
+	// MinRiskPct: 0 triggers the default of 3%; negative disables the floor.
+	if out.MinRiskPct == 0 {
+		out.MinRiskPct = 3.0
 	}
 	return out
 }
@@ -178,6 +193,17 @@ func analyzeOne(in Input, opts Options) (*Signal, error) {
 		return nil, errors.New("crossover on first candle — no prior candle for SL")
 	}
 	sl := in.Candles[xIdx-1].Low
+
+	// Minimum-risk floor: a previous-candle Low sitting within MinRiskPct of
+	// price gives a noise-level stop that is triggered by routine intraday
+	// movement. Use whichever stop is LOWER (further from price) — the
+	// previous-candle Low when it is already wide enough, otherwise the floor.
+	if opts.MinRiskPct > 0 {
+		floor := price * (1 - opts.MinRiskPct/100)
+		if floor < sl {
+			sl = floor
+		}
+	}
 
 	if price <= sl {
 		return nil, fmt.Errorf(

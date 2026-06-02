@@ -80,6 +80,7 @@ func main() {
 	coMinVolMult    := flag.Float64("co-min-vol-mult", 0, "[crossover] require today's volume ≥ this × the prev N-day avg (0 = disabled)")
 	coVolMultWindow := flag.Int("co-vol-mult-window", 10, "[crossover] candles for the today's-volume average check")
 	coMinTargetPct  := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
+	coMinRiskPct    := flag.Float64("co-min-risk-pct", 3.0, "[crossover] min SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
 
 	flag.Parse()
 
@@ -177,6 +178,7 @@ func main() {
 		MinCurrentVolMultiple: *coMinVolMult,
 		CurrentVolWindow:      *coVolMultWindow,
 		MinTargetPct:          *coMinTargetPct,
+		MinRiskPct:            *coMinRiskPct,
 		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
 	}
 

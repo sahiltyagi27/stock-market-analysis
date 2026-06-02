@@ -48,6 +48,7 @@ func main() {
 	minVolMult    := flag.Float64("min-vol-mult", 0, "require today's volume ≥ this × the rolling avg of the previous --vol-mult-window candles (0 = disabled)")
 	volMultWindow := flag.Int("vol-mult-window", 10, "candles used for the today's-volume average check")
 	minTargetPct  := flag.Float64("min-target-pct", 4.0, "minimum %% distance the resistance target must sit above entry (<0 disables)")
+	minRiskPct    := flag.Float64("min-risk-pct", 3.0, "minimum SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
 	showFiltered  := flag.Bool("show-filtered", false, "print rejection reasons for every filtered symbol")
 	flag.Parse()
 
@@ -105,6 +106,7 @@ func main() {
 		MinCurrentVolMultiple: *minVolMult,
 		CurrentVolWindow:      *volMultWindow,
 		MinTargetPct:          *minTargetPct,
+		MinRiskPct:            *minRiskPct,
 		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *minResTouches},
 	}
 
