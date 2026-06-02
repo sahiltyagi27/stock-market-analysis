@@ -8,35 +8,87 @@ trading strategies in this repo. Read top-to-bottom it tells the story; the
 
 ---
 
-## ⭐ Major finding — the Strategy-Health regime filter
+## Strategy-Health Regime Filter (Major Finding)
 
-The single strongest result in the project. After every *market*-based regime
-filter failed, the breakthrough was to gate on the **strategy's own equity
-curve**, not the market's.
+The single strongest result in the project, and the one to read first.
 
-- **Why market gates failed.** Breadth (§5), relative-strength (§8), and a
-  NIFTY-trend gate (§9) all reduced returns or missed the losing years. The
-  index can look healthy (2024 was broadly fine) while the strategy's *selected
-  stocks* bleed. **Market direction is not the strategy's risk.**
-- **Why strategy-health succeeds.** Gate new entries on recent realised
-  expectancy: only trade when the last **20 closed trades** have mean R ≥ 0
-  (`--health-window 20`). When the picked stocks start losing, it pauses —
-  regardless of NIFTY.
-- **Result (full stack, 2022–25):** CAGR **12.0 → 14.7%**, max DD **17.9 → 12.5%**,
-  profit factor **1.95 → 2.58**. Good years untouched (2023 identical), losing
-  years roughly halved (2024 −14→−8.5, 2025 −6→−3.2).
-- **Robustness:** broad parameter plateau (W15–W40 all beat baseline; ≤12
-  whipsaws). **Out-of-sample (frozen params):** harmless on the good half
-  (2022–23: +17.7 vs +17.5), protective on the bad half (2024–25: −4.9→−2.2%/yr,
-  DD −20.2→−10.5%).
-- **Cold-start (live) — fixed.** A fresh deployment has no trade history, so the
-  gate would start blind. Solved by **seeding** the window with the last N
-  completed trades (`--health-warmup-from` in backtest; load from DB live). Demo:
-  deploying mid-2024 after a weak H1, seeding turned −7.1% (DD −11.5%) into −1.1%
-  (DD −5.8%). Harmless when prior history is good; protective when it is bad.
+### Motivation
+Traditional market-regime filters failed. Tests using `NIFTY close > EMA200` and
+`NIFTY EMA50 > EMA200` (and a breadth variant, §5) reduced returns while
+providing little drawdown protection. The strategy's performance was **not**
+primarily driven by index direction — the index can look healthy (2024 was
+broadly fine) while the strategy's *selected stocks* bleed.
 
-Detail in §9. **The default engine config is now:** swing + EMA-recross exit +
-risk-1% sizing + max-weight 25% + health-window 20, costs on.
+### Hypothesis
+The strategy itself may be a better regime indicator than the market. Instead of
+asking *"Is the market healthy?"*, ask *"Is the strategy currently working?"*
+
+### Implementation
+A strategy-health gate monitors the rolling average realised **R of recently
+closed trades** and pauses new entries when recent expectancy turns negative.
+Open positions are unaffected. Default configuration:
+
+- Window: **20 trades**
+- Condition: **average R > 0**
+
+### Results (full stack, 2022–2025)
+| | CAGR | Max DD | Profit factor |
+|---|---|---|---|
+| Baseline (no gate) | 12.0% | −17.9% | 1.95 |
+| **Health gate (W20)** | **14.7%** | **−12.5%** | **2.58** |
+
+Per-year, it leaves good years untouched (2023 identical) and roughly halves the
+losing ones (2024 −14→−8.5, 2025 −6→−3.2).
+
+### Robustness
+Window sweep — the improvement is not isolated to a single parameter:
+
+| Window | Result |
+|---|---|
+| W12 | whipsaws (too few trades) |
+| W15 | works |
+| **W20** | **best** |
+| W25 | works |
+| W30 | works |
+| W40 | works |
+
+### Out-of-sample validation
+Parameters frozen (W20, avgR > 0, risk 1%, max-weight 25%), each half held out:
+
+| Period | No gate | Health gate |
+|---|---|---|
+| 2022–2023 (good) | +17.7% | +17.5% |
+| 2024–2025 (weak) | −4.9% | −2.2% |
+
+The gate stays inactive in favorable conditions and reduces losses in
+unfavorable ones — it generalises in both directions.
+
+### Cold-start deployment
+A live problem: a fresh instance has no trade history and cannot evaluate health,
+so it would start blind. **Solution: seed the gate with historical closed trades**
+(`HealthSeed` / `--health-warmup-from`; live, load the last N from the DB).
+
+Mid-2024 deployment test (after a weak H1):
+
+| | Return | Max DD |
+|---|---|---|
+| Cold start | −7.1% | −11.5% |
+| **Seeded** | **−1.1%** | **−5.8%** |
+
+The seed sharply reduces early-regime losses, and is neutral when prior history
+is favorable (seed = cold start).
+
+### Conclusion
+The strategy-health gate is the most robust risk-control mechanism discovered in
+the project. Unlike market-direction filters, it adapts directly to the
+strategy's *realised* performance. Current default configuration:
+
+- Risk per trade: **1%**
+- Max position weight: **25%**
+- Health window: **20 trades**, average R > 0
+- Seeded historical expectancy (no cold-start blindness)
+
+_Full chronological detail in §9._
 
 ---
 
