@@ -78,6 +78,20 @@ type PortfolioOptions struct {
 	RegimeFast int
 	RegimeSlow int
 
+	// StrategyHealthWindow enables an equity-curve ("strategy health") gate: only
+	// open new positions when the last N closed trades show positive expectancy.
+	// The premise: the strategy's own recent results signal when it's working
+	// better than any market proxy. 0 = disabled. Typical: 20–30.
+	StrategyHealthWindow int
+
+	// StrategyHealthMode: "avgr" (mean realised R ≥ StrategyHealthMin) or
+	// "pf" (profit factor ≥ StrategyHealthMin) over the window. Default "avgr".
+	StrategyHealthMode string
+
+	// StrategyHealthMin is the threshold (e.g. 0 for avgr, 1.2 for pf). Until the
+	// window has N closed trades, trading is allowed (warmup).
+	StrategyHealthMin float64
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -248,6 +262,10 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	var rejCount, rejWins, rejLosses int
 	var rejSumRR float64
 
+	// Strategy-health gate: rolling list of realised R for closed trades, in
+	// close order. Used to pause new entries during the strategy's bad patches.
+	var healthR []float64
+
 	for _, day := range calendar {
 		dk := day.Format(dayFmt)
 
@@ -284,6 +302,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 				ActualRR:   rr,
 				HoldDays:   hold,
 			})
+			healthR = append(healthR, rr)
 			delete(positions, sym)
 		}
 
@@ -306,12 +325,13 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			}
 		}
 
-		// 3. Entries (best first per allocation ranking) — gated by market regime.
-		// regimeOn == nil means the gate is disabled (always trade). Existing
-		// positions are still managed above; only NEW entries are blocked.
+		// 3. Entries (best first per allocation ranking) — gated by market regime
+		// AND strategy health. Existing positions are still managed above; only
+		// NEW entries are blocked when a gate is closed.
 		regimeOK := regimeOn == nil || regimeOn[dk]
+		healthOK := strategyHealthy(healthR, opts)
 		for _, sig := range signalsByDate[dk] {
-			if !regimeOK {
+			if !regimeOK || !healthOK {
 				break
 			}
 			if _, held := positions[sig.symbol]; held {
@@ -363,6 +383,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 					ExitDate: day, Entry: entryPrice, SL: sig.sl, Target: sig.target,
 					ExitPrice: exitPrice, Outcome: OutcomeLoss, ActualRR: rr, HoldDays: 0,
 				})
+				healthR = append(healthR, rr)
 				continue
 			}
 			positions[sig.symbol] = &pfPosition{
@@ -506,6 +527,37 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 		out[dk] = sigs
 	}
 	return out
+}
+
+// strategyHealthy reports whether new entries are allowed given the strategy's
+// own recent realised results. Disabled (always true) when the window is 0 or
+// not yet filled (warmup). With "pf" it requires profit factor ≥ min over the
+// last window trades; otherwise mean R ≥ min.
+func strategyHealthy(closedR []float64, opts PortfolioOptions) bool {
+	n := opts.StrategyHealthWindow
+	if n <= 0 || len(closedR) < n {
+		return true
+	}
+	w := closedR[len(closedR)-n:]
+	if opts.StrategyHealthMode == "pf" {
+		var pos, neg float64
+		for _, r := range w {
+			if r > 0 {
+				pos += r
+			} else {
+				neg += r
+			}
+		}
+		if neg < 0 {
+			return pos/(-neg) >= opts.StrategyHealthMin
+		}
+		return pos > 0 // no losers in window → healthy
+	}
+	var sum float64
+	for _, r := range w {
+		sum += r
+	}
+	return sum/float64(n) >= opts.StrategyHealthMin
 }
 
 // buildRegimeGate returns a map date→true (may open new positions) from the

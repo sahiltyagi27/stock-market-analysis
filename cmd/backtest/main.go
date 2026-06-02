@@ -66,6 +66,9 @@ func main() {
 	regimeSymbol := flag.String("regime-symbol", kite.Nifty50Symbol, "[portfolio] benchmark DB symbol for the regime gate")
 	regimeFast := flag.Int("regime-fast", 50, "[portfolio] fast EMA period for --regime ema")
 	regimeSlow := flag.Int("regime-slow", 200, "[portfolio] slow EMA period for the regime gate")
+	healthWindow := flag.Int("health-window", 0, "[portfolio] strategy-health gate: only enter when the last N closed trades are healthy (0 = off)")
+	healthMode := flag.String("health-mode", "avgr", "[portfolio] health metric: avgr (mean R) or pf (profit factor)")
+	healthMin := flag.Float64("health-min", 0, "[portfolio] health threshold over the window (e.g. 0 for avgr, 1.2 for pf)")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -289,6 +292,9 @@ func main() {
 			RegimeBenchmark: regimeCandles,
 			RegimeFast:      *regimeFast,
 			RegimeSlow:      *regimeSlow,
+			StrategyHealthWindow: *healthWindow,
+			StrategyHealthMode:   *healthMode,
+			StrategyHealthMin:    *healthMin,
 			EngineOpts:      opts,
 		}
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",

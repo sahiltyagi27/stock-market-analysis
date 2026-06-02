@@ -159,6 +159,32 @@ func TestPositionNotional_RiskBased(t *testing.T) {
 	}
 }
 
+func TestStrategyHealthy(t *testing.T) {
+	// Disabled / warmup → always healthy.
+	if !strategyHealthy([]float64{-1, -1}, PortfolioOptions{StrategyHealthWindow: 0}) {
+		t.Fatal("window 0 must be always healthy")
+	}
+	if !strategyHealthy([]float64{-1, -1}, PortfolioOptions{StrategyHealthWindow: 3}) {
+		t.Fatal("warmup (fewer than window) must be healthy")
+	}
+	// avgr: last 3 = [-1,-1,+1] → mean -0.33 < 0 → unhealthy.
+	if strategyHealthy([]float64{2, 2, -1, -1, 1}, PortfolioOptions{StrategyHealthWindow: 3, StrategyHealthMode: "avgr", StrategyHealthMin: 0}) {
+		t.Fatal("negative mean R over window must be unhealthy")
+	}
+	// avgr: last 3 = [+3,-1,+1] → mean +1 ≥ 0 → healthy.
+	if !strategyHealthy([]float64{-5, 3, -1, 1}, PortfolioOptions{StrategyHealthWindow: 3, StrategyHealthMode: "avgr", StrategyHealthMin: 0}) {
+		t.Fatal("positive mean R over window must be healthy")
+	}
+	// pf: last 4 = [+3,+1,-1,-1] → PF = 4/2 = 2.0 ≥ 1.2 → healthy.
+	if !strategyHealthy([]float64{3, 1, -1, -1}, PortfolioOptions{StrategyHealthWindow: 4, StrategyHealthMode: "pf", StrategyHealthMin: 1.2}) {
+		t.Fatal("PF 2.0 must clear min 1.2")
+	}
+	// pf: [+1,-1,-1,-1] → PF = 1/3 ≈ 0.33 < 1.2 → unhealthy.
+	if strategyHealthy([]float64{1, -1, -1, -1}, PortfolioOptions{StrategyHealthWindow: 4, StrategyHealthMode: "pf", StrategyHealthMin: 1.2}) {
+		t.Fatal("PF 0.33 must fail min 1.2")
+	}
+}
+
 func TestCheckExit_NoExit(t *testing.T) {
 	sd := buildSymData(
 		[]models.Candle{pfTestCandle(100, 105, 99, 103), pfTestCandle(103, 106, 100, 104)},
