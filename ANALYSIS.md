@@ -8,6 +8,38 @@ trading strategies in this repo. Read top-to-bottom it tells the story; the
 
 ---
 
+## ⭐ Major finding — the Strategy-Health regime filter
+
+The single strongest result in the project. After every *market*-based regime
+filter failed, the breakthrough was to gate on the **strategy's own equity
+curve**, not the market's.
+
+- **Why market gates failed.** Breadth (§5), relative-strength (§8), and a
+  NIFTY-trend gate (§9) all reduced returns or missed the losing years. The
+  index can look healthy (2024 was broadly fine) while the strategy's *selected
+  stocks* bleed. **Market direction is not the strategy's risk.**
+- **Why strategy-health succeeds.** Gate new entries on recent realised
+  expectancy: only trade when the last **20 closed trades** have mean R ≥ 0
+  (`--health-window 20`). When the picked stocks start losing, it pauses —
+  regardless of NIFTY.
+- **Result (full stack, 2022–25):** CAGR **12.0 → 14.7%**, max DD **17.9 → 12.5%**,
+  profit factor **1.95 → 2.58**. Good years untouched (2023 identical), losing
+  years roughly halved (2024 −14→−8.5, 2025 −6→−3.2).
+- **Robustness:** broad parameter plateau (W15–W40 all beat baseline; ≤12
+  whipsaws). **Out-of-sample (frozen params):** harmless on the good half
+  (2022–23: +17.7 vs +17.5), protective on the bad half (2024–25: −4.9→−2.2%/yr,
+  DD −20.2→−10.5%).
+- **Cold-start (live) — fixed.** A fresh deployment has no trade history, so the
+  gate would start blind. Solved by **seeding** the window with the last N
+  completed trades (`--health-warmup-from` in backtest; load from DB live). Demo:
+  deploying mid-2024 after a weak H1, seeding turned −7.1% (DD −11.5%) into −1.1%
+  (DD −5.8%). Harmless when prior history is good; protective when it is bad.
+
+Detail in §9. **The default engine config is now:** swing + EMA-recross exit +
+risk-1% sizing + max-weight 25% + health-window 20, costs on.
+
+---
+
 ## 1. The two strategies
 
 ### Swing (the original, support-zone strategy)
@@ -424,12 +456,24 @@ gates (§5/§8/§9-regime) failed: it measures the strategy's *own* risk, not th
 market's. Robust across a broad window plateau (W15–W40 all beat baseline; W20
 peak). Short windows (≤12) whipsaw — too few trades, reacts to noise.
 
-**Caveat (live use):** the gate reopens when in-flight positions close as winners.
-A prolonged downturn that closes every open position as a loss could, in theory,
-lock it shut (no new trades → no new closed R → stuck). Didn't occur in 2022–25
-(recoveries kept the pipeline updating), but a live deployment should add a
-time-based reopen or a small always-on probe. Default `--health-window 0` (off);
-`20` recommended.
+**Out-of-sample (frozen params, split-half):** harmless on the good half
+(2022–23: +17.7% no-gate vs +17.5% gated) and protective on the bad half
+(2024–25: −4.9→−2.2%/yr, DD −20.2→−10.5%). It generalises in both directions.
+
+**Cold-start — FIXED.** A fresh deployment has no trade history, so the gate would
+start blind and take early losses. Fixed by **seeding** the window with prior
+closed-trade R (`HealthSeed`; CLI `--health-warmup-from` runs a warmup pass;
+live, load the last N trades from the DB). Demonstration — deploying 2024-07
+after a weak H1: cold start −7.1% (DD −11.5%, 17 blind trades) vs seeded −1.1%
+(DD −5.8%, 6 trades). When prior history is good the seed equals cold start
+(harmless); when bad it starts the gate closed (protective).
+
+**Default:** `--health-window 20` (avgR ≥ 0) is now on by default; `0` disables.
+
+**Residual caveat:** the gate still relies on in-flight positions closing to
+update the window; a prolonged flush that closes everything as losses could keep
+it shut until the next signal it lets through. A live system may add a time-based
+reopen or a tiny always-on probe. Not observed in 2022–25.
 
 The losing-years problem is finally addressed — not by a market gate, but by the
 strategy watching its own equity curve.
