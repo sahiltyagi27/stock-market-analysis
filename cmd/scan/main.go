@@ -37,6 +37,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -84,6 +85,10 @@ func main() {
 	rsLookback := flag.Int("rs-lookback", 20, "relative-strength lookback vs benchmark candles (0 = disabled)")
 	minRSPct := flag.Float64("min-rs-pct", 0, "minimum stock outperformance vs benchmark over --rs-lookback")
 	rsSymbol := flag.String("rs-symbol", "NIFTY50", "benchmark symbol for relative-strength filter")
+	sectorMapPath := flag.String("sector-map", "config/sector-map.csv", "CSV mapping stock symbols to sector index DB symbols")
+	sectorRSLookback := flag.Int("sector-rs-lookback", 20, "sector-strength lookback vs benchmark candles (0 = disabled)")
+	minSectorRSPct := flag.Float64("min-sector-rs-pct", 0, "minimum sector index outperformance vs benchmark over --sector-rs-lookback")
+	sectorRSStrict := flag.Bool("sector-rs-strict", false, "reject mapped stocks when sector candles are unavailable")
 	showFiltered := flag.Bool("show-filtered", false, "print diagnostics for filtered symbols")
 	flag.Parse()
 
@@ -96,11 +101,19 @@ func main() {
 		Symbol:      *csvSymbol,
 	})
 	benchmarkCandles := benchmarkFromInputs(&inputs, normalizeSymbol(*rsSymbol))
-	if *rsLookback > 0 && *dbMode {
+	if (*rsLookback > 0 || *sectorRSLookback > 0) && *dbMode {
 		benchmarkCandles = loadDBBenchmark(context.Background(), *period, normalizeSymbol(*rsSymbol))
 	}
-	if *rsLookback > 0 && len(benchmarkCandles) == 0 {
+	if (*rsLookback > 0 || *sectorRSLookback > 0) && len(benchmarkCandles) == 0 {
 		log.Printf("warn: relative-strength filter disabled — no %s benchmark candles found", normalizeSymbol(*rsSymbol))
+	}
+	sectorMap := loadOptionalSectorMap(*sectorMapPath, *sectorRSLookback)
+	sectorCandles := map[string][]models.Candle{}
+	if *sectorRSLookback > 0 && len(sectorMap) > 0 && *dbMode {
+		sectorCandles = loadDBSectorCandles(context.Background(), *period, sectorMap)
+	} else if *sectorRSLookback > 0 && len(sectorMap) > 0 {
+		log.Printf("warn: sector-strength filter disabled for CSV scans — sector index candles are loaded from DB only")
+		sectorMap = nil
 	}
 
 	opts := scanner.Options{
@@ -123,6 +136,11 @@ func main() {
 		MinRelativeStrengthPct:   *minRSPct,
 		BenchmarkSymbol:          normalizeSymbol(*rsSymbol),
 		BenchmarkCandles:         benchmarkCandles,
+		SectorStrengthLookback:   *sectorRSLookback,
+		MinSectorStrengthPct:     *minSectorRSPct,
+		SectorIndexBySymbol:      sectorMap,
+		SectorIndexCandles:       sectorCandles,
+		SectorStrengthStrict:     *sectorRSStrict,
 		ZoneOpts:                 analysis.ZoneOptions{MinResistanceTouches: *minResistanceTouches},
 	}
 	if *mode != "swing" && *mode != "breakout" && *mode != "all" {
@@ -330,6 +348,74 @@ func loadDBBenchmark(ctx context.Context, period, symbol string) []models.Candle
 	return candles
 }
 
+func loadOptionalSectorMap(path string, lookback int) map[string]string {
+	if lookback <= 0 || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	sectorMap, err := config.LoadSectorMap(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("warn: sector-strength filter disabled — sector map %s not found", path)
+			return nil
+		}
+		log.Printf("warn: sector-strength filter disabled — %v", err)
+		return nil
+	}
+	log.Printf("loaded %d sector mappings from %s", len(sectorMap), path)
+	return sectorMap
+}
+
+func loadDBSectorCandles(ctx context.Context, period string, sectorMap map[string]string) map[string][]models.Candle {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	db, err := sql.Open("postgres", cfg.DSN())
+	if err != nil {
+		log.Fatalf("db open: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatalf("db ping: %v", err)
+	}
+
+	from, err := parsePeriod(period, time.Now())
+	if err != nil {
+		log.Fatalf("period: %v", err)
+	}
+	out := make(map[string][]models.Candle)
+	candleStore := store.NewCandleStore(db)
+	for _, sectorSymbol := range uniqueSectorSymbols(sectorMap) {
+		candles, err := candleStore.GetCandles(ctx, sectorSymbol, store.CandleFilter{From: &from})
+		if err != nil {
+			log.Printf("warn: sector candles read failed for %s: %v", sectorSymbol, err)
+			continue
+		}
+		if len(candles) == 0 {
+			log.Printf("warn: no sector candles found for %s (run kite-sync)", sectorSymbol)
+			continue
+		}
+		out[sectorSymbol] = candles
+	}
+	log.Printf("loaded candles for %d/%d mapped sector indices", len(out), len(uniqueSectorSymbols(sectorMap)))
+	return out
+}
+
+func uniqueSectorSymbols(sectorMap map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, sectorSymbol := range sectorMap {
+		sectorSymbol = normalizeSymbol(sectorSymbol)
+		if sectorSymbol == "" || seen[sectorSymbol] {
+			continue
+		}
+		seen[sectorSymbol] = true
+		out = append(out, sectorSymbol)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func benchmarkFromInputs(inputs *[]scanner.Input, benchmarkSymbol string) []models.Candle {
 	if benchmarkSymbol == "" {
 		return nil
@@ -495,6 +581,14 @@ func printSignals(signals []scanner.StockSignal, topN int) {
 				display.Sign(rs.OutperformancePct, "%+.2f%%"),
 				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
 					sig.Symbol, rs.StockReturnPct, rs.BenchmarkSymbol, rs.BenchmarkReturnPct))
+		}
+		if sig.SectorStrength.Lookback > 0 {
+			ss := sig.SectorStrength
+			fmt.Printf("   %s  %s  %s\n",
+				display.Dim.Sprintf("Sector RS %dD:", ss.Lookback),
+				display.Sign(ss.OutperformancePct, "%+.2f%%"),
+				display.Dim.Sprintf("(%s %.2f%% vs %s %.2f%%)",
+					ss.SectorIndexSymbol, ss.SectorReturnPct, ss.BenchmarkSymbol, ss.BenchmarkReturnPct))
 		}
 
 		// R/R.

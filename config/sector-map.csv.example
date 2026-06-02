@@ -1,0 +1,11 @@
+# symbol,sector_index
+# Copy this file to config/sector-map.csv and add mappings for the stocks you want filtered.
+# sector_index may be a Kite name such as NIFTY BANK, or a compact DB symbol such as NIFTYBANK.
+HDFCBANK,NIFTY BANK
+ICICIBANK,NIFTY BANK
+TCS,NIFTY IT
+INFY,NIFTY IT
+TATASTEEL,NIFTY METAL
+SUNPHARMA,NIFTY PHARMA
+MARUTI,NIFTY AUTO
+DLF,NIFTY REALTY

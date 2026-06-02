@@ -304,6 +304,27 @@ go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --sector-indices
 Sector index candles are stored using compact DB symbols such as `NIFTYBANK`,
 `NIFTYIT`, `NIFTYPHARMA`, `NIFTYMETAL`, and `NIFTYFINSERVICE`.
 
+To enable sector-strength filtering, create `config/sector-map.csv` from the
+example file:
+
+```bash
+cp config/sector-map.csv.example config/sector-map.csv
+```
+
+Format:
+
+```csv
+symbol,sector_index
+HDFCBANK,NIFTY BANK
+TCS,NIFTY IT
+TATASTEEL,NIFTY METAL
+```
+
+The scanner normalizes sector index names to DB symbols such as `NIFTYBANK` and
+`NIFTYIT`. Missing files or unmapped symbols do not reject stocks by default;
+use `--sector-rs-strict` if you want mapped stocks with missing sector candles
+to be rejected.
+
 #### Discover Sector Index Support
 
 Before adding sector-strength filters, check which NSE sector indices Kite
@@ -357,6 +378,7 @@ What it shows:
 - breakout watch candidates when `--mode breakout` or `--mode all` is used
 - score breakdown: trend, R/R, support, volume
 - historical relative strength vs `NIFTY50` for swing signals when benchmark candles are available
+- sector index strength vs `NIFTY50` for swing signals when `config/sector-map.csv` is available
 - price, trend, entry, stop-loss, target
 - support/resistance zones and reasons
 - final counts for scanned, skipped, and signal symbols
@@ -379,7 +401,8 @@ bearish/neutral trend, price too close to EMA200, no valid support/resistance
 zone, R/R below minimum, too few resistance touches, low average volume, or a
 setup that is already extended after a recent rally. With the default
 relative-strength filter, a stock can also be rejected when it has not
-outperformed `NIFTY50` over the last 20 candles.
+outperformed `NIFTY50` over the last 20 candles. With a sector map, a stock can
+also be rejected when its mapped sector index has not outperformed `NIFTY50`.
 
 Useful stricter/looser filters:
 
@@ -392,6 +415,8 @@ go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-10d-move 15
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --max-ema50-extension -1
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --rs-lookback 50
 go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --rs-lookback 0
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --sector-rs-lookback 20
+go run ./cmd/scan --db --symbols config/symbols.txt --top 10 --sector-rs-lookback 0
 go run ./cmd/scan --db --symbols config/symbols.txt --mode breakout --max-breakout-distance 2
 ```
 
@@ -409,6 +434,10 @@ Flag notes:
 - `--rs-lookback`: default `20`; swing stocks must outperform the benchmark over this many candles; `0` disables
 - `--min-rs-pct`: default `0`; minimum outperformance vs benchmark over `--rs-lookback`
 - `--rs-symbol`: default `NIFTY50`; benchmark symbol loaded from PostgreSQL or a matching CSV file
+- `--sector-map`: default `config/sector-map.csv`; maps stock symbols to sector index DB symbols
+- `--sector-rs-lookback`: default `20`; mapped sector index must outperform benchmark; `0` disables
+- `--min-sector-rs-pct`: default `0`; minimum sector-index outperformance vs benchmark
+- `--sector-rs-strict`: default `false`; reject mapped stocks when sector index candles are missing
 - set any `--max-*` extension flag below `0` to disable that specific guard
 
 #### Live Scan (Real-Time via Kite WebSocket)
@@ -450,6 +479,7 @@ What live scan does:
 - merges that live candle with historical DB candles
 - runs swing and/or breakout scanner modes repeatedly
 - filters swing signals by 20D relative strength vs `NIFTY50` when benchmark candles exist
+- filters swing signals by mapped sector-index strength vs `NIFTY50` when `config/sector-map.csv` exists
 - shows `[NEW]` for fresh signals and `xN`/`×N` streaks for repeated signals
 - writes emitted swing signals to `scan_results`
 
@@ -473,6 +503,10 @@ Available flags:
 | `--rs-lookback` | `20` | Swing relative-strength lookback vs benchmark; `0` disables |
 | `--min-rs-pct` | `0` | Minimum stock outperformance vs benchmark over `--rs-lookback` |
 | `--rs-symbol` | `NIFTY50` | Benchmark DB symbol for relative-strength filter |
+| `--sector-map` | `config/sector-map.csv` | Stock-to-sector-index mapping CSV |
+| `--sector-rs-lookback` | `20` | Swing sector-strength lookback vs benchmark; `0` disables |
+| `--min-sector-rs-pct` | `0` | Minimum sector-index outperformance vs benchmark |
+| `--sector-rs-strict` | `false` | Reject mapped stocks when sector candles are unavailable |
 | `--period` | `2y` | Historical candle window for EMA/zone computation |
 | `--exchange` | `NSE` | Kite exchange |
 | `--dev` | `false` | Disable market hours check |
@@ -485,6 +519,7 @@ Example output:
   1. HDFCBANK        ₹1625.50    Score: 87/100  ×3
      ├ Trend:   40/40  R/R: 22/30  Support: 20/20  Volume: 5/10 (est. 3500000 vs avg 2100000 = 1.67x)
      ├ RS vs NIFTY: +1.23%  (NIFTY: +0.47%)
+     ├ Sector RS 20D: +2.10%  (NIFTYBANK +4.20% vs NIFTY50 +2.10%)
      ├ Trend: bullish   R/R: 2.85 (good)
      ├ Entry: 1625.50   SL: 1580.20   Target: 1750.00
      ├ Support:    1580.00–1590.00 (3 touches)
@@ -640,6 +675,10 @@ Available flags:
 | `--rs-lookback` | `20` | Swing relative-strength lookback vs benchmark; `0` disables |
 | `--min-rs-pct` | `0` | Minimum stock outperformance vs benchmark over `--rs-lookback` |
 | `--rs-symbol` | `NIFTY50` | Benchmark symbol for relative-strength filter |
+| `--sector-map` | `config/sector-map.csv` | Stock-to-sector-index mapping CSV |
+| `--sector-rs-lookback` | `20` | Swing sector-strength lookback vs benchmark; `0` disables |
+| `--min-sector-rs-pct` | `0` | Minimum sector-index outperformance vs benchmark |
+| `--sector-rs-strict` | `false` | Reject mapped stocks when sector candles are unavailable |
 | `--show-filtered` | `false` | Print skipped-symbol EMA/trend diagnostics and data errors |
 
 Example output:

@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -79,6 +80,10 @@ func main() {
 	rsLookback := flag.Int("rs-lookback", 20, "[swing] relative-strength lookback vs benchmark candles (0 = disabled)")
 	minRSPct := flag.Float64("min-rs-pct", 0, "[swing] minimum stock outperformance vs benchmark over --rs-lookback")
 	rsSymbol := flag.String("rs-symbol", kite.Nifty50Symbol, "[swing] benchmark DB symbol for relative-strength filter")
+	sectorMapPath := flag.String("sector-map", "config/sector-map.csv", "[swing] CSV mapping stock symbols to sector index DB symbols")
+	sectorRSLookback := flag.Int("sector-rs-lookback", 20, "[swing] sector-strength lookback vs benchmark candles (0 = disabled)")
+	minSectorRSPct := flag.Float64("min-sector-rs-pct", 0, "[swing] minimum sector index outperformance vs benchmark over --sector-rs-lookback")
+	sectorRSStrict := flag.Bool("sector-rs-strict", false, "[swing] reject mapped stocks when sector candles are unavailable")
 
 	// Crossover-mode flags (only used when --mode crossover).
 	coMaxAge := flag.Int("co-max-age", 2, "[crossover] max candles since EMA7×21 crossover (default 2 = last 3 candles)")
@@ -155,7 +160,7 @@ func main() {
 	log.Printf("loaded candles for %d/%d symbols", len(candlesMap), len(symbols))
 	var benchmarkCandles []models.Candle
 	benchmarkSymbol := kite.NormalizeSymbol(*rsSymbol)
-	if *rsLookback > 0 && *mode == "swing" {
+	if (*rsLookback > 0 || *sectorRSLookback > 0) && *mode == "swing" {
 		cc, err := candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{})
 		if err != nil {
 			log.Printf("warn: relative-strength benchmark read failed for %s: %v", benchmarkSymbol, err)
@@ -165,6 +170,11 @@ func main() {
 			benchmarkCandles = cc
 			log.Printf("loaded %d %s benchmark candles for relative strength", len(benchmarkCandles), benchmarkSymbol)
 		}
+	}
+	sectorMap := loadOptionalSectorMap(*sectorMapPath, *sectorRSLookback, *mode)
+	sectorCandles := map[string][]models.Candle{}
+	if *sectorRSLookback > 0 && *mode == "swing" && len(sectorMap) > 0 {
+		sectorCandles = loadSectorCandles(ctx, candleStore, sectorMap)
 	}
 
 	// ── Run backtest ──────────────────────────────────────────────────────────
@@ -187,6 +197,11 @@ func main() {
 		MinRelativeStrengthPct:   *minRSPct,
 		BenchmarkSymbol:          benchmarkSymbol,
 		BenchmarkCandles:         benchmarkCandles,
+		SectorStrengthLookback:   *sectorRSLookback,
+		MinSectorStrengthPct:     *minSectorRSPct,
+		SectorIndexBySymbol:      sectorMap,
+		SectorIndexCandles:       sectorCandles,
+		SectorStrengthStrict:     *sectorRSStrict,
 		ZoneOpts: analysis.ZoneOptions{
 			MinResistanceTouches: *minResistanceTouches,
 		},
@@ -351,6 +366,56 @@ func printResults(results []backtest.TradeResult, topN int, fromLabel, toLabel s
 	// ── Summary ───────────────────────────────────────────────────────────────
 	sum := backtest.Compute(results)
 	printSummary(sum, fromLabel, toLabel)
+}
+
+func loadOptionalSectorMap(path string, lookback int, mode string) map[string]string {
+	if lookback <= 0 || mode != "swing" || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	sectorMap, err := config.LoadSectorMap(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("warn: sector-strength filter disabled — sector map %s not found", path)
+			return nil
+		}
+		log.Printf("warn: sector-strength filter disabled — %v", err)
+		return nil
+	}
+	log.Printf("loaded %d sector mappings from %s", len(sectorMap), path)
+	return sectorMap
+}
+
+func loadSectorCandles(ctx context.Context, candleStore *store.CandleStore, sectorMap map[string]string) map[string][]models.Candle {
+	out := map[string][]models.Candle{}
+	for _, sectorSymbol := range uniqueSectorSymbols(sectorMap) {
+		candles, err := candleStore.GetCandles(ctx, sectorSymbol, store.CandleFilter{})
+		if err != nil {
+			log.Printf("warn: sector candles read failed for %s: %v", sectorSymbol, err)
+			continue
+		}
+		if len(candles) == 0 {
+			log.Printf("warn: no sector candles found for %s (run kite-sync)", sectorSymbol)
+			continue
+		}
+		out[sectorSymbol] = candles
+	}
+	log.Printf("loaded candles for %d/%d mapped sector indices", len(out), len(uniqueSectorSymbols(sectorMap)))
+	return out
+}
+
+func uniqueSectorSymbols(sectorMap map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, sectorSymbol := range sectorMap {
+		sectorSymbol = kite.NormalizeSymbol(sectorSymbol)
+		if sectorSymbol == "" || seen[sectorSymbol] {
+			continue
+		}
+		seen[sectorSymbol] = true
+		out = append(out, sectorSymbol)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func printSummary(s backtest.Summary, fromLabel, toLabel string) {

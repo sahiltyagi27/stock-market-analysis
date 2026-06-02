@@ -12,7 +12,8 @@ import "fmt"
 //  3. Support zone strength (always present)
 //  4. Trade quality grade (always present)
 //  5. Relative strength (only when benchmark data was supplied)
-//  6. Volume confirmation (only when lastVolume > avgVolume)
+//  6. Sector strength (only when sector map/data was supplied)
+//  7. Volume confirmation (only when lastVolume > avgVolume)
 func buildReasons(
 	sig *StockSignal,
 	avgVolume float64,
@@ -60,7 +61,19 @@ func buildReasons(
 		))
 	}
 
-	// 6. Volume — only when above rolling average
+	// 6. Sector strength
+	if sig.SectorStrength.Lookback > 0 {
+		ss := sig.SectorStrength
+		reasons = append(reasons, fmt.Sprintf(
+			"Sector strength %.2f%%: %s vs %s over %d candles",
+			ss.OutperformancePct,
+			ss.SectorIndexSymbol,
+			ss.BenchmarkSymbol,
+			ss.Lookback,
+		))
+	}
+
+	// 7. Volume — only when above rolling average
 	if avgVolume > 0 && lastVolume > avgVolume {
 		ratio := lastVolume / avgVolume
 		reasons = append(reasons, fmt.Sprintf(

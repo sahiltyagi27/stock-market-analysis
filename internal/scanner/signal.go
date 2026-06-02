@@ -27,6 +27,7 @@ type StockSignal struct {
 	Breakdown        ScoreBreakdown      `json:"breakdown"`
 	Extension        Extension           `json:"extension"`
 	RelativeStrength RelativeStrength    `json:"relative_strength,omitempty"`
+	SectorStrength   SectorStrength      `json:"sector_strength,omitempty"`
 	Reasons          []string            `json:"reasons"` // human-readable explanation of why this signal was selected
 }
 
@@ -84,6 +85,17 @@ type RelativeStrength struct {
 	BenchmarkSymbol    string  `json:"benchmark_symbol,omitempty"`
 	Lookback           int     `json:"lookback,omitempty"`
 	StockReturnPct     float64 `json:"stock_return_pct,omitempty"`
+	BenchmarkReturnPct float64 `json:"benchmark_return_pct,omitempty"`
+	OutperformancePct  float64 `json:"outperformance_pct,omitempty"`
+}
+
+// SectorStrength compares a stock's mapped sector index against the benchmark
+// over the same lookback window.
+type SectorStrength struct {
+	SectorIndexSymbol  string  `json:"sector_index_symbol,omitempty"`
+	BenchmarkSymbol    string  `json:"benchmark_symbol,omitempty"`
+	Lookback           int     `json:"lookback,omitempty"`
+	SectorReturnPct    float64 `json:"sector_return_pct,omitempty"`
 	BenchmarkReturnPct float64 `json:"benchmark_return_pct,omitempty"`
 	OutperformancePct  float64 `json:"outperformance_pct,omitempty"`
 }
