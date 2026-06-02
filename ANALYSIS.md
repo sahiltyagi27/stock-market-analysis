@@ -353,6 +353,30 @@ on risk-adjusted terms. **Mechanism: down-weighting volatile (wide-stop) names
 and up-weighting tight-stop ones is genuinely better than equal weighting** —
 portfolio construction, exactly where the edge was hiding.
 
+### Per-year regime check (the essential caveat)
+Risk-1% was promoted to the **default** (`--risk-pct 1.0`, `--max-weight-pct 25`).
+But a year-by-year breakdown reveals the strategy's true character:
+
+| Year | equal-slice | risk-1% | Regime |
+|---|---|---|---|
+| 2022 | −1.6% (DD −6.2%) | −1.3% (DD −6.0%) | flat/choppy |
+| **2023** | **+70.4% (DD −8.8%)** | **+69.2% (DD −7.3%)** | strong bull |
+| 2024 | −16.4% (DD −19.2%) | −13.2% (DD −15.5%) | bad |
+| 2025 | −6.8% (DD −7.5%) | −3.8% (DD −6.0%) | weak |
+
+**The entire multi-year return is one year (2023, +70%). 2022/2024/2025 are all
+negative.** The "12.1%/yr" is really "+70% in 2023, losses otherwise" — a regime
+bet, not a steady edge. Do not over-trust the headline CAGR.
+
+What *is* robust: **risk-1% sizing improves drawdown in every single year** and
+trims the losing years (2024: −16.4→−13.2; 2025: −6.8→−3.8), giving up only a
+sliver in the euphoric year. So it's promoted as a **risk-control default**, not
+a return amplifier — it makes the bad years less bad without hurting the good one.
+
+The open problem this exposes: the strategy only makes money in strong-bull
+regimes. The highest-value remaining work is a **regime/volatility filter to sit
+out 2024-type years**, not another entry signal.
+
 ---
 
 ## 10. Conclusions (entry & exit)
@@ -371,23 +395,29 @@ portfolio construction, exactly where the edge was hiding.
 5. **Retire the overlap-blind serial backtest** — it is actively misleading.
 6. **Portfolio construction > signal tuning (§9).** `max-positions 5` is the CAGR
    peak; RS-allocation only helps under scarce slots; opportunity-loss (M10) rules
-   out rotation. **The win is risk-based position sizing (M12): `--risk-pct 1.0`
-   lifts CAGR 9.5→12.1% AND cuts drawdown 21.8→17.9% — the first lever to beat the
-   index on return and risk-adjusted terms.** Best config to date:
-   **swing + EMA exit + risk-1% sizing + max-positions 5 + costs.**
+   out rotation. **Risk-based position sizing (M12) is now the default
+   (`--risk-pct 1.0`, `--max-weight-pct 25`):** it lifts full-period CAGR
+   9.5→12.1%, cuts drawdown 21.8→17.9%, and — critically — **improves drawdown in
+   every individual year**. Default config: **swing + EMA exit + risk-1% sizing +
+   max-positions 5 + costs**, with RS/sector entry filters off across all CLIs.
+7. **The headline return is regime-dependent.** Per-year (§9), the strategy made
+   money only in 2023 (+70%); 2022/2024/2025 were negative. Risk-sizing makes the
+   losing years less bad but can't manufacture an edge. **A regime filter to avoid
+   2024-type years is the highest-value remaining work** — not another signal.
 
 ---
 
 ## 11. Open questions / next steps
 
+- **Regime / volatility filter (highest value).** The strategy only makes money in
+  strong-bull regimes (§9 per-year). A filter to sit out 2024-type years (e.g.
+  trade only when NIFTY is above its 200-DMA, or below a volatility threshold)
+  would attack the actual weakness — the losing years — rather than chase signals.
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
-  time-series RS filters that failed in §8. Worth a test as a slot tiebreak.
+  time-series RS filters that failed in §8. Test as a universe filter, not a tiebreak.
 - **Turnover reduction** — costs are a persistent drag; anything that lifts profit
   factor without adding trades is interesting.
-- **Why did 2024 lose across the board?** Exit-independent; worth a dedicated look.
-- **Push risk-sizing further** — combine M12 risk-1% sizing with the max-positions
-  sweep and a volatility (ATR) target; confirm out-of-sample on more years.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12

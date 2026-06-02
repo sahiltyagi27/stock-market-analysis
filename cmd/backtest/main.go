@@ -60,7 +60,7 @@ func main() {
 	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
 	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
-	riskPct := flag.Float64("risk-pct", 0, "[portfolio] risk-based sizing: size each trade so a stop-out costs this %% of equity (0 = equal 1/N slices)")
+	riskPct := flag.Float64("risk-pct", 1.0, "[portfolio] risk-based sizing (default): size each trade so a stop-out costs this %% of equity; negative = equal 1/N slices")
 	maxWeightPct := flag.Float64("max-weight-pct", 25, "[portfolio] cap any single position at this %% of equity under risk-based sizing")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
@@ -80,11 +80,11 @@ func main() {
 	allowBearishCandle := flag.Bool("allow-bearish-candle", false, "allow bearish signal candles (soft −5 penalty only)")
 	ema200SlopePeriod := flag.Int("ema200-slope-period", 20, "candles to look back for EMA200 slope filter (≤0 disables)")
 	trailATRMult := flag.Float64("trail-atr-mult", 1.5, "ATR multiplier for trailing stop: trailSL = highestHigh − mult×ATR (≤0 disables)")
-	rsLookback := flag.Int("rs-lookback", 20, "[swing] relative-strength lookback vs benchmark candles (0 = disabled)")
+	rsLookback := flag.Int("rs-lookback", 0, "[swing] relative-strength lookback vs benchmark candles (0 = disabled; backtests show it reduces returns)")
 	minRSPct := flag.Float64("min-rs-pct", 0, "[swing] minimum stock outperformance vs benchmark over --rs-lookback")
 	rsSymbol := flag.String("rs-symbol", kite.Nifty50Symbol, "[swing] benchmark DB symbol for relative-strength filter")
 	sectorMapPath := flag.String("sector-map", "config/sector-map.csv", "[swing] CSV mapping stock symbols to sector index DB symbols")
-	sectorRSLookback := flag.Int("sector-rs-lookback", 20, "[swing] sector-strength lookback vs benchmark candles (0 = disabled)")
+	sectorRSLookback := flag.Int("sector-rs-lookback", 0, "[swing] sector-strength lookback vs benchmark candles (0 = disabled; backtests show it reduces returns)")
 	minSectorRSPct := flag.Float64("min-sector-rs-pct", 0, "[swing] minimum sector index outperformance vs benchmark over --sector-rs-lookback")
 	sectorRSStrict := flag.Bool("sector-rs-strict", false, "[swing] reject mapped stocks when sector candles are unavailable")
 
