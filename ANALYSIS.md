@@ -359,23 +359,45 @@ But a year-by-year breakdown reveals the strategy's true character:
 
 | Year | equal-slice | risk-1% | Regime |
 |---|---|---|---|
-| 2022 | −1.6% (DD −6.2%) | −1.3% (DD −6.0%) | flat/choppy |
-| **2023** | **+70.4% (DD −8.8%)** | **+69.2% (DD −7.3%)** | strong bull |
-| 2024 | −16.4% (DD −19.2%) | −13.2% (DD −15.5%) | bad |
-| 2025 | −6.8% (DD −7.5%) | −3.8% (DD −6.0%) | weak |
+| 2022 | +8.4% (DD −8.4%) | +10.4% (DD −7.9%) | choppy-up |
+| **2023** | **+72.5% (DD −11.8%)** | **+72.9% (DD −9.3%)** | strong bull |
+| 2024 | −17.1% (DD −19.5%) | −14.0% (DD −16.0%) | correction |
+| 2025 | −9.8% (DD −9.9%) | −6.0% (DD −7.3%) | weak |
 
-**The entire multi-year return is one year (2023, +70%). 2022/2024/2025 are all
-negative.** The "12.1%/yr" is really "+70% in 2023, losses otherwise" — a regime
-bet, not a steady edge. Do not over-trust the headline CAGR.
+**2022 and 2023 were positive; 2024 and 2025 were negative.** The multi-year
+return is dominated by 2023 (+73%), but 2022 also contributed — so it's
+regime-dependent, not a single-year fluke. Still, two of four years lost money:
+don't over-trust the headline CAGR.
 
 What *is* robust: **risk-1% sizing improves drawdown in every single year** and
-trims the losing years (2024: −16.4→−13.2; 2025: −6.8→−3.8), giving up only a
-sliver in the euphoric year. So it's promoted as a **risk-control default**, not
-a return amplifier — it makes the bad years less bad without hurting the good one.
+trims the losing ones (2024: −17.1→−14.0; 2025: −9.8→−6.0), giving up nothing in
+the good years. Promoted as a **risk-control default**, not a return amplifier.
 
-The open problem this exposes: the strategy only makes money in strong-bull
-regimes. The highest-value remaining work is a **regime/volatility filter to sit
-out 2024-type years**, not another entry signal.
+_(Note: an earlier draft of this table accidentally had the RS entry filter on
+— it understated 2022 as negative. These are the clean RS-off numbers.)_
+
+### Regime gate (NIFTY trend) — tested, does NOT help (`--regime`)
+A market-level "should we trade at all?" switch: block new entries unless NIFTY
+is in a healthy uptrend (`price`: close > EMA200; `ema`: EMA50 > EMA200).
+Existing positions still exit normally.
+
+| Gate | CAGR | Max DD |
+|---|---|---|
+| none | 12.1% | −17.9% |
+| price (close > EMA200) | 9.2% | −17.0% |
+| ema (EMA50 > EMA200) | 3.6% | −17.1% |
+
+**Both gates cut return while barely improving drawdown.** Per-year, the gate
+only slightly trims 2024 (−14.0→−13.0) but cuts the good years far more
+(2023 +72.9→+58.9). Why: **NIFTY held above its 200-EMA through much of 2024's
+decline** — the index stayed "healthy" while the individual stocks the strategy
+picked fell. Same lesson as the breadth (§5) and RS (§8) filters:
+**market-direction is not the strategy's actual risk.** Kept as a default-off
+diagnostic (`--regime`), not promoted.
+
+The losing years remain an **open problem** — but the answer is evidently not a
+market-direction gate. A volatility-based or stock-level risk measure may fare
+better; market trend does not.
 
 ---
 
@@ -400,19 +422,23 @@ out 2024-type years**, not another entry signal.
    9.5→12.1%, cuts drawdown 21.8→17.9%, and — critically — **improves drawdown in
    every individual year**. Default config: **swing + EMA exit + risk-1% sizing +
    max-positions 5 + costs**, with RS/sector entry filters off across all CLIs.
-7. **The headline return is regime-dependent.** Per-year (§9), the strategy made
-   money only in 2023 (+70%); 2022/2024/2025 were negative. Risk-sizing makes the
-   losing years less bad but can't manufacture an edge. **A regime filter to avoid
-   2024-type years is the highest-value remaining work** — not another signal.
+7. **The headline return is regime-dependent.** Per-year (§9), 2022 (+10%) and
+   2023 (+73%) were positive; 2024 (−14%) and 2025 (−6%) lost. Risk-sizing makes
+   the losing years less bad but can't manufacture an edge.
+8. **A NIFTY-trend regime gate does NOT fix the losing years (§9).** It cuts
+   return more than it saves — the index stayed healthy while the strategy's
+   stocks fell in 2024. Market-direction is not the strategy's risk; that idea is
+   now exhausted (breadth §5, RS §8, regime gate §9 all failed). Any future edge
+   on the down years must come from volatility or stock-level risk, not market trend.
 
 ---
 
 ## 11. Open questions / next steps
 
-- **Regime / volatility filter (highest value).** The strategy only makes money in
-  strong-bull regimes (§9 per-year). A filter to sit out 2024-type years (e.g.
-  trade only when NIFTY is above its 200-DMA, or below a volatility threshold)
-  would attack the actual weakness — the losing years — rather than chase signals.
+- **Volatility regime (not market-trend).** The NIFTY-trend gate failed (§9), but
+  a *volatility* filter is untested — e.g. no new entries when NIFTY ATR20/price
+  exceeds a threshold (sideways-volatile markets chop swing trades apart). This is
+  the remaining regime idea worth trying; market *direction* is exhausted.
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
   time-series RS filters that failed in §8. Test as a universe filter, not a tiebreak.

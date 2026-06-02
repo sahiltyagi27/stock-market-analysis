@@ -62,6 +62,10 @@ func main() {
 	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
 	riskPct := flag.Float64("risk-pct", 1.0, "[portfolio] risk-based sizing (default): size each trade so a stop-out costs this %% of equity; negative = equal 1/N slices")
 	maxWeightPct := flag.Float64("max-weight-pct", 25, "[portfolio] cap any single position at this %% of equity under risk-based sizing")
+	regimeMode := flag.String("regime", "off", "[portfolio] market gate on NIFTY: off | price (close>EMA200) | ema (EMA50>EMA200) — blocks new entries in unhealthy regimes")
+	regimeSymbol := flag.String("regime-symbol", kite.Nifty50Symbol, "[portfolio] benchmark DB symbol for the regime gate")
+	regimeFast := flag.Int("regime-fast", 50, "[portfolio] fast EMA period for --regime ema")
+	regimeSlow := flag.Int("regime-slow", 200, "[portfolio] slow EMA period for the regime gate")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -256,6 +260,18 @@ func main() {
 		if *exitMode != "ema" && *exitMode != "target" {
 			log.Fatalf("--exit-mode must be ema or target, got %q", *exitMode)
 		}
+		// Regime gate: load the benchmark candles when enabled.
+		var regimeCandles []models.Candle
+		if *regimeMode != "" && *regimeMode != "off" {
+			rsym := kite.NormalizeSymbol(*regimeSymbol)
+			cc, err := candleStore.GetCandles(ctx, rsym, store.CandleFilter{})
+			if err != nil || len(cc) == 0 {
+				log.Fatalf("--regime %s needs %s candles in DB (run kite-sync): %v", *regimeMode, rsym, err)
+			}
+			regimeCandles = cc
+			log.Printf("regime gate: %s on %s (EMA%d/%d), %d candles", *regimeMode, rsym, *regimeFast, *regimeSlow, len(cc))
+		}
+
 		pf := backtest.PortfolioOptions{
 			From:         from,
 			To:           to,
@@ -264,12 +280,16 @@ func main() {
 			StartCapital: *capital,
 			ExitMode:     *exitMode,
 			MaxHoldDays:  *maxHold,
-			CostPct:       *costPct,
-			SlippagePct:   *slippagePct,
-			AllocLookback: *allocLookback,
-			RiskPct:       *riskPct,
-			MaxWeightPct:  *maxWeightPct,
-			EngineOpts:    opts,
+			CostPct:         *costPct,
+			SlippagePct:     *slippagePct,
+			AllocLookback:   *allocLookback,
+			RiskPct:         *riskPct,
+			MaxWeightPct:    *maxWeightPct,
+			RegimeMode:      *regimeMode,
+			RegimeBenchmark: regimeCandles,
+			RegimeFast:      *regimeFast,
+			RegimeSlow:      *regimeSlow,
+			EngineOpts:      opts,
 		}
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",
 			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
