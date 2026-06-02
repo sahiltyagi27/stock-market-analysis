@@ -66,9 +66,10 @@ func main() {
 	regimeSymbol := flag.String("regime-symbol", kite.Nifty50Symbol, "[portfolio] benchmark DB symbol for the regime gate")
 	regimeFast := flag.Int("regime-fast", 50, "[portfolio] fast EMA period for --regime ema")
 	regimeSlow := flag.Int("regime-slow", 200, "[portfolio] slow EMA period for the regime gate")
-	healthWindow := flag.Int("health-window", 0, "[portfolio] strategy-health gate: only enter when the last N closed trades are healthy (0 = off)")
+	healthWindow := flag.Int("health-window", 20, "[portfolio] strategy-health gate (default): only enter when the last N closed trades are healthy (0 = off)")
 	healthMode := flag.String("health-mode", "avgr", "[portfolio] health metric: avgr (mean R) or pf (profit factor)")
 	healthMin := flag.Float64("health-min", 0, "[portfolio] health threshold over the window (e.g. 0 for avgr, 1.2 for pf)")
+	healthWarmupFrom := flag.String("health-warmup-from", "", "[portfolio] seed the health gate with trades from this date up to --from (avoids cold-start blindness), YYYY-MM-DD")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -297,6 +298,24 @@ func main() {
 			StrategyHealthMin:    *healthMin,
 			EngineOpts:      opts,
 		}
+
+		// Cold-start fix: seed the health gate with a warmup pass so it is warm
+		// at --from (mirrors loading the last N completed trades from the DB live).
+		if *healthWindow > 0 && *healthWarmupFrom != "" {
+			wfrom, err := time.Parse("2006-01-02", *healthWarmupFrom)
+			if err != nil {
+				log.Fatalf("--health-warmup-from: invalid date %q", *healthWarmupFrom)
+			}
+			warm := pf
+			warm.From = wfrom
+			warm.To = from.AddDate(0, 0, -1)
+			warm.HealthSeed = nil // warmup itself starts cold (far enough back not to matter)
+			wtrades, _ := backtest.RunPortfolio(ctx, candlesMap, warm)
+			pf.HealthSeed = lastNTradeR(wtrades, *healthWindow)
+			log.Printf("health gate warmup: %s → %s produced %d trades; seeded gate with last %d",
+				wfrom.Format("2006-01-02"), warm.To.Format("2006-01-02"), len(wtrades), len(pf.HealthSeed))
+		}
+
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",
 			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
 		trades, stats := backtest.RunPortfolio(ctx, candlesMap, pf)
@@ -578,6 +597,22 @@ func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fr
 }
 
 func pow(x, y float64) float64 { return math.Pow(x, y) }
+
+// lastNTradeR returns the realised R of the most recent n trades by exit date,
+// in chronological (oldest-first) order — ready to seed the health window.
+func lastNTradeR(trades []backtest.TradeResult, n int) []float64 {
+	sorted := make([]backtest.TradeResult, len(trades))
+	copy(sorted, trades)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ExitDate.Before(sorted[j].ExitDate) })
+	if n > len(sorted) {
+		n = len(sorted)
+	}
+	out := make([]float64, 0, n)
+	for _, t := range sorted[len(sorted)-n:] {
+		out = append(out, t.ActualRR)
+	}
+	return out
+}
 
 func formatPF(pf float64) string {
 	if math.IsInf(pf, 1) {

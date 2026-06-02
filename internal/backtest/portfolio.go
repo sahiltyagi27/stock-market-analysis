@@ -92,6 +92,12 @@ type PortfolioOptions struct {
 	// window has N closed trades, trading is allowed (warmup).
 	StrategyHealthMin float64
 
+	// HealthSeed pre-loads the strategy-health window with prior closed-trade R
+	// values (chronological, oldest first) so the gate is "warm" from the first
+	// day — no cold-start blindness. In live trading, seed this from the last N
+	// completed trades in the DB; in backtests, from a warmup pass.
+	HealthSeed []float64
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -263,8 +269,9 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	var rejSumRR float64
 
 	// Strategy-health gate: rolling list of realised R for closed trades, in
-	// close order. Used to pause new entries during the strategy's bad patches.
-	var healthR []float64
+	// close order. Seeded with prior history (HealthSeed) so the gate is warm
+	// from day one — no cold-start blindness.
+	healthR := append([]float64(nil), opts.HealthSeed...)
 
 	for _, day := range calendar {
 		dk := day.Format(dayFmt)
