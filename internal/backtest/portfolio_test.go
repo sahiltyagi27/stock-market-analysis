@@ -126,8 +126,9 @@ func TestPortfolioOptions_CostHelpers(t *testing.T) {
 }
 
 func TestPositionNotional_EqualSlice(t *testing.T) {
-	// RiskPct 0 → equity / MaxPositions, capped at cash.
-	o := PortfolioOptions{MaxPositions: 5}
+	// Negative RiskPct = equal 1/N slices = equity / MaxPositions, capped at cash.
+	// (RunPortfolio now defaults RiskPct 0 → 1.0, so equal-slice is opt-in.)
+	o := PortfolioOptions{MaxPositions: 5, RiskPct: -1}
 	got := positionNotional(100000, 100000, 100, 90, o)
 	if got != 20000 {
 		t.Fatalf("equal slice = %.2f, want 20000", got)

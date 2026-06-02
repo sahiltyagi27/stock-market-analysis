@@ -54,7 +54,8 @@ type PortfolioOptions struct {
 	//
 	// A tight stop → larger position; a wide (volatile) stop → smaller position.
 	// Capped at MaxWeightPct of equity and at available cash.
-	// 0 (default) uses equal 1/MaxPositions slices.
+	// Default: 1.0 (0 is treated as "use default"). Pass a negative value to opt
+	// into equal 1/MaxPositions slices instead.
 	RiskPct float64
 
 	// MaxWeightPct caps any single position at this % of equity under risk-based
@@ -164,6 +165,11 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	}
 	if opts.MaxWeightPct <= 0 {
 		opts.MaxWeightPct = 25
+	}
+	// Risk-based sizing is the default (robustly lowers drawdown across regimes).
+	// 0 → default 1%. Pass a negative RiskPct to opt into equal 1/N slices.
+	if opts.RiskPct == 0 {
+		opts.RiskPct = 1.0
 	}
 
 	// Precompute per-symbol series.
