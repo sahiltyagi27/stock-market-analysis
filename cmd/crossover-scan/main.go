@@ -47,6 +47,7 @@ func main() {
 	minResTouches := flag.Int("min-resistance-touches", 1, "minimum touches for a resistance zone to qualify as target")
 	minVolMult    := flag.Float64("min-vol-mult", 0, "require today's volume ≥ this × the rolling avg of the previous --vol-mult-window candles (0 = disabled)")
 	volMultWindow := flag.Int("vol-mult-window", 10, "candles used for the today's-volume average check")
+	minTargetPct  := flag.Float64("min-target-pct", 4.0, "minimum %% distance the resistance target must sit above entry (<0 disables)")
 	showFiltered  := flag.Bool("show-filtered", false, "print rejection reasons for every filtered symbol")
 	flag.Parse()
 
@@ -103,6 +104,7 @@ func main() {
 		MinCandles:            *minCandles,
 		MinCurrentVolMultiple: *minVolMult,
 		CurrentVolWindow:      *volMultWindow,
+		MinTargetPct:          *minTargetPct,
 		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *minResTouches},
 	}
 

@@ -79,6 +79,7 @@ func main() {
 	coMinResTouches := flag.Int("co-min-resistance-touches", 1, "[crossover] minimum touches for a resistance zone target")
 	coMinVolMult    := flag.Float64("co-min-vol-mult", 0, "[crossover] require today's volume ≥ this × the prev N-day avg (0 = disabled)")
 	coVolMultWindow := flag.Int("co-vol-mult-window", 10, "[crossover] candles for the today's-volume average check")
+	coMinTargetPct  := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
 
 	flag.Parse()
 
@@ -175,6 +176,7 @@ func main() {
 		VolumeWindow:          *coVolWindow,
 		MinCurrentVolMultiple: *coMinVolMult,
 		CurrentVolWindow:      *coVolMultWindow,
+		MinTargetPct:          *coMinTargetPct,
 		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
 	}
 

@@ -67,6 +67,7 @@ func lenientOpts() Options {
 		MinRR:           -1, // negative = disabled (0 would trigger the 1.5 default)
 		MinCandles:      30,
 		VolumeWindow:    10,
+		MinTargetPct:    -1, // disabled; dedicated tests verify it separately
 		ZoneOpts:        analysis.ZoneOptions{MinResistanceTouches: 1},
 	}
 }
@@ -127,6 +128,44 @@ func TestFindCrossoverIdx_RespectsMaxAge(t *testing.T) {
 	idx := findCrossoverIdx(ema7, ema21, n, 2)
 	if idx != -1 {
 		t.Fatalf("crossover age ~10 should be outside maxAge=2, got idx=%d", idx)
+	}
+}
+
+// ── nearestResistanceAtLeast ──────────────────────────────────────────────────
+
+func TestNearestResistanceAtLeast_SkipsTooClose(t *testing.T) {
+	zones := []analysis.Zone{
+		{Low: 101, Mid: 101.5, High: 102}, // ~1.5% above price 100 — too close
+		{Low: 108, Mid: 109, High: 110},   // ~9% above — the real target
+	}
+	// minTarget = 104 (4% above 100) should skip the 101.5 zone, pick 109.
+	target, found := nearestResistanceAtLeast(100, 104, zones)
+	if !found {
+		t.Fatal("expected a qualifying zone above minTarget")
+	}
+	if target != 109 {
+		t.Fatalf("expected target 109 (skipping too-close 101.5), got %.2f", target)
+	}
+}
+
+func TestNearestResistanceAtLeast_NoneQualify(t *testing.T) {
+	zones := []analysis.Zone{
+		{Low: 101, Mid: 101.5, High: 102}, // only a too-close zone exists
+	}
+	_, found := nearestResistanceAtLeast(100, 104, zones)
+	if found {
+		t.Fatal("expected no qualifying zone when all are below minTarget")
+	}
+}
+
+func TestNearestResistanceAtLeast_ZeroMinBehavesAsNearest(t *testing.T) {
+	zones := []analysis.Zone{
+		{Low: 108, Mid: 109, High: 110},
+		{Low: 101, Mid: 101.5, High: 102}, // nearest above price
+	}
+	target, found := nearestResistanceAtLeast(100, 0, zones)
+	if !found || target != 101.5 {
+		t.Fatalf("expected nearest target 101.5 with minTarget=0, got %.2f (found=%v)", target, found)
 	}
 }
 
@@ -306,5 +345,24 @@ func TestScan_InsufficientCandlesRejected(t *testing.T) {
 	_, errs := Scan([]Input{{Symbol: "SHORT", Candles: cc}}, opts)
 	if _, rejected := errs["SHORT"]; !rejected {
 		t.Fatal("expected insufficient candles to be rejected")
+	}
+}
+
+// ── MinTargetPct filter ───────────────────────────────────────────────────────
+
+// TestScan_MinTargetPct_RejectsWhenNoFarEnoughResistance verifies the signal is
+// dropped when every resistance zone sits within MinTargetPct of entry.
+func TestScan_MinTargetPct_RejectsWhenNoFarEnoughResistance(t *testing.T) {
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+	// Demand a target 50% above entry — the fixture's resistance is far closer,
+	// so no zone qualifies and the signal must be rejected.
+	opts.MinTargetPct = 50.0
+	_, errs := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if err, rejected := errs["TEST"]; !rejected {
+		t.Fatal("expected rejection when no resistance is far enough for MinTargetPct")
+	} else if !strings.Contains(err.Error(), "at least") {
+		t.Fatalf("expected MinTargetPct rejection reason, got: %v", err)
 	}
 }

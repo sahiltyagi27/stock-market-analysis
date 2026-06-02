@@ -47,6 +47,14 @@ type Options struct {
 	// Default: 10.
 	CurrentVolWindow int
 
+	// MinTargetPct is the minimum distance (as a percentage of entry price)
+	// the resistance-zone target must sit above entry. Resistance zones closer
+	// than this are skipped and the next zone up is considered instead; if no
+	// zone is far enough, the signal is rejected. This prevents trivial targets
+	// — e.g. a resistance 0.8% above entry that "wins" on noise.
+	// Default: 4.0.  Set to < 0 to disable.
+	MinTargetPct float64
+
 	// ZoneOpts are forwarded to analysis.FindZones for resistance detection.
 	// MinResistanceTouches defaults to 1 (any single-touch zone qualifies as
 	// a candidate target — crossover plays are momentum-driven, not zone-driven).
@@ -85,6 +93,10 @@ func (o Options) withDefaults() Options {
 	// MinCurrentVolMultiple: 0 means disabled — no default applied.
 	if out.CurrentVolWindow <= 0 {
 		out.CurrentVolWindow = 10
+	}
+	// MinTargetPct: 0 triggers the default of 4%; negative disables the filter.
+	if out.MinTargetPct == 0 {
+		out.MinTargetPct = 4.0
 	}
 	return out
 }
@@ -176,9 +188,21 @@ func analyzeOne(in Input, opts Options) (*Signal, error) {
 
 	risk := price - sl
 
-	// Target: nearest resistance zone above price.
+	// Target: nearest resistance zone at least MinTargetPct above price.
+	// Zones closer than the minimum are skipped in favour of the next one up —
+	// a trivially close resistance produces a meaningless ~1% target.
 	zones := analysis.FindZones(highs, lows, opts.ZoneOpts)
-	target, targetFound := nearestResistanceAbove(price, zones.Resistance)
+	minTarget := 0.0
+	if opts.MinTargetPct > 0 {
+		minTarget = price * (1 + opts.MinTargetPct/100)
+	}
+	target, targetFound := nearestResistanceAtLeast(price, minTarget, zones.Resistance)
+	if !targetFound && opts.MinTargetPct > 0 {
+		return nil, fmt.Errorf(
+			"no resistance zone at least %.1f%% above entry %.2f (nearest target would be too close)",
+			opts.MinTargetPct, price,
+		)
+	}
 
 	var rr float64
 	if targetFound && risk > 0 {
@@ -270,13 +294,18 @@ func findCrossoverIdx(ema7, ema21 []float64, n, maxAge int) int {
 	return -1
 }
 
-// nearestResistanceAbove returns the midpoint of the resistance zone with the
-// lowest Mid above price, or (0, false) when no such zone exists.
-func nearestResistanceAbove(price float64, zones []analysis.Zone) (float64, bool) {
+// nearestResistanceAtLeast returns the midpoint of the resistance zone with
+// the lowest Mid that is both above price and at least minTarget. Passing
+// minTarget = 0 makes it behave like "nearest resistance above price".
+// Returns (0, false) when no qualifying zone exists.
+//
+// A zone qualifies when its Mid (the target level) is ≥ minTarget — this lets
+// the scanner skip a too-close resistance and pick the next meaningful zone up.
+func nearestResistanceAtLeast(price, minTarget float64, zones []analysis.Zone) (float64, bool) {
 	var best analysis.Zone
 	found := false
 	for _, z := range zones {
-		if z.Low > price && (!found || z.Mid < best.Mid) {
+		if z.Low > price && z.Mid >= minTarget && (!found || z.Mid < best.Mid) {
 			best = z
 			found = true
 		}
