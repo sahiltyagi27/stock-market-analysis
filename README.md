@@ -266,6 +266,7 @@ What it does:
 - downloads the requested historical period
 - upserts candles into the `candles` table
 - also syncs NIFTY 50 index candles as `NIFTY50` by default for relative-strength filters
+- also syncs verified NSE sector index candles by default for future sector-strength filters
 
 Common variants:
 
@@ -287,6 +288,21 @@ Skip NIFTY benchmark sync:
 ```bash
 go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --include-nifty=false
 ```
+
+Skip sector index sync:
+
+```bash
+go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --include-sector-indices=false
+```
+
+Sync only selected sector indices:
+
+```bash
+go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y --sector-indices "NIFTY BANK,NIFTY IT,NIFTY PHARMA"
+```
+
+Sector index candles are stored using compact DB symbols such as `NIFTYBANK`,
+`NIFTYIT`, `NIFTYPHARMA`, `NIFTYMETAL`, and `NIFTYFINSERVICE`.
 
 #### Discover Sector Index Support
 

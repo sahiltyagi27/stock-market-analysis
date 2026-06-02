@@ -27,6 +27,34 @@ const (
 	Nifty50Symbol = "NIFTY50"
 )
 
+// SectorIndexNames are NSE sector/thematic index names verified through Kite's
+// NSE instrument master and historical candle API. The names intentionally match
+// Kite's trading symbols, including abbreviated forms such as NIFTY CONSR DURBL.
+var SectorIndexNames = []string{
+	"NIFTY BANK",
+	"NIFTY AUTO",
+	"NIFTY FIN SERVICE",
+	"NIFTY FMCG",
+	"NIFTY IT",
+	"NIFTY MEDIA",
+	"NIFTY METAL",
+	"NIFTY PHARMA",
+	"NIFTY PSU BANK",
+	"NIFTY PVT BANK",
+	"NIFTY REALTY",
+	"NIFTY ENERGY",
+	"NIFTY INFRA",
+	"NIFTY OIL AND GAS",
+	"NIFTY HEALTHCARE",
+	"NIFTY CONSR DURBL",
+}
+
+// IndexDBSymbol normalizes index names for candle storage. It removes spaces so
+// NIFTY BANK is stored as NIFTYBANK, matching the existing NIFTY50 convention.
+func IndexDBSymbol(name string) string {
+	return strings.ReplaceAll(NormalizeSymbol(name), " ", "")
+}
+
 // Client calls Kite Connect APIs.
 type Client struct {
 	BaseURL     string
