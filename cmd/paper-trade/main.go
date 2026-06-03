@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -47,6 +48,7 @@ func main() {
 	capital := flag.Float64("capital", 100000, "starting paper capital (only used on first init)")
 	asOfStr := flag.String("as-of", "", "[eod] cycle date YYYY-MM-DD (default: today)")
 	dryRun := flag.Bool("dry-run", false, "[eod] compute and print the cycle without persisting")
+	force := flag.Bool("force", false, "[eod] re-run a day that was already processed (overrides the once-per-day guard)")
 	reset := flag.Bool("reset", false, "wipe all paper state (account, positions, pending, trades) and exit")
 	exchange := flag.String("exchange", "NSE", "Kite exchange (for live mode)")
 
@@ -115,7 +117,7 @@ func main() {
 
 	switch *mode {
 	case "eod":
-		runEOD(ctx, ps, cs, symbols, *asOfStr, pcfg, *dryRun)
+		runEOD(ctx, ps, cs, symbols, *asOfStr, pcfg, *force, *dryRun)
 	case "live":
 		runLive(ctx, ps, cfg, *exchange)
 	default:
@@ -123,7 +125,7 @@ func main() {
 	}
 }
 
-func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOfStr string, pcfg paper.Config, dryRun bool) {
+func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOfStr string, pcfg paper.Config, force, dryRun bool) {
 	asOf := time.Now()
 	if asOfStr != "" {
 		t, err := time.Parse("2006-01-02", asOfStr)
@@ -133,7 +135,11 @@ func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, sy
 		asOf = t
 	}
 	log.Printf("paper EOD cycle as-of %s (dry-run=%v) over %d symbols", asOf.Format("2006-01-02"), dryRun, len(symbols))
-	rep, err := paper.RunDayEnd(ctx, ps, cs, symbols, asOf, pcfg, dryRun)
+	rep, err := paper.RunDayEnd(ctx, ps, cs, symbols, asOf, pcfg, force, dryRun)
+	if errors.Is(err, paper.ErrAlreadyProcessed) {
+		fmt.Printf("\n⚠  %v\n   This day's cycle has already run. Use --dry-run to preview, or --force to re-run.\n", err)
+		return
+	}
 	if err != nil {
 		log.Fatalf("eod cycle: %v", err)
 	}

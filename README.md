@@ -287,10 +287,14 @@ go run ./cmd/paper-trade --mode eod
 ```
 
 Useful flags: `--capital` (starting balance, first run only), `--as-of YYYY-MM-DD`
-(run/replay a specific day), `--dry-run` (preview the cycle without persisting),
-`--reset` (wipe all paper state for a fresh start). Strategy parameters
-(`--risk-pct`, `--max-positions`, `--health-window`, `--min-score`, …) default to
-the validated config.
+(run/replay a specific day), `--dry-run` (preview without persisting), `--reset`
+(wipe all paper state for a fresh start). Strategy parameters (`--risk-pct`,
+`--max-positions`, `--health-window`, `--min-score`, …) default to the validated config.
+
+> **`--mode eod` runs once per trading day.** It queues entries for the *next*
+> open, so a second same-day run would fill them prematurely. A guard blocks
+> re-running an already-processed day — use `--dry-run` to preview or `--force`
+> to override. `--mode live` is read-only and can be run any number of times.
 
 > The first `--mode eod` run seeds the strategy-health gate from scratch (it warms
 > up over your first ~20 closed trades). To start *warm*, populate prior trade

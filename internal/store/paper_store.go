@@ -23,6 +23,10 @@ type PaperAccount struct {
 	StartCapital float64
 	Cash         float64
 	UpdatedAt    time.Time
+	// LastEOD is the calendar date of the most recent processed EOD cycle, used
+	// to prevent accidentally running the day-end cycle twice. Invalid until the
+	// first cycle has run.
+	LastEOD sql.NullTime
 }
 
 // PaperPosition is one open paper position.
@@ -103,6 +107,7 @@ func (s *PaperStore) Migrate(ctx context.Context) error {
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 		CREATE INDEX IF NOT EXISTS idx_paper_trades_exit ON paper_trades (exit_date);
+		ALTER TABLE paper_account ADD COLUMN IF NOT EXISTS last_eod_date DATE;
 	`)
 	if err != nil {
 		return fmt.Errorf("paper migrate: %w", err)
@@ -114,8 +119,8 @@ func (s *PaperStore) Migrate(ctx context.Context) error {
 func (s *PaperStore) Account(ctx context.Context) (*PaperAccount, error) {
 	var a PaperAccount
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_capital, cash, updated_at FROM paper_account WHERE id = 1`).
-		Scan(&a.StartCapital, &a.Cash, &a.UpdatedAt)
+		`SELECT start_capital, cash, updated_at, last_eod_date FROM paper_account WHERE id = 1`).
+		Scan(&a.StartCapital, &a.Cash, &a.UpdatedAt, &a.LastEOD)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -137,6 +142,14 @@ func (s *PaperStore) InitAccount(ctx context.Context, startCapital float64) erro
 func (s *PaperStore) SetCash(ctx context.Context, cash float64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE paper_account SET cash = $1, updated_at = now() WHERE id = 1`, cash)
+	return err
+}
+
+// SetLastEOD records the calendar date (YYYY-MM-DD) of the most recent processed
+// day-end cycle. Pass the date already normalised to the session timezone.
+func (s *PaperStore) SetLastEOD(ctx context.Context, d time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE paper_account SET last_eod_date = $1 WHERE id = 1`, d.Format("2006-01-02"))
 	return err
 }
 

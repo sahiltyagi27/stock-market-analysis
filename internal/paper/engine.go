@@ -10,6 +10,7 @@ package paper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -20,6 +21,10 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
+
+// ErrAlreadyProcessed is returned by RunDayEnd when the requested day has already
+// been processed (guards against running the EOD cycle twice). Use --force to override.
+var ErrAlreadyProcessed = errors.New("EOD cycle already processed for this day")
 
 // Config holds the paper-trading parameters (mirrors the backtest defaults).
 type Config struct {
@@ -109,12 +114,20 @@ func (r *Report) log(format string, a ...any) { r.Actions = append(r.Actions, fm
 // whose daily candle is final): fill yesterday's pending at today's open, process
 // exits on today's candle, then queue tomorrow's entries (gated + sized). All
 // state is persisted. dryRun computes the report without writing.
-func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOf time.Time, cfg Config, dryRun bool) (*Report, error) {
+func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOf time.Time, cfg Config, force, dryRun bool) (*Report, error) {
 	rep := &Report{Date: asOf, Mode: "eod", GateOpen: true}
 
 	acct, err := ps.Account(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// Idempotency guard: the cycle queues entries for the NEXT open, so running
+	// it twice for the same day would prematurely fill them. Refuse to re-run a
+	// day that has already been processed (or run an older day out of order),
+	// unless --force. Dry-run previews are never blocked (they persist nothing).
+	if !dryRun && !force && acct != nil && acct.LastEOD.Valid && !istDateAfter(asOf, acct.LastEOD.Time) {
+		return nil, fmt.Errorf("%w: last processed %s (use --force to re-run, or advance --as-of)",
+			ErrAlreadyProcessed, acct.LastEOD.Time.In(ist).Format("2006-01-02"))
 	}
 	if acct == nil {
 		if !dryRun {
@@ -313,6 +326,7 @@ func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore,
 
 	if !dryRun {
 		_ = ps.SetCash(ctx, cash)
+		_ = ps.SetLastEOD(ctx, asOf.In(ist)) // mark this day processed (guard)
 	}
 
 	rep.Cash = cash
@@ -405,4 +419,17 @@ func sameDay(a, b time.Time) bool {
 	ay, am, ad := a.In(ist).Date()
 	by, bm, bd := b.In(ist).Date()
 	return ay == by && am == bm && ad == bd
+}
+
+// istDateAfter reports whether a's IST calendar date is strictly after b's.
+func istDateAfter(a, b time.Time) bool {
+	ay, am, ad := a.In(ist).Date()
+	by, bm, bd := b.In(ist).Date()
+	if ay != by {
+		return ay > by
+	}
+	if am != bm {
+		return am > bm
+	}
+	return ad > bd
 }
