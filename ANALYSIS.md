@@ -571,7 +571,59 @@ a bad live bet.
 
 ---
 
-## 10. Conclusions (entry & exit)
+## 10. Mean reversion (RSI-2 oversold dip-buy) — REJECTED (PR: mean-reversion-v1)
+
+### Hypothesis
+Every strategy here is momentum/trend (swing pullback-in-uptrend, crossover),
+and all of them stall in non-trending regimes. The proposal was a *regime
+switcher* whose "defensive compounder" leg is a **mean-reversion** mode —
+structurally orthogonal to momentum — to earn its keep in the weak 2024–2025
+years where the index bled. We have no fundamentals (price/volume only), so the
+"quality" screen is a price proxy: only buy dips in names above their long-term
+mean.
+
+### Design (Mean Reversion V1, Connors RSI-2 style)
+- **Trend filter:** Close > EMA200 (buy dips only in structurally healthy names).
+- **Oversold trigger:** RSI(2) < 10 (a sharp short-term washout).
+- **Target:** EMA10 — revert to the short-term mean (engine `--exit-mode target`).
+- **Stop:** Close − 2.5×ATR(14), deliberately wide so the mean/time exit leads.
+- **Time stop:** `--max-hold 10`. Same portfolio engine as swing (5 slots,
+  risk-1% sizing, 0.25% cost + 0.20% slip) for an apples-to-apples comparison.
+
+### Per-year results vs the current swing strategy
+| Year | MeanRev V1 | Swing (current) |
+|---|---|---|
+| 2022 | −15.5% | +6.7% |
+| 2023 | +7.4% | +24.2% |
+| 2024 | **−13.1%** | −4.9% |
+| 2025 | **−12.5%** | −5.1% |
+| 2026-YTD | **−19.5%** | +0.2% |
+| **Full 22–26** | **−43.6%** (−46% DD) | **+30.5%** (−10% DD) |
+
+Win rate was *high* (58–74%, textbook mean-reversion) but **profit factor < 1 in
+every losing year**: snap-back wins are tiny, the ATR stop is wide, and the
+asymmetry sinks the expectancy. The thesis is not merely unproven — it is
+inverted: the mode is **worst in exactly the weak years it was meant to rescue.**
+
+### Robustness — the rejection is airtight
+- **+ health gate (window 20):** the gate *shuts it off* (24 trades in 4.5y) and
+  it is still −11.6% full-period — the gate confirms there is no edge to trade.
+- **Parameter sweeps (2024–2025):** wider target EMA20 → −31%; tighter stop
+  1.5×ATR → −63.6%; stricter RSI<5 → −21.9%. **Every** direction is negative;
+  there is no parameter neighbourhood where it works (so it is not a tuning miss).
+
+### Verdict
+Rejected. Root cause: oversold Indian names in 2024–2025 **kept falling**
+(downside trend-persistence), so dip-buying caught falling knives even above
+EMA200 — mean reversion needs choppy markets that round-trip, not one-way bleeds.
+This also closes the regime-switcher's "defensive compounder" leg on the
+evidence. The code (`--mode meanrev`, `internal/meanrev`) is kept in-tree but
+clearly labelled REJECTED so the experiment is not blindly repeated; the one
+reusable by-product is the **Wilder RSI helper** (`analysis.RSI`).
+
+---
+
+## 11. Conclusions (entry & exit)
 
 1. **Winner: the original swing strategy + EMA-recross exit** — frictionless
    ~14%/yr at −16% DD; **cost-adjusted ~9.4%/yr at −21% DD**, which only roughly
@@ -604,10 +656,15 @@ a bad live bet.
    roughly halves the losing years while leaving the good ones untouched. The
    strategy reading its *own* expectancy beats any market proxy. Robust across
    W15–W40. **Recommended addition to the default config.**
+10. **Mean reversion is not the missing ingredient (§10).** A textbook RSI-2
+    dip-buy — the orthogonal, non-momentum bet meant to carry the weak regime —
+    loses every year and is *worst* in 2024–2025, the exact years it targeted.
+    Rejected; the regime-switcher's "defensive compounder" leg is closed on the
+    evidence. Momentum-vs-mean-reversion was never the lever.
 
 ---
 
-## 11. Open questions / next steps
+## 12. Open questions / next steps
 
 - **Volatility regime (not market-trend).** The NIFTY-trend gate failed (§9), but
   a *volatility* filter is untested — e.g. no new entries when NIFTY ATR20/price
@@ -621,11 +678,12 @@ a bad live bet.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
-risk-based sizing — the breakthrough** (§9)._
+risk-based sizing — the breakthrough** (§9); **mean reversion (§10, rejected —
+closes the regime-switcher's defensive-compounder leg)**._
 
 ---
 
-## 12. Reproduce
+## 13. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -672,6 +730,11 @@ go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31
   --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 \
   --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
   --risk-pct 1.0 --max-weight-pct 25
+
+# §10 — mean reversion (REJECTED — loses every year, worst in the weak regime)
+go run ./cmd/backtest --portfolio --mode meanrev --exit-mode target --max-hold 10 \
+  --from 2024-01-01 --to 2025-12-31 \
+  --cost-pct 0.25 --slippage-pct 0.20    # -13% / -13%; gate only shuts it off
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
