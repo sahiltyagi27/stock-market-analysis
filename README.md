@@ -8,7 +8,11 @@ A backend engine written in Go that automates stock-market technical analysis �
 It has two halves:
 
 1. **Scanner** — turns candle data into ranked, explainable trade signals (offline, or live via the Kite WebSocket).
-2. **Research / backtest engine** — replays the strategy as a portfolio (shared capital, position cap, transaction costs, risk-based sizing, regime gating) to measure what actually works. The full study lives in **[ANALYSIS.md](ANALYSIS.md)**.
+2. **Research / backtest engine** — replays the strategy as a portfolio (shared capital, position cap, transaction costs, risk-based sizing, regime gating) to measure what actually works.
+
+> **New here? Start with [STRATEGY.md](STRATEGY.md)** — a plain-English guide to
+> what the engine trades and why. The full research narrative (every experiment
+> and dead end) is in **[ANALYSIS.md](ANALYSIS.md)**.
 
 ---
 
