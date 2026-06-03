@@ -430,3 +430,30 @@ func TestScan_MinTargetPct_RejectsWhenNoFarEnoughResistance(t *testing.T) {
 		t.Fatalf("expected MinTargetPct rejection reason, got: %v", err)
 	}
 }
+
+// TestScan_CloseStrength_RejectsFadedClose verifies the close-strength filter
+// rejects a faded close and passes a strong close. We adjust only high/low (not
+// close) so the EMA/crossover precondition is unchanged — close stays put.
+func TestScan_CloseStrength_RejectsFadedClose(t *testing.T) {
+	opts := lenientOpts()
+	opts.MaxCrossoverAge = 8
+	opts.MinCloseStrength = 0.8
+
+	// Weak close: range puts close at ~17% → reject.
+	cc := makeCrossoverCandles(100, 500_000, 0)
+	c := cc[len(cc)-1].Close
+	cc[len(cc)-1].Low, cc[len(cc)-1].High = c*0.96, c*1.20 // (c-0.96c)/(1.20c-0.96c)=0.167
+	_, errs := Scan([]Input{{Symbol: "TEST", Candles: cc}}, opts)
+	if err, ok := errs["TEST"]; !ok || !strings.Contains(err.Error(), "close strength") {
+		t.Fatalf("expected close-strength rejection, got %v", err)
+	}
+
+	// Strong close: range puts close at 0.80 → passes the close-strength filter.
+	cc2 := makeCrossoverCandles(100, 500_000, 0)
+	c2 := cc2[len(cc2)-1].Close
+	cc2[len(cc2)-1].Low, cc2[len(cc2)-1].High = c2*0.80, c2*1.05 // (c-0.80c)/(1.05c-0.80c)=0.80
+	_, errs2 := Scan([]Input{{Symbol: "TEST", Candles: cc2}}, opts)
+	if err, ok := errs2["TEST"]; ok && strings.Contains(err.Error(), "close strength") {
+		t.Fatalf("strong close (0.80) should pass close-strength filter, got %v", err)
+	}
+}

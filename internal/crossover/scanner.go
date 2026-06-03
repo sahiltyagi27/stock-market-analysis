@@ -66,6 +66,16 @@ type Options struct {
 	// Default: 3.0.  Set to < 0 to disable (always use previous-candle Low).
 	MinRiskPct float64
 
+	// MinCloseStrength requires the latest (signal-day) candle to close in the
+	// upper part of its daily range — a conviction/strong-close filter:
+	//
+	//	(close − low) / (high − low) ≥ MinCloseStrength
+	//
+	// e.g. 0.80 means the candle closed in the top 20% of its range (buyers in
+	// control at the close), rejecting breakouts that faded into the close.
+	// Default: 0 (disabled). Skipped on zero-range candles.
+	MinCloseStrength float64
+
 	// ZoneOpts are forwarded to analysis.FindZones for resistance detection.
 	// MinResistanceTouches defaults to 1 (any single-touch zone qualifies as
 	// a candidate target — crossover plays are momentum-driven, not zone-driven).
@@ -186,6 +196,22 @@ func analyzeOne(in Input, opts Options) (*Signal, error) {
 
 	crossoverAge := (n - 1) - xIdx
 	price := closes[n-1]
+
+	// Close-strength filter: the signal candle must close in the upper part of
+	// its range (buyers in control at the close), rejecting faded breakouts.
+	if opts.MinCloseStrength > 0 {
+		last := in.Candles[n-1]
+		rng := last.High - last.Low
+		if rng > 0 {
+			strength := (last.Close - last.Low) / rng
+			if strength < opts.MinCloseStrength {
+				return nil, fmt.Errorf(
+					"close strength %.2f below minimum %.2f (candle faded into the close)",
+					strength, opts.MinCloseStrength,
+				)
+			}
+		}
+	}
 
 	// SL: the Low of the candle immediately before the crossover candle.
 	// This candle shows the last bearish session before momentum turned.
