@@ -1011,3 +1011,10 @@ Stop-loss is placed just below the support zone low (0.5% buffer) and the target
 
 **Explainable signals**
 Every `StockSignal` carries a `Reasons []string` field built from the same inputs used for scoring. This makes the scanner auditable — every number in the score maps to a human-readable sentence — and sets the groundwork for a UI that shows users why each stock was selected.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE). This project is for research and
+educational purposes only and is not financial advice.
