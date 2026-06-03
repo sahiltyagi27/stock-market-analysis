@@ -106,6 +106,7 @@ func main() {
 	coVolMultWindow := flag.Int("co-vol-mult-window", 10, "[crossover] candles for the today's-volume average check")
 	coMinTargetPct := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
 	coMinRiskPct := flag.Float64("co-min-risk-pct", 3.0, "[crossover] min SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
+	coMinCloseStrength := flag.Float64("co-min-close-strength", 0, "[crossover] EXPERIMENTAL — require signal candle to close in top of range: (close-low)/(high-low) ≥ this (0 = off). NOT a robust edge; response is chaotic across thresholds — see ANALYSIS.md §9")
 
 	flag.Parse()
 
@@ -231,6 +232,7 @@ func main() {
 		CurrentVolWindow:      *coVolMultWindow,
 		MinTargetPct:          *coMinTargetPct,
 		MinRiskPct:            *coMinRiskPct,
+		MinCloseStrength:      *coMinCloseStrength,
 		ZoneOpts:              analysis.ZoneOptions{MinResistanceTouches: *coMinResTouches},
 	}
 

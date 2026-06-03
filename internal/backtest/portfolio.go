@@ -520,16 +520,28 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 	// Order each day's candidates so the best fill free slots first.
 	for dk := range out {
 		sigs := out[dk]
+		// Symbol is the final tiebreak so slot allocation is deterministic — the
+		// candidate slice is built by ranging a map (random order), so without it
+		// tied-score same-day signals would fill slots in a random order and make
+		// results wobble run-to-run.
 		if opts.AllocLookback > 0 {
-			// Variant D: leadership-ranked allocation, score as tiebreak.
+			// Variant D: leadership-ranked allocation, score then symbol as tiebreak.
 			sort.SliceStable(sigs, func(a, b int) bool {
 				if sigs[a].rankRet != sigs[b].rankRet {
 					return sigs[a].rankRet > sigs[b].rankRet
 				}
-				return sigs[a].score > sigs[b].score
+				if sigs[a].score != sigs[b].score {
+					return sigs[a].score > sigs[b].score
+				}
+				return sigs[a].symbol < sigs[b].symbol
 			})
 		} else {
-			sort.SliceStable(sigs, func(a, b int) bool { return sigs[a].score > sigs[b].score })
+			sort.SliceStable(sigs, func(a, b int) bool {
+				if sigs[a].score != sigs[b].score {
+					return sigs[a].score > sigs[b].score
+				}
+				return sigs[a].symbol < sigs[b].symbol
+			})
 		}
 		out[dk] = sigs
 	}

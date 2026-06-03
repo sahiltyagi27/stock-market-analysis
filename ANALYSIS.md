@@ -530,6 +530,45 @@ reopen or a tiny always-on probe. Not observed in 2022–25.
 The losing-years problem is finally addressed — not by a market gate, but by the
 strategy watching its own equity curve.
 
+### Engine determinism fix (important)
+While testing the crossover path we found the portfolio backtest was
+**non-deterministic** — the same config gave +1.5% one run, −2.4% the next.
+Cause: same-day candidate signals were sorted by score, but the candidate slice
+is built by ranging a `map` (random order), so **tied-score signals filled the
+5 slots in a random order**, cascading (via the gate and slot constraints) into
+different trade sequences. Fixed with a `symbol` tiebreak in the sort — every
+result is now reproducible. (Swing was affected too, just less — it has fewer
+tied signals than the crossover flood.)
+
+### Close-strength filter on crossover — looks good at one point, but NOT robust
+Idea: only take a crossover when the signal candle closes in the upper part of
+its range — `(close − low) / (high − low) ≥ X` — a conviction filter to reject
+faded breakouts, paired with the EMA-hold exit (let winners run, no resistance
+target). Tested on crossover + health gate + risk-1% + costs.
+
+At **X = 0.5** it looked excellent — kept the 2023 bull (+44% vs +61% unfiltered)
+*and* lifted the choppy 2024 (+1.5% → +10.1%) with lower drawdowns. **But it is
+not a robust parameter:**
+
+| From | X=0.50 | X=0.55 | X=0.60 |
+|---|---|---|---|
+| 2023 | +44.4% (114 trades) | −4.2% (24) | −2.8% (23) |
+| 2024 | +10.1% | −1.1% | +6.4% |
+
+A **0.05 change** collapses 2023 from +44% to −4% (a sheer cliff at 0.50→0.55),
+and 2024 bounces non-monotonically (+10 → −1 → +6). That jaggedness is the
+**signature of overfitting**, driven by path-dependency (filter × health-gate ×
+slot constraint): a tiny change in which signals pass cascades into a completely
+different trajectory. Contrast the genuinely robust levers (risk sizing,
+health-window) which showed **smooth plateaus**. The X=0.5 result is a lucky
+spike, not a trustworthy edge.
+
+**Verdict:** the `--co-min-close-strength` flag is kept as an **experimental**
+option (default off) but is **not** a validated improvement. Crossover remains a
+regime-dependent momentum strategy that bleeds in bears (2022 ≈ −38%). This is a
+good example of the rigorous setup catching a good-looking idea before it became
+a bad live bet.
+
 ---
 
 ## 10. Conclusions (entry & exit)
