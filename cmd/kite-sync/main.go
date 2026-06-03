@@ -32,7 +32,7 @@ import (
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
-	period := flag.String("period", "2y", "history window (e.g. 2y, 6m, 90d)")
+	period := flag.String("period", "5y", "history window (e.g. 5y, 2y, 6m, 90d). Capped by Kite's ~2000-day daily-candle limit")
 	includeNifty := flag.Bool("include-nifty", true, "also sync NIFTY 50 index candles as NIFTY50 for relative-strength filters")
 	includeSectorIndices := flag.Bool("include-sector-indices", true, "also sync verified NSE sector index candles for sector-strength filters")
 	sectorIndicesFlag := flag.String("sector-indices", "", "comma-separated sector index names to sync (empty = default verified list)")

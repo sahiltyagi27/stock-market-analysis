@@ -296,6 +296,21 @@ Useful flags: `--capital` (starting balance, first run only), `--as-of YYYY-MM-D
 > re-running an already-processed day — use `--dry-run` to preview or `--force`
 > to override. `--mode live` is read-only and can be run any number of times.
 
+### Warm-starting the health gate
+
+On a fresh account the strategy-health gate has no history, so it stays open
+(warming up) for the first ~20 closed trades. To start it *warm* — reflecting the
+strategy's recent expectancy from day one — seed it from a backtest window:
+
+```bash
+go run ./cmd/paper-trade --seed-from 2024-06-01   # backtests to today, seeds the gate
+go run ./cmd/paper-trade --mode eod               # gate already reflects recent expectancy
+```
+
+Seeded trades feed only the gate, not your account performance. If recent
+expectancy was negative, the gate correctly **starts closed** — protecting you
+from trading into a weak regime on day one.
+
 > The first `--mode eod` run seeds the strategy-health gate from scratch (it warms
 > up over your first ~20 closed trades). To start *warm*, populate prior trade
 > history — or run a backtest window first — before going live.
@@ -451,8 +466,12 @@ PostgreSQL. Run this after setting `KITE_ACCESS_TOKEN`, and refresh it whenever
 you want the DB cache to include the latest completed daily candle.
 
 ```bash
-go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y
+go run ./cmd/kite-sync           # defaults: --symbols config/symbols.txt --period 5y
 ```
+
+`--period` defaults to **5y** (the most history Kite allows in one daily-candle
+request, ~2000 days) so backtests and the strategy-health seed have enough data.
+For a quick daily top-up, `--period 1y` is plenty.
 
 What it does:
 - reads symbols from `config/symbols.txt`

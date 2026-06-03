@@ -29,17 +29,20 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/backtest"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/paper"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
+	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
 func main() {
@@ -50,6 +53,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "[eod] compute and print the cycle without persisting")
 	force := flag.Bool("force", false, "[eod] re-run a day that was already processed (overrides the once-per-day guard)")
 	reset := flag.Bool("reset", false, "wipe all paper state (account, positions, pending, trades) and exit")
+	seedFrom := flag.String("seed-from", "", "warm the health gate: backtest from this date (YYYY-MM-DD) to today and seed paper_trades, then exit")
 	exchange := flag.String("exchange", "NSE", "Kite exchange (for live mode)")
 
 	// Strategy parameters — defaults match the validated portfolio config.
@@ -115,6 +119,11 @@ func main() {
 		},
 	}
 
+	if *seedFrom != "" {
+		runSeed(ctx, ps, cs, symbols, *seedFrom, pcfg)
+		return
+	}
+
 	switch *mode {
 	case "eod":
 		runEOD(ctx, ps, cs, symbols, *asOfStr, pcfg, *force, *dryRun)
@@ -144,6 +153,75 @@ func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, sy
 		log.Fatalf("eod cycle: %v", err)
 	}
 	printReport(rep, pcfg.StartCapital)
+}
+
+// runSeed warms the strategy-health gate by replaying the validated portfolio
+// backtest from seedFromStr to today and writing the last `health-window` closed
+// trades as seeded paper_trades. They feed the gate but not account performance.
+func runSeed(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, seedFromStr string, pcfg paper.Config) {
+	from, err := time.Parse("2006-01-02", seedFromStr)
+	if err != nil {
+		log.Fatalf("--seed-from: invalid date %q", seedFromStr)
+	}
+	window := pcfg.HealthWindow
+	if window <= 0 {
+		window = 20
+	}
+	log.Printf("seeding health gate: backtest %s → today over %d symbols…", from.Format("2006-01-02"), len(symbols))
+
+	candlesMap := make(map[string][]models.Candle, len(symbols))
+	for _, sym := range symbols {
+		cc, err := cs.GetCandles(ctx, sym, store.CandleFilter{})
+		if err == nil && len(cc) > 0 {
+			candlesMap[sym] = cc
+		}
+	}
+
+	pf := backtest.PortfolioOptions{
+		From: from, To: time.Now(),
+		MinScore:             pcfg.MinScore,
+		MaxPositions:         pcfg.MaxPositions,
+		StartCapital:         pcfg.StartCapital,
+		ExitMode:             "ema",
+		RiskPct:              pcfg.RiskPct,
+		MaxWeightPct:         pcfg.MaxWeightPct,
+		CostPct:              pcfg.CostPct,
+		SlippagePct:          pcfg.SlippagePct,
+		StrategyHealthWindow: pcfg.HealthWindow,
+		StrategyHealthMode:   "avgr",
+		StrategyHealthMin:    pcfg.HealthMin,
+		EngineOpts:           backtest.Options{Mode: "swing", ScanOpts: pcfg.ScanOpts},
+	}
+	trades, _ := backtest.RunPortfolio(ctx, candlesMap, pf)
+	if len(trades) == 0 {
+		fmt.Println("backtest produced no trades in that window — nothing to seed. Try an earlier --seed-from.")
+		return
+	}
+	sort.SliceStable(trades, func(i, j int) bool { return trades[i].ExitDate.Before(trades[j].ExitDate) })
+	if window > len(trades) {
+		window = len(trades)
+	}
+	seed := trades[len(trades)-window:]
+
+	if err := ps.ClearSeedTrades(ctx); err != nil {
+		log.Fatalf("clear seed: %v", err)
+	}
+	var sum float64
+	for _, t := range seed {
+		sum += t.ActualRR
+		_ = ps.InsertSeedTrade(ctx, store.PaperTrade{
+			Symbol: t.Symbol, EntryDate: t.EntryDate, ExitDate: t.ExitDate,
+			Entry: t.Entry, Exit: t.ExitPrice, SL: t.SL,
+			RealizedR: t.ActualRR, Outcome: string(t.Outcome),
+		})
+	}
+	avg := sum / float64(len(seed))
+	gate := "OPEN"
+	if avg < pcfg.HealthMin {
+		gate = "CLOSED"
+	}
+	fmt.Printf("\nSeeded %d trades into the health gate (avg R %+.2f).\n", len(seed), avg)
+	fmt.Printf("Gate will start %s on the first --mode eod run.\n", gate)
 }
 
 func runLive(ctx context.Context, ps *store.PaperStore, cfg *config.Config, exchange string) {
