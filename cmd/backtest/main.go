@@ -38,6 +38,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/meanrev"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -47,7 +48,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	fromStr := flag.String("from", "", "start of signal-date window, YYYY-MM-DD (empty = no lower bound)")
 	toStr := flag.String("to", "", "end of signal-date window, YYYY-MM-DD (empty = today)")
-	mode := flag.String("mode", "swing", "scanner strategy: swing or crossover")
+	mode := flag.String("mode", "swing", "scanner strategy: swing, crossover, or meanrev (meanrev = REJECTED experiment, see ANALYSIS.md §10)")
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
@@ -107,6 +108,17 @@ func main() {
 	coMinTargetPct := flag.Float64("co-min-target-pct", 4.0, "[crossover] min %% distance the resistance target must sit above entry (<0 disables)")
 	coMinRiskPct := flag.Float64("co-min-risk-pct", 3.0, "[crossover] min SL distance as %% of price; widens a too-tight previous-candle-low stop (<0 disables)")
 	coMinCloseStrength := flag.Float64("co-min-close-strength", 0, "[crossover] EXPERIMENTAL — require signal candle to close in top of range: (close-low)/(high-low) ≥ this (0 = off). NOT a robust edge; response is chaotic across thresholds — see ANALYSIS.md §9")
+
+	// Mean-reversion-mode flags (only used when --mode meanrev).
+	// REJECTED experiment — loses in every regime, worst in the weak years it
+	// was meant to help; kept only for reproducibility. See ANALYSIS.md §10.
+	mrRSIPeriod := flag.Int("mr-rsi-period", 2, "[meanrev] RSI lookback for the oversold trigger (Connors RSI-2)")
+	mrMaxRSI := flag.Float64("mr-max-rsi", 10, "[meanrev] fire only when RSI(mr-rsi-period) is below this (deeply oversold)")
+	mrTrendPeriod := flag.Int("mr-trend-period", 200, "[meanrev] long-term EMA the price must sit above (buy dips only in up-trends)")
+	mrMeanPeriod := flag.Int("mr-mean-period", 10, "[meanrev] EMA used as the reversion target (the mean price snaps back to)")
+	mrStopATRMult := flag.Float64("mr-stop-atr-mult", 2.5, "[meanrev] SL = close − this × ATR (wide; mean/time exit leads)")
+	mrATRPeriod := flag.Int("mr-atr-period", 14, "[meanrev] ATR period for the stop")
+	mrMinCandles := flag.Int("mr-min-candles", 0, "[meanrev] min candles before analysis (0 = trend-period + 10)")
 
 	flag.Parse()
 
@@ -219,8 +231,18 @@ func main() {
 		},
 	}
 
-	if *mode != "swing" && *mode != "crossover" {
-		log.Fatalf("--mode must be swing or crossover, got %q", *mode)
+	if *mode != "swing" && *mode != "crossover" && *mode != "meanrev" {
+		log.Fatalf("--mode must be swing, crossover, or meanrev, got %q", *mode)
+	}
+
+	mrOpts := meanrev.Options{
+		RSIPeriod:   *mrRSIPeriod,
+		MaxRSI:      *mrMaxRSI,
+		TrendPeriod: *mrTrendPeriod,
+		MeanPeriod:  *mrMeanPeriod,
+		StopATRMult: *mrStopATRMult,
+		ATRPeriod:   *mrATRPeriod,
+		MinCandles:  *mrMinCandles,
 	}
 
 	coOpts := crossover.Options{
@@ -246,6 +268,7 @@ func main() {
 		TrailATRMultiplier: *trailATRMult,
 		ScanOpts:           scanOpts,
 		CrossoverOpts:      coOpts,
+		MeanRevOpts:        mrOpts,
 		Progress: func(done, total int) {
 			if done%50 == 0 || done == total {
 				log.Printf("  simulating: %d/%d symbols…", done, total)

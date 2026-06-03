@@ -9,6 +9,7 @@ import (
 
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/meanrev"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
@@ -46,6 +47,8 @@ type Options struct {
 	// Mode selects the scanning strategy.
 	// "swing" (default) uses the support-zone swing scanner.
 	// "crossover" uses the EMA 7×21 crossover scanner.
+	// "meanrev" uses the mean-reversion (RSI-2 oversold dip) scanner — a
+	//   REJECTED experiment kept for reproducibility (see ANALYSIS.md §10).
 	Mode string
 
 	// ScanOpts are used when Mode == "swing" (or empty).
@@ -53,6 +56,9 @@ type Options struct {
 
 	// CrossoverOpts are used when Mode == "crossover".
 	CrossoverOpts crossover.Options
+
+	// MeanRevOpts are used when Mode == "meanrev".
+	MeanRevOpts meanrev.Options
 
 	// Progress is an optional callback invoked after each symbol completes.
 	// Arguments are (symbolsDone, symbolsTotal). Safe to nil; called from
@@ -147,6 +153,24 @@ type tradeSetup struct {
 // history and returns the relevant trade fields.  ok is false when no signal
 // is produced (caller should advance i and continue).
 func getTradeSetup(sym string, candles []models.Candle, opts Options) (ts tradeSetup, ok bool) {
+	if opts.Mode == "meanrev" {
+		sigs, _ := meanrev.Scan(
+			[]meanrev.Input{{Symbol: sym, Candles: candles}},
+			opts.MeanRevOpts,
+		)
+		if len(sigs) == 0 {
+			return ts, false
+		}
+		sig := sigs[0]
+		return tradeSetup{
+			sl:     sig.SL,
+			target: sig.Target,
+			atr:    sig.ATR,
+			score:  sig.Score,
+			trend:  "meanrev",
+		}, true
+	}
+
 	if opts.Mode == "crossover" {
 		sigs, _ := crossover.Scan(
 			[]crossover.Input{{Symbol: sym, Candles: candles}},
@@ -187,6 +211,16 @@ func getTradeSetup(sym string, candles []models.Candle, opts Options) (ts tradeS
 
 // minCandles returns the minimum candle count required for the active mode.
 func (o Options) minCandles() int {
+	if o.Mode == "meanrev" {
+		if o.MeanRevOpts.MinCandles > 0 {
+			return o.MeanRevOpts.MinCandles
+		}
+		trend := o.MeanRevOpts.TrendPeriod
+		if trend <= 0 {
+			trend = 200
+		}
+		return trend + 10 // meanrev default (EMA200 + margin)
+	}
 	if o.Mode == "crossover" {
 		if o.CrossoverOpts.MinCandles > 0 {
 			return o.CrossoverOpts.MinCandles
