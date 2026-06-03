@@ -108,6 +108,7 @@ func (s *PaperStore) Migrate(ctx context.Context) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_paper_trades_exit ON paper_trades (exit_date);
 		ALTER TABLE paper_account ADD COLUMN IF NOT EXISTS last_eod_date DATE;
+		ALTER TABLE paper_trades  ADD COLUMN IF NOT EXISTS seeded BOOLEAN NOT NULL DEFAULT FALSE;
 	`)
 	if err != nil {
 		return fmt.Errorf("paper migrate: %w", err)
@@ -221,10 +222,27 @@ func (s *PaperStore) ClearPending(ctx context.Context) error {
 }
 
 func (s *PaperStore) InsertTrade(ctx context.Context, t PaperTrade) error {
+	return s.insertTrade(ctx, t, false)
+}
+
+// InsertSeedTrade records a synthetic trade (from a backtest) used only to warm
+// the strategy-health gate. Seeded trades feed the health window but are excluded
+// from account performance stats.
+func (s *PaperStore) InsertSeedTrade(ctx context.Context, t PaperTrade) error {
+	return s.insertTrade(ctx, t, true)
+}
+
+func (s *PaperStore) insertTrade(ctx context.Context, t PaperTrade, seeded bool) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO paper_trades (symbol, entry_date, exit_date, entry, exit, shares, sl, realized_r, pnl, outcome)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		t.Symbol, t.EntryDate, t.ExitDate, t.Entry, t.Exit, t.Shares, t.SL, t.RealizedR, t.PnL, t.Outcome)
+		`INSERT INTO paper_trades (symbol, entry_date, exit_date, entry, exit, shares, sl, realized_r, pnl, outcome, seeded)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		t.Symbol, t.EntryDate, t.ExitDate, t.Entry, t.Exit, t.Shares, t.SL, t.RealizedR, t.PnL, t.Outcome, seeded)
+	return err
+}
+
+// ClearSeedTrades removes only seeded trades (e.g. before re-seeding).
+func (s *PaperStore) ClearSeedTrades(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM paper_trades WHERE seeded = TRUE`)
 	return err
 }
 
@@ -266,6 +284,6 @@ func (s *PaperStore) TradeStats(ctx context.Context) (total, wins, losses int, s
 		       COUNT(*) FILTER (WHERE realized_r > 0),
 		       COUNT(*) FILTER (WHERE realized_r < 0),
 		       COALESCE(SUM(pnl), 0)
-		FROM paper_trades`).Scan(&total, &wins, &losses, &sumPnL)
+		FROM paper_trades WHERE seeded = FALSE`).Scan(&total, &wins, &losses, &sumPnL)
 	return
 }
