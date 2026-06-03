@@ -66,6 +66,10 @@ index on a risk-adjusted basis where naive market filters failed (see
 - ✅ **Strategy-health regime gate** — pause new entries when recent realised expectancy turns negative (the project's strongest finding)
 - ✅ **Sector indices** — sync NSE sector index candles and map stocks → sectors (`cmd/sector-index-discovery`, `cmd/kite-sync`)
 
+### Forward paper trading
+- ✅ **Persistent paper trader** (`cmd/paper-trade`) — runs the validated stack forward day-by-day with PostgreSQL-backed state that continues across sessions
+- ✅ **Two modes** — `--mode eod` (authoritative once-per-day cycle after close) and `--mode live` (read-only intraday monitor with live Kite prices + stop-breach alerts)
+
 ---
 
 ## Architecture
@@ -256,6 +260,48 @@ out-of-sample split-half validation, and is robust across a wide parameter range
 
 ---
 
+## Paper Trading
+
+`cmd/paper-trade` runs the **exact same** validated stack forward in real time —
+risk-1% sizing, EMA-recross exit, strategy-health gate, costs — with all state
+(account, open positions, queued entries, closed trades) persisted in PostgreSQL,
+so a session continues across days. The strategy is daily, so there are two modes:
+
+| Mode | When | What it does |
+|---|---|---|
+| `--mode live` | during market hours | **Read-only** monitor — marks open positions to live Kite prices, flags stop-loss breaches. No state change. |
+| `--mode eod` | after the close | **Authoritative** daily cycle — fills yesterday's queued entries at today's open, processes exits on today's candle, queues tomorrow's entries (gated + sized), persists everything. |
+
+### Daily workflow
+
+```bash
+# (once) refresh the Kite access token — expires daily
+go run ./cmd/kite-token
+
+# DURING the session — watch your open paper positions live
+go run ./cmd/paper-trade --mode live
+
+# AFTER the close — pull today's candle, then run the daily cycle
+go run ./cmd/kite-sync --period 1y
+go run ./cmd/paper-trade --mode eod
+```
+
+Useful flags: `--capital` (starting balance, first run only), `--as-of YYYY-MM-DD`
+(run/replay a specific day), `--dry-run` (preview without persisting), `--reset`
+(wipe all paper state for a fresh start). Strategy parameters (`--risk-pct`,
+`--max-positions`, `--health-window`, `--min-score`, …) default to the validated config.
+
+> **`--mode eod` runs once per trading day.** It queues entries for the *next*
+> open, so a second same-day run would fill them prematurely. A guard blocks
+> re-running an already-processed day — use `--dry-run` to preview or `--force`
+> to override. `--mode live` is read-only and can be run any number of times.
+
+> The first `--mode eod` run seeds the strategy-health gate from scratch (it warms
+> up over your first ~20 closed trades). To start *warm*, populate prior trade
+> history — or run a backtest window first — before going live.
+
+---
+
 ## Project Structure
 
 ```
@@ -269,6 +315,7 @@ stock-market-analysis/
 │   ├── live-scan/              # Real-time scanner via Kite WebSocket (every 2 min)
 │   ├── scan-history/           # Query the persisted scan_results log
 │   ├── backtest/               # Walk-forward + portfolio-aware backtester
+│   ├── paper-trade/            # Persistent forward paper trading (eod / live modes)
 │   └── server/                 # REST API server
 ├── config/                     # Env config, symbols watchlist, sector map
 ├── internal/
@@ -276,8 +323,9 @@ stock-market-analysis/
 │   ├── scanner/                # Swing scanner engine, scorer, reasons, diagnostics
 │   ├── crossover/              # EMA 7×21 crossover scanner
 │   ├── backtest/               # Walk-forward engine, portfolio engine, metrics
+│   ├── paper/                  # Forward paper-trading engine (daily cycle + live snapshot)
 │   ├── kite/                   # Kite Connect client (token, instruments, history, WS)
-│   ├── store/                  # PostgreSQL candle + scan-result stores
+│   ├── store/                  # PostgreSQL candle, scan-result, and paper stores
 │   ├── display/               # Terminal colour helpers
 │   ├── loader/                 # CSV → Candle parser
 │   ├── api/                    # REST handlers (Chi router)
@@ -917,9 +965,10 @@ ok  github.com/sahiltyagi27/stock-market-analysis/internal/scanner
 - [x] Strategy-health regime gate — equity-curve filter (the headline finding)
 - [x] Sector indices — sync + stock→sector mapping
 - [x] Research write-up — see [ANALYSIS.md](ANALYSIS.md)
+- [x] Persistent forward paper trading (`cmd/paper-trade`, eod + live modes)
 
 **Upcoming**
-- [ ] Live execution / paper-trading loop (wire the portfolio engine + health gate, seeded from the DB, to live signals)
+- [ ] Scheduler / automation (cron the daily `kite-sync` → `paper-trade --mode eod`)
 - [ ] Concurrent worker pool (parallel scanning across 500+ stocks)
 - [ ] Daily scan scheduler + signals API
 - [ ] Production architecture (Docker, CI/CD)
