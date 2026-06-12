@@ -1,9 +1,12 @@
 package backtest
 
 import (
+	"context"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
@@ -182,6 +185,78 @@ func TestStrategyHealthy(t *testing.T) {
 	// pf: [+1,-1,-1,-1] → PF = 1/3 ≈ 0.33 < 1.2 → unhealthy.
 	if strategyHealthy([]float64{1, -1, -1, -1}, PortfolioOptions{StrategyHealthWindow: 4, StrategyHealthMode: "pf", StrategyHealthMin: 1.2}) {
 		t.Fatal("PF 0.33 must fail min 1.2")
+	}
+}
+
+// syntheticCrossSeries builds a rising-but-oscillating price series that fires
+// repeated, *winning* EMA7×EMA21 crossover signals — enough up-drift that each
+// crossover trade is profitable, enough ripple that crossovers actually occur.
+func syntheticCrossSeries(sym string, n int, phase float64) []models.Candle {
+	out := make([]models.Candle, n)
+	base := time.Date(2022, 1, 3, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < n; i++ {
+		c := 1000.0 + float64(i)*2.5 + 70*math.Sin((float64(i)+phase)/5.0)
+		out[i] = models.Candle{
+			Symbol: sym, Timestamp: base.AddDate(0, 0, i),
+			Open: c * 0.999, High: c * 1.015, Low: c * 0.985, Close: c, Volume: 500000,
+		}
+	}
+	return out
+}
+
+func crossPortfolioOpts() PortfolioOptions {
+	return PortfolioOptions{
+		From:        time.Date(2022, 4, 1, 0, 0, 0, 0, time.UTC),
+		To:          time.Date(2022, 11, 1, 0, 0, 0, 0, time.UTC),
+		ExitMode:    "ema",
+		MaxHoldDays: 12,
+		EngineOpts: Options{Mode: "crossover", CrossoverOpts: crossover.Options{
+			MaxCrossoverAge: 2, MinRR: 0.1, MinTargetPct: -1, MinRiskPct: -1,
+			MinCandles: 50, VolumeWindow: 20,
+		}},
+	}
+}
+
+func crossPortfolioData() map[string][]models.Candle {
+	data := map[string][]models.Candle{}
+	for i, sym := range []string{"AAA", "BBB", "CCC", "DDD", "EEE", "FFF"} {
+		data[sym] = syntheticCrossSeries(sym, 300, float64(i)*2)
+	}
+	return data
+}
+
+// TestHealthGate_ShadowReopensClosedGate is the regression test for the
+// one-way-door fix. With the health gate seeded CLOSED:
+//   - without shadow, no trade ever closes → the window never refreshes → the
+//     gate is locked shut forever → zero trades;
+//   - with shadow, the strategy keeps simulating winning trades while flat,
+//     their R refreshes the window, and the gate reopens → real trades happen.
+func TestHealthGate_ShadowReopensClosedGate(t *testing.T) {
+	data := crossPortfolioData()
+
+	// Sanity: with the gate disabled the synthetic data does produce signals.
+	base := crossPortfolioOpts()
+	base.StrategyHealthWindow = 0
+	if tr, _ := RunPortfolio(context.Background(), data, base); len(tr) == 0 {
+		t.Fatal("synthetic data produced no trades even with the gate off — test fixture is broken")
+	}
+
+	seededClosed := func(shadow bool) int {
+		o := crossPortfolioOpts()
+		o.StrategyHealthWindow = 5
+		o.StrategyHealthMode = "avgr"
+		o.StrategyHealthMin = 0
+		o.HealthSeed = []float64{-1, -1, -1, -1, -1} // start the gate CLOSED
+		o.StrategyHealthShadow = shadow
+		tr, _ := RunPortfolio(context.Background(), data, o)
+		return len(tr)
+	}
+
+	if locked := seededClosed(false); locked != 0 {
+		t.Fatalf("without shadow a gate seeded closed must stay locked (0 trades), got %d", locked)
+	}
+	if reopened := seededClosed(true); reopened == 0 {
+		t.Fatal("with shadow the gate must reopen once shadow trades turn healthy, but it produced 0 trades")
 	}
 }
 

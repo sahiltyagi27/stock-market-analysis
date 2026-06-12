@@ -98,6 +98,19 @@ type PortfolioOptions struct {
 	// completed trades in the DB; in backtests, from a warmup pass.
 	HealthSeed []float64
 
+	// StrategyHealthShadow fixes the gate's one-way-door flaw. Without it, once
+	// the health gate closes it stops producing closed-trade data, so the rolling
+	// window never refreshes and the gate can NEVER reopen — the system locks into
+	// cash permanently (observed: continuous 2022→2026 run dies in early 2024).
+	//
+	// When true, the strategy keeps *simulating* the trades it would have taken
+	// while the gate is closed — "shadow" positions that use no capital but whose
+	// realised R is fed into the health window exactly like a real trade. Real
+	// money stays out; the measurement continues, so the gate reopens as soon as
+	// the strategy's hypothetical recent performance turns healthy again. Requires
+	// StrategyHealthWindow > 0. No effect on runs where the gate never closes.
+	StrategyHealthShadow bool
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -151,6 +164,20 @@ type PortfolioStats struct {
 	RejectedFull    int
 	RejectedAvgRR   float64
 	RejectedWinRate float64
+
+	// EquityCurve is the daily mark-to-market account value (one point per
+	// trading day on the global calendar), with the count of real new entries
+	// opened that day. It is the ground truth for return/drawdown/window analysis
+	// — unlike reconstructing equity from per-trade R, it already accounts for
+	// concurrency, weight caps, and cash constraints.
+	EquityCurve []EquityPoint
+}
+
+// EquityPoint is one day's account value on the portfolio equity curve.
+type EquityPoint struct {
+	Date    time.Time
+	Equity  float64
+	Entries int // real new positions opened that day (for "engaged" analysis)
 }
 
 // symData holds precomputed per-symbol series for the portfolio walk.
@@ -256,11 +283,18 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	// Walk the calendar.
 	cash := opts.StartCapital
 	positions := map[string]*pfPosition{}
+	// shadowPos holds hypothetical positions opened while the health gate is
+	// closed (StrategyHealthShadow). They consume no capital and never appear in
+	// `trades`; their only purpose is to keep feeding realised R into healthR so
+	// the gate can detect a recovery and reopen. Always empty when the feature is
+	// off or the gate is open.
+	shadowPos := map[string]*pfPosition{}
 	var trades []TradeResult
 	peak := opts.StartCapital
 	var maxDD float64
 	var maxConcurrent int
 	var totalHold int
+	equityCurve := make([]EquityPoint, 0, len(calendar))
 
 	// Opportunity-loss tracking (M10): hypothetical outcomes of signals rejected
 	// because the portfolio was full. hypoOpenUntil dedups per symbol.
@@ -275,9 +309,14 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 
 	for _, day := range calendar {
 		dk := day.Format(dayFmt)
+		entriesToday := 0
 
-		// 1. Exits.
-		for sym, pos := range positions {
+		// 1. Exits. Symbols are processed in deterministic (sorted) order so the
+		// order realised R is appended to healthR is reproducible run-to-run — map
+		// iteration is randomised, and that append order shifts which trades fall in
+		// the gate's rolling window.
+		for _, sym := range sortedPosSymbols(positions) {
+			pos := positions[sym]
 			sd := data[sym]
 			idx, ok := sd.dateIdx[dk]
 			if !ok {
@@ -313,6 +352,32 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			delete(positions, sym)
 		}
 
+		// 1b. Shadow exits — keep the health window live while the gate is closed.
+		// These mirror real exits but book no cash; only their realised R feeds the
+		// gate, so the strategy keeps "measuring itself" and can reopen.
+		if opts.StrategyHealthShadow {
+			for _, sym := range sortedPosSymbols(shadowPos) {
+				pos := shadowPos[sym]
+				sd := data[sym]
+				idx, ok := sd.dateIdx[dk]
+				if !ok {
+					continue
+				}
+				exitTrigger, _, exited := checkExit(pos, sd, idx, opts)
+				if !exited {
+					continue
+				}
+				exitPrice := sellFill(exitTrigger, opts.slip())
+				risk := pos.entry - pos.sl
+				rr := 0.0
+				if risk > 0 {
+					rr = (exitPrice - pos.entry) / risk
+				}
+				healthR = append(healthR, rr)
+				delete(shadowPos, sym)
+			}
+		}
+
 		// 2. Mark-to-market equity + drawdown.
 		equity := cash
 		for sym, pos := range positions {
@@ -337,11 +402,43 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		// NEW entries are blocked when a gate is closed.
 		regimeOK := regimeOn == nil || regimeOn[dk]
 		healthOK := strategyHealthy(healthR, opts)
+		// Shadow mode engages only while the gate is closed (and the market regime
+		// allows trading): instead of going dark, the strategy keeps measuring.
+		shadowMode := opts.StrategyHealthShadow && regimeOK && !healthOK
 		for _, sig := range signalsByDate[dk] {
-			if !regimeOK || !healthOK {
+			if !regimeOK {
 				break
 			}
+			if !healthOK && !shadowMode {
+				break // gate closed, shadow disabled → block all new entries
+			}
 			if _, held := positions[sig.symbol]; held {
+				continue
+			}
+			if _, shadowed := shadowPos[sig.symbol]; shadowed {
+				continue // already being shadow-measured; don't double-count
+			}
+			// Shadow entry: gate closed but we keep simulating to stay measured.
+			if !healthOK {
+				if len(shadowPos) >= opts.MaxPositions {
+					continue
+				}
+				sd := data[sig.symbol]
+				ec := sd.candles[sig.entryIdx]
+				entryPrice := buyFill(sig.entry, opts.slip())
+				if ec.Low <= sig.sl { // same-day gap-down → immediate shadow loss
+					risk := entryPrice - sig.sl
+					rr := 0.0
+					if risk > 0 {
+						rr = (sellFill(sig.sl, opts.slip()) - entryPrice) / risk
+					}
+					healthR = append(healthR, rr)
+					continue
+				}
+				shadowPos[sig.symbol] = &pfPosition{
+					symbol: sig.symbol, shares: 0, entry: entryPrice, sl: sig.sl,
+					target: sig.target, entryIdx: sig.entryIdx, entryDate: sig.entryDate,
+				}
 				continue
 			}
 			// Opportunity-loss (M10): when the portfolio is full, this qualifying
@@ -391,16 +488,19 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 					ExitPrice: exitPrice, Outcome: OutcomeLoss, ActualRR: rr, HoldDays: 0,
 				})
 				healthR = append(healthR, rr)
+				entriesToday++
 				continue
 			}
 			positions[sig.symbol] = &pfPosition{
 				symbol: sig.symbol, shares: shares, entry: entryPrice, sl: sig.sl,
 				target: sig.target, entryIdx: sig.entryIdx, entryDate: sig.entryDate,
 			}
+			entriesToday++
 		}
 		if len(positions) > maxConcurrent {
 			maxConcurrent = len(positions)
 		}
+		equityCurve = append(equityCurve, EquityPoint{Date: day, Equity: equity, Entries: entriesToday})
 	}
 
 	// Force-close any still-open positions at their last close.
@@ -454,6 +554,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	case sumPos > 0:
 		stats.ProfitFactor = math.Inf(1)
 	}
+	stats.EquityCurve = equityCurve
 	stats.RejectedFull = rejCount
 	if rejCount > 0 {
 		stats.RejectedAvgRR = rejSumRR / float64(rejCount)
@@ -545,6 +646,18 @@ func generateSignals(data map[string]*symData, opts PortfolioOptions) map[string
 		}
 		out[dk] = sigs
 	}
+	return out
+}
+
+// sortedPosSymbols returns the map's keys in ascending order so position
+// processing (and the realised-R appends that drive the health gate) is
+// deterministic — Go map iteration order is randomised.
+func sortedPosSymbols(m map[string]*pfPosition) []string {
+	out := make([]string, 0, len(m))
+	for s := range m {
+		out = append(out, s)
+	}
+	sort.Strings(out)
 	return out
 }
 
