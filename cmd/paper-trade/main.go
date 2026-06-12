@@ -62,6 +62,7 @@ func main() {
 	maxWeightPct := flag.Float64("max-weight-pct", 25, "cap any single position at this %% of equity")
 	healthWindow := flag.Int("health-window", 20, "strategy-health gate window (0 = off)")
 	healthMin := flag.Float64("health-min", 0, "min avg R over the health window")
+	healthShadow := flag.Bool("health-shadow", true, "keep the gate measuring via shadow trades while it is closed, so it can REOPEN (fixes the one-way-door lockout)")
 	minScore := flag.Float64("min-score", 60, "minimum signal score to queue an entry")
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward for the swing scanner")
 	costPct := flag.Float64("cost-pct", 0.25, "round-trip transaction cost %%")
@@ -110,6 +111,7 @@ func main() {
 		MaxWeightPct: *maxWeightPct,
 		HealthWindow: *healthWindow,
 		HealthMin:    *healthMin,
+		HealthShadow: *healthShadow,
 		MinScore:     *minScore,
 		CostPct:      *costPct,
 		SlippagePct:  *slippagePct,

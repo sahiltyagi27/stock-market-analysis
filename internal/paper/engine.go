@@ -34,10 +34,48 @@ type Config struct {
 	MaxWeightPct float64
 	HealthWindow int     // strategy-health gate window (0 = off)
 	HealthMin    float64 // avg-R threshold over the window
+	HealthShadow bool    // keep the gate measuring via shadow trades while closed
 	MinScore     float64
 	CostPct      float64 // round-trip transaction cost %
 	SlippagePct  float64 // per-leg slippage %
 	ScanOpts     scanner.Options
+
+	// signalFunc, when non-nil, overrides entry-signal generation. Production
+	// leaves it nil (the swing scanner). Tests inject deterministic signals so the
+	// gate/shadow orchestration can be exercised without crafting candles that
+	// satisfy every swing-scanner filter.
+	signalFunc func(history map[string][]models.Candle, opts scanner.Options) []scanner.StockSignal
+}
+
+// Store is the persistence surface RunDayEnd needs. *store.PaperStore satisfies
+// it; tests provide an in-memory fake so the day-by-day gate behaviour can be
+// verified hermetically (no database).
+type Store interface {
+	Account(ctx context.Context) (*store.PaperAccount, error)
+	InitAccount(ctx context.Context, startCapital float64) error
+	SetCash(ctx context.Context, cash float64) error
+	SetLastEOD(ctx context.Context, d time.Time) error
+	Positions(ctx context.Context) ([]store.PaperPosition, error)
+	InsertPosition(ctx context.Context, p store.PaperPosition) error
+	DeletePosition(ctx context.Context, symbol string) error
+	Pending(ctx context.Context) ([]store.PaperPending, error)
+	InsertPending(ctx context.Context, p store.PaperPending) error
+	ClearPending(ctx context.Context) error
+	InsertTrade(ctx context.Context, t store.PaperTrade) error
+	RecentTradeR(ctx context.Context, n int) ([]float64, error)
+	// Shadow surface (gate-closed measurement; no capital).
+	ShadowPositions(ctx context.Context) ([]store.PaperPosition, error)
+	InsertShadowPosition(ctx context.Context, p store.PaperPosition) error
+	DeleteShadowPosition(ctx context.Context, symbol string) error
+	ShadowPending(ctx context.Context) ([]store.PaperPending, error)
+	InsertShadowPending(ctx context.Context, p store.PaperPending) error
+	ClearShadowPending(ctx context.Context) error
+	InsertShadowTrade(ctx context.Context, t store.PaperTrade) error
+}
+
+// CandleSource supplies candle history. *store.CandleStore satisfies it.
+type CandleSource interface {
+	GetCandles(ctx context.Context, symbol string, f store.CandleFilter) ([]models.Candle, error)
 }
 
 func (c Config) slip() float64    { return c.SlippagePct / 100 }
@@ -114,7 +152,7 @@ func (r *Report) log(format string, a ...any) { r.Actions = append(r.Actions, fm
 // whose daily candle is final): fill yesterday's pending at today's open, process
 // exits on today's candle, then queue tomorrow's entries (gated + sized). All
 // state is persisted. dryRun computes the report without writing.
-func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOf time.Time, cfg Config, force, dryRun bool) (*Report, error) {
+func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string, asOf time.Time, cfg Config, force, dryRun bool) (*Report, error) {
 	rep := &Report{Date: asOf, Mode: "eod", GateOpen: true}
 
 	acct, err := ps.Account(ctx)
@@ -282,6 +320,71 @@ func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore,
 		equity += float64(p.Shares) * mark(p.Symbol)
 	}
 
+	// ── 2b. Shadow trades — keep the gate measuring while it is closed ────────
+	// Without this the gate is a one-way door: once closed, no real trade ever
+	// closes, RecentTradeR never refreshes, and it can never reopen. Shadow
+	// positions mirror real ones (next-open fill, EMA/stop exit) but use no
+	// capital; their realised R is written to paper_trades with shadow=TRUE so it
+	// feeds the gate (RecentTradeR) without touching account performance.
+	shadowHeld := map[string]bool{}
+	if cfg.HealthShadow {
+		// A. Fill yesterday's shadow pending at today's open → shadow positions.
+		shPending, err := ps.ShadowPending(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, pg := range shPending {
+			today, ok := candleToday(pg.Symbol)
+			if !ok || heldOrPending[pg.Symbol] {
+				continue
+			}
+			entry := buyFill(today.Open, cfg.slip())
+			if today.Low <= pg.SL { // same-day gap-down stop
+				exit := sellFill(pg.SL, cfg.slip())
+				if !dryRun {
+					_ = ps.InsertShadowTrade(ctx, shadowTrade(pg.Symbol, asOf, asOf, entry, exit, pg.SL, "loss"))
+				}
+				continue
+			}
+			if !dryRun {
+				_ = ps.InsertShadowPosition(ctx, store.PaperPosition{
+					Symbol: pg.Symbol, Entry: entry, EntryDate: asOf, SL: pg.SL, Target: pg.Target, ATR: pg.ATR,
+				})
+			}
+		}
+		if !dryRun {
+			_ = ps.ClearShadowPending(ctx)
+		}
+
+		// B. Exit shadow positions on today's candle → shadow trades (feed gate).
+		shPos, err := ps.ShadowPositions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, pos := range shPos {
+			shadowHeld[pos.Symbol] = true
+			if sameDay(pos.EntryDate, asOf) {
+				continue // just filled today; evaluate next day
+			}
+			cc := history[pos.Symbol]
+			today, ok := candleToday(pos.Symbol)
+			if !ok {
+				continue // no bar today; hold
+			}
+			trigger, outcome, exited := exitDecision(pos, cc, today)
+			if !exited {
+				continue
+			}
+			exit := sellFill(trigger, cfg.slip())
+			if !dryRun {
+				_ = ps.InsertShadowTrade(ctx, shadowTrade(pos.Symbol, pos.EntryDate, asOf, pos.Entry, exit, pos.SL, outcome))
+				_ = ps.DeleteShadowPosition(ctx, pos.Symbol)
+				delete(shadowHeld, pos.Symbol)
+			}
+			rep.log("SHADOW EXIT %s @ %.2f (%s) — gate measurement, no capital", pos.Symbol, exit, outcome)
+		}
+	}
+
 	// ── 3. New entries → pending for tomorrow's open (gated + sized) ──────────
 	recentR, err := ps.RecentTradeR(ctx, cfg.HealthWindow)
 	if err != nil {
@@ -290,24 +393,8 @@ func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore,
 	rep.GateOpen = healthyAvgR(recentR, cfg.HealthWindow, cfg.HealthMin)
 	freeSlots := cfg.MaxPositions - len(openPos)
 	if rep.GateOpen && freeSlots > 0 {
-		inputs := make([]scanner.Input, 0, len(history))
-		for sym, cc := range history {
-			inputs = append(inputs, scanner.Input{Symbol: sym, Candles: cc})
-		}
-		signals := scanner.Scan(inputs, cfg.ScanOpts)
-		for _, sig := range signals {
-			if freeSlots <= 0 {
-				break
-			}
-			if cfg.MinScore > 0 && sig.Score < cfg.MinScore {
-				continue
-			}
-			if heldOrPending[sig.Symbol] {
-				continue
-			}
-			if sig.Trade.StopLoss <= 0 || sig.Price <= sig.Trade.StopLoss {
-				continue
-			}
+		// Real entries resume: queue the top qualifying signals for tomorrow's open.
+		for _, sig := range qualifyingSignals(history, cfg, unionSet(heldOrPending, shadowHeld), freeSlots) {
 			if !dryRun {
 				_ = ps.InsertPending(ctx, store.PaperPending{
 					Symbol: sig.Symbol, SignalDate: asOf,
@@ -315,13 +402,27 @@ func RunDayEnd(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore,
 				})
 			}
 			heldOrPending[sig.Symbol] = true
-			freeSlots--
 			rep.PendingMade++
 			rep.log("QUEUE %s for next open (entry≈%.2f, SL %.2f, target %.2f, score %.0f)",
 				sig.Symbol, sig.Price, sig.Trade.StopLoss, sig.Trade.Target, sig.Score)
 		}
 	} else if !rep.GateOpen {
 		rep.log("strategy-health gate CLOSED (last %d trades avg R < %.2f) — no new entries", cfg.HealthWindow, cfg.HealthMin)
+		// Shadow queue: simulate the trades we WOULD take so the gate keeps
+		// measuring and can reopen. No capital is committed.
+		if cfg.HealthShadow {
+			shadowSlots := cfg.MaxPositions - len(shadowHeld)
+			for _, sig := range qualifyingSignals(history, cfg, unionSet(heldOrPending, shadowHeld), shadowSlots) {
+				if !dryRun {
+					_ = ps.InsertShadowPending(ctx, store.PaperPending{
+						Symbol: sig.Symbol, SignalDate: asOf,
+						SL: sig.Trade.StopLoss, Target: sig.Trade.Target, ATR: sig.Trade.ATR,
+					})
+				}
+				shadowHeld[sig.Symbol] = true
+				rep.log("SHADOW QUEUE %s (gate-closed measurement)", sig.Symbol)
+			}
+		}
 	}
 
 	if !dryRun {
@@ -364,6 +465,75 @@ func LiveSnapshot(asOf time.Time, positions []store.PaperPosition, livePrice map
 }
 
 // — internals —
+
+// shadowTrade builds a PaperTrade record for a closed shadow position: no shares
+// and no P&L (capital is never committed), only the realised R that feeds the
+// strategy-health gate.
+func shadowTrade(symbol string, entryDate, exitDate time.Time, entry, exit, sl float64, outcome string) store.PaperTrade {
+	r := 0.0
+	if entry-sl > 0 {
+		r = (exit - entry) / (entry - sl)
+	}
+	return store.PaperTrade{
+		Symbol: symbol, EntryDate: entryDate, ExitDate: exitDate,
+		Entry: entry, Exit: exit, Shares: 0, SL: sl, RealizedR: r, PnL: 0, Outcome: outcome,
+	}
+}
+
+// qualifyingSignals scans all history and returns up to `limit` signals that
+// pass the score/SL filters and are not in `skip`, ordered by score desc with a
+// symbol tiebreak so slot allocation is deterministic (scanner inputs are built
+// from a map, whose iteration order is randomised).
+func qualifyingSignals(history map[string][]models.Candle, cfg Config, skip map[string]bool, limit int) []scanner.StockSignal {
+	if limit <= 0 {
+		return nil
+	}
+	var signals []scanner.StockSignal
+	if cfg.signalFunc != nil {
+		signals = cfg.signalFunc(history, cfg.ScanOpts)
+	} else {
+		inputs := make([]scanner.Input, 0, len(history))
+		for sym, cc := range history {
+			inputs = append(inputs, scanner.Input{Symbol: sym, Candles: cc})
+		}
+		signals = scanner.Scan(inputs, cfg.ScanOpts)
+	}
+	sort.SliceStable(signals, func(i, j int) bool {
+		if signals[i].Score != signals[j].Score {
+			return signals[i].Score > signals[j].Score
+		}
+		return signals[i].Symbol < signals[j].Symbol
+	})
+	out := make([]scanner.StockSignal, 0, limit)
+	for _, sig := range signals {
+		if len(out) >= limit {
+			break
+		}
+		if cfg.MinScore > 0 && sig.Score < cfg.MinScore {
+			continue
+		}
+		if skip[sig.Symbol] {
+			continue
+		}
+		if sig.Trade.StopLoss <= 0 || sig.Price <= sig.Trade.StopLoss {
+			continue
+		}
+		out = append(out, sig)
+	}
+	return out
+}
+
+// unionSet returns the union of two string sets (a fresh map; inputs untouched).
+func unionSet(a, b map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(a)+len(b))
+	for k := range a {
+		out[k] = true
+	}
+	for k := range b {
+		out[k] = true
+	}
+	return out
+}
 
 // exitDecision applies SL-first then EMA7<EMA21 recross on today's candle.
 func exitDecision(pos store.PaperPosition, cc []models.Candle, today models.Candle) (trigger float64, outcome string, exited bool) {
