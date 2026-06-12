@@ -4,6 +4,12 @@
 // Usage:
 //
 //	go run ./cmd/kite-sync --symbols config/symbols.txt --period 2y
+//	go run ./cmd/kite-sync --workers 10 --rate 3   # parallel, rate-limited
+//
+// Symbols are synced by a pool of --workers goroutines (default 10) that overlap
+// DB writes with network fetches. A shared --rate limiter (default 3 req/s) keeps
+// the Kite historical-data API from throttling — unpaced concurrency just trips
+// 429s and drops symbols. Throttled fetches are retried (--retries) with backoff.
 //
 // Required environment variables:
 //
@@ -20,6 +26,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,6 +35,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
+	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
 func main() {
@@ -36,7 +45,16 @@ func main() {
 	includeNifty := flag.Bool("include-nifty", true, "also sync NIFTY 50 index candles as NIFTY50 for relative-strength filters")
 	includeSectorIndices := flag.Bool("include-sector-indices", true, "also sync verified NSE sector index candles for sector-strength filters")
 	sectorIndicesFlag := flag.String("sector-indices", "", "comma-separated sector index names to sync (empty = default verified list)")
+	workers := flag.Int("workers", 10, "parallel workers for the per-symbol sync")
+	rate := flag.Int("rate", 3, "max Kite historical-data requests/sec across ALL workers (Kite throttles ~3/s; raising this risks 429 failures)")
+	retries := flag.Int("retries", 3, "retry a throttled/failed fetch this many times with backoff before skipping")
 	flag.Parse()
+	if *workers < 1 {
+		*workers = 1
+	}
+	if *rate < 1 {
+		*rate = 1
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -60,8 +78,10 @@ func main() {
 		log.Fatalf("db open: %v", err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	// Size the pool to the worker count so concurrent upserts don't queue on
+	// connections (+2 headroom for the index sync / migrate).
+	db.SetMaxOpenConns(*workers + 2)
+	db.SetMaxIdleConns(*workers + 2)
 	db.SetConnMaxLifetime(5 * time.Minute)
 	if err := db.PingContext(ctx); err != nil {
 		log.Fatalf("db ping: %v", err)
@@ -109,34 +129,44 @@ func main() {
 		indexSkipped += k
 	}
 
-	for _, rawSymbol := range symbols {
-		symbol := kite.NormalizeSymbol(rawSymbol)
-		inst, ok := kite.FindEquityInstrument(instruments, *exchange, symbol)
-		if !ok {
-			log.Printf("skip %s: no %s equity instrument found", symbol, *exchange)
-			skipped++
-			continue
-		}
+	// Sync symbols concurrently with a fixed worker pool. Each symbol is an
+	// independent fetch + upsert, so workers overlap DB writes with network
+	// waits. A SHARED rate limiter paces the Kite fetches across all workers —
+	// Kite throttles historical data (~3/s), and unpaced concurrency just trips
+	// 429s (slower + dropped symbols), so the limiter is what makes this both
+	// faster and reliable. Counters are atomic; log.Printf is concurrency-safe.
+	limiter := time.NewTicker(time.Second / time.Duration(*rate))
+	defer limiter.Stop()
+	log.Printf("syncing %d symbols with %d workers, %d req/s rate cap, %d retries",
+		len(symbols), *workers, *rate, *retries)
 
-		candles, err := client.HistoricalDaily(ctx, inst.InstrumentToken, symbol, from, to)
-		if err != nil {
-			log.Printf("skip %s: historical fetch failed: %v", symbol, err)
-			skipped++
-			continue
-		}
-		if len(candles) == 0 {
-			log.Printf("skip %s: Kite returned no candles", symbol)
-			skipped++
-			continue
-		}
-		if err := candleStore.UpsertCandles(ctx, candles); err != nil {
-			log.Printf("skip %s: DB upsert failed: %v", symbol, err)
-			skipped++
-			continue
-		}
-		log.Printf("synced %d daily candles for %s", len(candles), symbol)
-		synced++
+	var syncedN, skippedN atomic.Int64
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+	for i := 0; i < *workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for rawSymbol := range jobs {
+				if ctx.Err() != nil { // interrupted — drain remaining jobs as skipped
+					skippedN.Add(1)
+					continue
+				}
+				if syncSymbol(ctx, client, candleStore, instruments, *exchange, rawSymbol, from, to, limiter, *retries) {
+					syncedN.Add(1)
+				} else {
+					skippedN.Add(1)
+				}
+			}
+		}()
 	}
+	for _, rawSymbol := range symbols {
+		jobs <- rawSymbol
+	}
+	close(jobs)
+	wg.Wait()
+	synced += int(syncedN.Load())
+	skipped += int(skippedN.Load())
 
 	fmt.Println()
 	fmt.Printf("Symbols: %d\n", len(symbols))
@@ -144,6 +174,68 @@ func main() {
 	fmt.Printf("Skipped: %d\n", skipped)
 	fmt.Printf("Indices synced:  %d\n", indexSynced)
 	fmt.Printf("Indices skipped: %d\n", indexSkipped)
+}
+
+// syncSymbol fetches one symbol's daily history and upserts it. Safe for
+// concurrent use: the Kite client (HTTP) and candle store (DB pool) are both
+// goroutine-safe. Each Kite fetch waits on the shared rate limiter, and a
+// throttled/failed fetch is retried up to `retries` times with backoff before
+// giving up. Returns true when candles were synced, false on any skip.
+func syncSymbol(
+	ctx context.Context,
+	client *kite.Client,
+	candleStore *store.CandleStore,
+	instruments []kite.Instrument,
+	exchange, rawSymbol string,
+	from, to time.Time,
+	limiter *time.Ticker,
+	retries int,
+) bool {
+	symbol := kite.NormalizeSymbol(rawSymbol)
+	inst, ok := kite.FindEquityInstrument(instruments, exchange, symbol)
+	if !ok {
+		log.Printf("skip %s: no %s equity instrument found", symbol, exchange)
+		return false
+	}
+
+	var candles []models.Candle
+	var err error
+	for attempt := 0; attempt <= retries; attempt++ {
+		// Pace this fetch against Kite's limit (shared across all workers).
+		select {
+		case <-limiter.C:
+		case <-ctx.Done():
+			log.Printf("skip %s: interrupted", symbol)
+			return false
+		}
+		candles, err = client.HistoricalDaily(ctx, inst.InstrumentToken, symbol, from, to)
+		if err == nil {
+			break
+		}
+		if attempt < retries {
+			// Back off before retrying (likely a 429 throttle): 250ms, 500ms, …
+			backoff := time.Duration(250*(attempt+1)) * time.Millisecond
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return false
+			}
+		}
+	}
+	if err != nil {
+		log.Printf("skip %s: historical fetch failed after %d retries: %v", symbol, retries, err)
+		return false
+	}
+	if len(candles) == 0 {
+		log.Printf("skip %s: Kite returned no candles", symbol)
+		return false
+	}
+	if err := candleStore.UpsertCandles(ctx, candles); err != nil {
+		log.Printf("skip %s: DB upsert failed: %v", symbol, err)
+		return false
+	}
+	log.Printf("synced %d daily candles for %s", len(candles), symbol)
+	return true
 }
 
 func syncSectorIndices(
