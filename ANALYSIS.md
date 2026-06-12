@@ -623,7 +623,77 @@ reusable by-product is the **Wilder RSI helper** (`analysis.RSI`).
 
 ---
 
-## 11. Conclusions (entry & exit)
+## 11. The health gate was a one-way door — shadow fix + the 45-day window odds (PR: health-gate-shadow)
+
+### The bug
+The strategy-health gate (§9) blocks new entries when the last N closed trades
+average R < 0. But once it closes, **no new trade ever closes → the rolling
+window never refreshes → the gate can never reopen.** A continuous 2022→2026 run
+locks into cash in early 2024 and never trades again. Per-year backtests hid this
+because each fresh run starts in warmup grace; the continuous run reveals it:
+
+| Full 2022–26, risk 1% | 2022 | 2023 | 2024 | 2025 | 2026 | Total | MaxDD |
+|---|---|---|---|---|---|---|---|
+| gate ON (broken) | 15 | 51 | 9 | **0** | **0** | +30.5% | −9.8% |
+| gate OFF | 15 | 51 | 33 | 31 | 11 | +10.1% | −26.6% |
+
+The signals existed (33/31/11 in 2024–26) — the gate blocked every one. Note the
+lockout was *accidentally protective* here (2024–25 stayed bad, so not-trading
+beat trading). But a gate that can **never** reopen is structurally unsound: the
+day a real bull returns it stays in cash and never knows.
+
+### The fix: shadow trading (`--health-shadow`)
+While the gate is closed the strategy keeps *simulating* the trades it would take
+— **shadow positions that use no capital but feed their realised R into the
+health window** — so the gate reopens when hypothetical recent performance turns
+healthy. This is the textbook equity-curve filter; ours was missing the "keep
+measuring while flat" half. Window-size sweep (fixed gate, full period, risk 1%):
+
+| health-window | Return | MaxDD | Trades | Behaviour |
+|---|---|---|---|---|
+| 10 | +14.9% | −11.0% | 59 | **flaps** — cuts 2023 to 29 trades *and* re-enters 2025: worst of both |
+| **20 (default)** | **+31.1%** | −9.8% | 76 | re-engages early 2024, correctly stays out 2025–26 |
+| 30 | +28.6% | −9.8% | 77 | same as 20, marginally worse |
+
+Window 20 is the sweet spot; smaller is noisier, not calmer. The fixed gate
+re-engages *conditionally* on shadow performance — it dipped into early-2024,
+found it still bad, and correctly stayed out of 2025–26. (A map-iteration
+nondeterminism the shadow exits introduced was fixed by processing position
+exits in sorted-symbol order, so the realised-R append order is reproducible.)
+
+### The 45-day window odds — answering "can we get 5% in 45 days?"
+Using the engine's **real daily equity curve** (`--equity-output`, exact — not a
+per-trade reconstruction, which overstated returns by ~20% at risk 1% and ~2.4×
+at risk 2%), rolling 45-day windows on the fixed gate:
+
+| Risk 1% window set | ≥+5% | ≥+3% | >0 | median |
+|---|---|---|---|---|
+| All starts | 8.6% | 13.8% | 23% | +0.00% |
+| Regime ON | 10.5% | 14.9% | 25% | +0.00% |
+| **Regime ON + engaged** | **23.9%** | 33.8% | 51% | +0.13% |
+
+By window-start year (≥+5%): 2021 0% · 2022 5.6% · **2023 36.4%** · 2024 0% ·
+2025 0% · 2026 0%. **+5%/45d is essentially a 2023 (trending-regime) phenomenon.**
+
+**Risk 2% does not help:** ≥+5% barely moves (23.9%→24.8%) but the median goes
+**negative (−0.45%)** and the worst window deepens. Leverage adds variance and
+downside, not +5% windows.
+
+**Deployment rule:** +5%/45d is a ~1-in-4 *conditional* outcome — only when the
+regime is on (NIFTY > EMA200) and the system is actually engaged — concentrated
+in trending regimes; the *typical* engaged window is ≈flat. It is an occasional
+upside harvest, not a reliable monthly cadence, and cannot be manufactured with
+risk. The shadow fix matters precisely because it lets the system *be there* when
+the next 2023 arrives instead of being locked in cash.
+
+> **Known follow-up:** the live `cmd/paper-trade` gate reads `RecentTradeR` from
+> the DB and has the **same one-way-door flaw**. Fixing it needs DB-backed shadow
+> positions persisted across days — a separate change. Until then, a paper gate
+> that closes after ≥20 trades must be re-seeded manually to reopen.
+
+---
+
+## 12. Conclusions (entry & exit)
 
 1. **Winner: the original swing strategy + EMA-recross exit** — frictionless
    ~14%/yr at −16% DD; **cost-adjusted ~9.4%/yr at −21% DD**, which only roughly
@@ -664,7 +734,7 @@ reusable by-product is the **Wilder RSI helper** (`analysis.RSI`).
 
 ---
 
-## 12. Open questions / next steps
+## 13. Open questions / next steps
 
 - **Volatility regime (not market-trend).** The NIFTY-trend gate failed (§9), but
   a *volatility* filter is untested — e.g. no new entries when NIFTY ATR20/price
@@ -683,7 +753,7 @@ closes the regime-switcher's defensive-compounder leg)**._
 
 ---
 
-## 13. Reproduce
+## 14. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -735,6 +805,11 @@ go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2025-12-31
 go run ./cmd/backtest --portfolio --mode meanrev --exit-mode target --max-hold 10 \
   --from 2024-01-01 --to 2025-12-31 \
   --cost-pct 0.25 --slippage-pct 0.20    # -13% / -13%; gate only shuts it off
+
+# §11 — fixed gate (shadow), and the daily equity curve for window analysis.
+# Without --health-shadow the continuous run locks into cash in early 2024.
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2026-06-01 \
+  --health-window 20 --health-shadow --equity-output /tmp/eq.csv
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

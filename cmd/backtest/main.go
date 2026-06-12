@@ -71,6 +71,8 @@ func main() {
 	healthMode := flag.String("health-mode", "avgr", "[portfolio] health metric: avgr (mean R) or pf (profit factor)")
 	healthMin := flag.Float64("health-min", 0, "[portfolio] health threshold over the window (e.g. 0 for avgr, 1.2 for pf)")
 	healthWarmupFrom := flag.String("health-warmup-from", "", "[portfolio] seed the health gate with trades from this date up to --from (avoids cold-start blindness), YYYY-MM-DD")
+	healthShadow := flag.Bool("health-shadow", false, "[portfolio] keep the health gate measuring via shadow trades while it is closed, so it can REOPEN (fixes the one-way-door lockout); needs --health-window > 0")
+	equityOutput := flag.String("equity-output", "", "[portfolio] write the daily equity curve (date,equity,entries) to this CSV")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -321,6 +323,7 @@ func main() {
 			StrategyHealthWindow: *healthWindow,
 			StrategyHealthMode:   *healthMode,
 			StrategyHealthMin:    *healthMin,
+			StrategyHealthShadow: *healthShadow,
 			EngineOpts:      opts,
 		}
 
@@ -345,6 +348,13 @@ func main() {
 			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
 		trades, stats := backtest.RunPortfolio(ctx, candlesMap, pf)
 		printPortfolio(trades, stats, fromLabel, toLabel, *mode, *exitMode, *maxPositions, *costPct, *slippagePct)
+		if *equityOutput != "" {
+			if err := writeEquityCSV(*equityOutput, stats.EquityCurve); err != nil {
+				log.Printf("warn: equity CSV write failed: %v", err)
+			} else {
+				log.Printf("equity curve written to %s (%d days)", *equityOutput, len(stats.EquityCurve))
+			}
+		}
 		if *outputCSV != "" {
 			if err := writeCSV(*outputCSV, trades); err != nil {
 				log.Printf("warn: CSV write failed: %v", err)
@@ -848,6 +858,31 @@ func formatINR(v float64) string {
 }
 
 // ── CSV export ────────────────────────────────────────────────────────────────
+
+// writeEquityCSV dumps the daily portfolio equity curve: date, account value,
+// and the count of real new entries that day (for forward-window analysis).
+func writeEquityCSV(path string, curve []backtest.EquityPoint) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+	if err := w.Write([]string{"date", "equity", "entries"}); err != nil {
+		return err
+	}
+	for _, p := range curve {
+		if err := w.Write([]string{
+			p.Date.Format("2006-01-02"),
+			fmt.Sprintf("%.2f", p.Equity),
+			fmt.Sprintf("%d", p.Entries),
+		}); err != nil {
+			return err
+		}
+	}
+	return w.Error()
+}
 
 func writeCSV(path string, results []backtest.TradeResult) error {
 	f, err := os.Create(path)
