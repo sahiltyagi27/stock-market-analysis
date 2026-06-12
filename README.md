@@ -321,6 +321,30 @@ from trading into a weak regime on day one.
 
 ---
 
+## Scoring the live screen (`scan-eval`)
+
+The live scanner fires on the **intraday** forming candle, so its signals are a
+different population from the **end-of-day** backtest — and the only honest way
+to judge them is to follow them forward. `cmd/scan-eval` takes any past day's
+`scan_results` (the persisted live-scan log) and replays every signal as a real
+trade: enter at the **next session's open**, stop from the swing setup (ATR
+fallback), exit on the validated **EMA7<EMA21 recross**, charged full costs and
+slippage — then compares the basket to NIFTY over the same window.
+
+```bash
+go run ./cmd/scan-eval --date 2026-06-01                 # score Monday's live signals
+go run ./cmd/scan-eval --date 2026-06-01 --min-score 80  # only the high-conviction subset
+go run ./cmd/scan-eval --date 2026-06-01 --csv out.csv   # export per-trade rows
+```
+
+It separates **closed** trades (the mature, trustworthy subset) from **open**
+ones (still marked-to-market) so a few unrealized winners can't flatter the
+result. Exits take time to mature, so re-running the same `--date` as more
+candles arrive sharpens the verdict — turning *"where are they now"* into
+*"what would you actually have made."*
+
+---
+
 ## Project Structure
 
 ```
@@ -333,6 +357,7 @@ stock-market-analysis/
 │   ├── crossover-scan/         # EMA 7×21 momentum scanner
 │   ├── live-scan/              # Real-time scanner via Kite WebSocket (every 2 min)
 │   ├── scan-history/           # Query the persisted scan_results log
+│   ├── scan-eval/              # Forward-performance of a past day's live signals (net of costs)
 │   ├── backtest/               # Walk-forward + portfolio-aware backtester
 │   ├── paper-trade/            # Persistent forward paper trading (eod / live modes)
 │   └── server/                 # REST API server
@@ -342,6 +367,7 @@ stock-market-analysis/
 │   ├── scanner/                # Swing scanner engine, scorer, reasons, diagnostics
 │   ├── crossover/              # EMA 7×21 crossover scanner
 │   ├── backtest/               # Walk-forward engine, portfolio engine, metrics
+│   ├── signaleval/             # Forward-performance scoring of recorded signals (entry/exit/costs)
 │   ├── paper/                  # Forward paper-trading engine (daily cycle + live snapshot)
 │   ├── kite/                   # Kite Connect client (token, instruments, history, WS)
 │   ├── store/                  # PostgreSQL candle, scan-result, and paper stores
