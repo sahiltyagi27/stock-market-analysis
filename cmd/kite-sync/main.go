@@ -7,9 +7,11 @@
 //	go run ./cmd/kite-sync --workers 10 --rate 3   # parallel, rate-limited
 //
 // Symbols are synced by a pool of --workers goroutines (default 10) that overlap
-// DB writes with network fetches. A shared --rate limiter (default 3 req/s) keeps
+// DB writes with network fetches. A shared --rate limiter (default 6 req/s) keeps
 // the Kite historical-data API from throttling — unpaced concurrency just trips
 // 429s and drops symbols. Throttled fetches are retried (--retries) with backoff.
+// (If every symbol fails with a 403 TokenException, refresh the access token via
+// cmd/kite-token — Kite tokens expire daily.)
 //
 // Required environment variables:
 //
@@ -46,7 +48,7 @@ func main() {
 	includeSectorIndices := flag.Bool("include-sector-indices", true, "also sync verified NSE sector index candles for sector-strength filters")
 	sectorIndicesFlag := flag.String("sector-indices", "", "comma-separated sector index names to sync (empty = default verified list)")
 	workers := flag.Int("workers", 10, "parallel workers for the per-symbol sync")
-	rate := flag.Int("rate", 3, "max Kite historical-data requests/sec across ALL workers (Kite throttles ~3/s; raising this risks 429 failures)")
+	rate := flag.Int("rate", 6, "max Kite historical-data requests/sec across ALL workers (the prior sequential sync sustained ~4/s; lower this if you see 'fetch failed' / 429s, raise it if your account tolerates more)")
 	retries := flag.Int("retries", 3, "retry a throttled/failed fetch this many times with backoff before skipping")
 	flag.Parse()
 	if *workers < 1 {
