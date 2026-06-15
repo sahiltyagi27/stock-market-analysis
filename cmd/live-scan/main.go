@@ -525,23 +525,36 @@ func runScan(
 }
 
 // niftyVsPrevClose returns the NIFTY's live % change vs the previous session's
-// close — the headline "up/down today" number — using the most recent synced
-// daily candle as the prior close. This is distinct from the intraday from-open
-// figure: the market can gap up at the open (positive vs prev close) yet drift
-// negative from that open. Returns (0, false) when no tick/history is available.
+// close — the headline "up/down today" number. This is distinct from the
+// intraday from-open figure: the market can gap up at the open (positive vs prev
+// close) yet drift negative from that open. Returns (0, false) when no tick or
+// prior-session close is available.
 func niftyVsPrevClose(ws *kite.WSClient, benchmarkHistory []models.Candle) (float64, bool) {
-	if len(benchmarkHistory) == 0 {
-		return 0, false
-	}
 	tick, ok := ws.LatestTick(niftyToken)
 	if !ok || tick.LastPrice <= 0 {
 		return 0, false
 	}
-	prevClose := benchmarkHistory[len(benchmarkHistory)-1].Close
-	if prevClose <= 0 {
+	prevClose, ok := prevSessionClose(benchmarkHistory, time.Now())
+	if !ok || prevClose <= 0 {
 		return 0, false
 	}
 	return (tick.LastPrice - prevClose) / prevClose * 100, true
+}
+
+// prevSessionClose returns the close of the most recent candle whose IST date is
+// strictly BEFORE now's IST date — i.e. the previous trading session's close. It
+// deliberately skips any candle stamped for today, because Kite returns a daily
+// candle for the current (in-progress) day during market hours, and an intraday
+// kite-sync writes that partial candle to the DB. Using the last row blindly
+// would compare "today vs today" instead of "today vs the prior close".
+func prevSessionClose(candles []models.Candle, now time.Time) (float64, bool) {
+	today := now.In(ist).Format("2006-01-02")
+	for i := len(candles) - 1; i >= 0; i-- {
+		if candles[i].Timestamp.In(ist).Format("2006-01-02") < today {
+			return candles[i].Close, true
+		}
+	}
+	return 0, false
 }
 
 // computeRS returns a map of symbol → relative-strength-vs-NIFTY (percentage
