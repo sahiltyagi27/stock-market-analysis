@@ -221,17 +221,19 @@ func main() {
 		}
 	}
 	log.Printf("cached history for %d/%d symbols", len(historyCache), len(symbols))
+	// Always load the benchmark (NIFTY) daily history: it powers the RS filter
+	// when enabled, AND the "NIFTY vs prev close" display line shown on every
+	// scan. (Previously it was only loaded when an RS/sector filter was on, which
+	// left the vs-prev-close figure blank in the default config.)
 	var benchmarkHistory []models.Candle
 	benchmarkSymbol := kite.NormalizeSymbol(*rsSymbol)
-	if *rsLookback > 0 || *sectorRSLookback > 0 {
-		benchmarkHistory, err = candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{From: &from})
-		if err != nil {
-			log.Printf("warn: relative-strength benchmark read failed for %s: %v", benchmarkSymbol, err)
-		} else if len(benchmarkHistory) == 0 {
-			log.Printf("warn: relative-strength filter disabled — no %s candles in DB (run kite-sync)", benchmarkSymbol)
-		} else {
-			log.Printf("loaded %d %s benchmark candles for relative strength", len(benchmarkHistory), benchmarkSymbol)
-		}
+	benchmarkHistory, err = candleStore.GetCandles(ctx, benchmarkSymbol, store.CandleFilter{From: &from})
+	if err != nil {
+		log.Printf("warn: benchmark read failed for %s: %v", benchmarkSymbol, err)
+	} else if len(benchmarkHistory) == 0 {
+		log.Printf("warn: no %s candles in DB (run kite-sync) — NIFTY vs-prev-close and RS filter unavailable", benchmarkSymbol)
+	} else {
+		log.Printf("loaded %d %s benchmark candles", len(benchmarkHistory), benchmarkSymbol)
 	}
 	sectorMap := loadOptionalSectorMap(*sectorMapPath, *sectorRSLookback)
 	sectorHistory := map[string][]models.Candle{}
