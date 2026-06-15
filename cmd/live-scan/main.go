@@ -495,16 +495,19 @@ func runScan(
 		breakouts, _ = scanner.ScanBreakouts(inputs, opts)
 	}
 
-	// Compute relative strength vs NIFTY 50 for every signal.
+	// Compute relative strength vs NIFTY 50 for every signal. niftyPct is the
+	// intraday move from today's open; niftyPrevPct is the headline change vs the
+	// previous session's close (gap-up/down + drift), shown alongside it.
 	rsMap, niftyPct := computeRS(ws, symbolToken, signals)
+	niftyPrevPct, hasPrevClose := niftyVsPrevClose(ws, benchmarkHistory)
 
 	newSymbols := state.advance(signals)
 	if mode == "swing" || mode == "all" {
-		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct, alertScore)
+		printScan(at, signals, topN, len(history), noTick, volFrac, newSymbols, state.streaks, rsMap, niftyPct, niftyPrevPct, hasPrevClose, alertScore)
 	}
 	if mode == "breakout" || mode == "all" {
 		breakoutRSMap, breakoutNiftyPct := computeBreakoutRS(ws, symbolToken, breakouts)
-		printBreakoutScan(at, breakouts, topN, len(history), noTick, volFrac, breakoutRSMap, breakoutNiftyPct)
+		printBreakoutScan(at, breakouts, topN, len(history), noTick, volFrac, breakoutRSMap, breakoutNiftyPct, niftyPrevPct, hasPrevClose)
 	}
 
 	// Persist scan results asynchronously so a slow DB write can't delay the
@@ -517,6 +520,26 @@ func runScan(
 			}
 		}()
 	}
+}
+
+// niftyVsPrevClose returns the NIFTY's live % change vs the previous session's
+// close — the headline "up/down today" number — using the most recent synced
+// daily candle as the prior close. This is distinct from the intraday from-open
+// figure: the market can gap up at the open (positive vs prev close) yet drift
+// negative from that open. Returns (0, false) when no tick/history is available.
+func niftyVsPrevClose(ws *kite.WSClient, benchmarkHistory []models.Candle) (float64, bool) {
+	if len(benchmarkHistory) == 0 {
+		return 0, false
+	}
+	tick, ok := ws.LatestTick(niftyToken)
+	if !ok || tick.LastPrice <= 0 {
+		return 0, false
+	}
+	prevClose := benchmarkHistory[len(benchmarkHistory)-1].Close
+	if prevClose <= 0 {
+		return 0, false
+	}
+	return (tick.LastPrice - prevClose) / prevClose * 100, true
 }
 
 // computeRS returns a map of symbol → relative-strength-vs-NIFTY (percentage
@@ -773,6 +796,8 @@ func printScan(
 	streaks map[string]int,
 	rsMap map[string]float64,
 	niftyPct float64,
+	niftyPrevPct float64,
+	hasPrevClose bool,
 	alertScore float64,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
@@ -933,9 +958,11 @@ func printScan(
 				int(volFrac*100)))
 	}
 	if rsMap != nil {
-		fmt.Printf("  %s %s\n",
-			display.Dim.Sprint("NIFTY 50:"),
-			display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(" from open"))
+		niftyLine := display.Sign(niftyPct, "%+.2f%%") + display.Dim.Sprint(" from open")
+		if hasPrevClose {
+			niftyLine = display.Sign(niftyPrevPct, "%+.2f%%") + display.Dim.Sprint(" vs prev close · ") + niftyLine
+		}
+		fmt.Printf("  %s %s\n", display.Dim.Sprint("NIFTY 50:"), niftyLine)
 	}
 	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(bannerText))))
 }
@@ -947,6 +974,8 @@ func printBreakoutScan(
 	volFrac float64,
 	rsMap map[string]float64,
 	niftyPct float64,
+	niftyPrevPct float64,
+	hasPrevClose bool,
 ) {
 	stamp := at.In(ist).Format("02-Jan-2006  15:04:05")
 	bannerText := fmt.Sprintf("━━━  Breakout Watch  %s IST  ━━━", stamp)
@@ -1027,9 +1056,11 @@ func printBreakoutScan(
 				int(volFrac*100)))
 	}
 	if rsMap != nil {
-		fmt.Printf("  %s %s\n",
-			display.Dim.Sprint("NIFTY 50:"),
-			display.Sign(niftyPct, "%+.2f%%")+display.Dim.Sprint(" from open"))
+		niftyLine := display.Sign(niftyPct, "%+.2f%%") + display.Dim.Sprint(" from open")
+		if hasPrevClose {
+			niftyLine = display.Sign(niftyPrevPct, "%+.2f%%") + display.Dim.Sprint(" vs prev close · ") + niftyLine
+		}
+		fmt.Printf("  %s %s\n", display.Dim.Sprint("NIFTY 50:"), niftyLine)
 	}
 	fmt.Printf("%s\n", display.BoldCyan.Sprint(strings.Repeat("━", len(bannerText))))
 }
