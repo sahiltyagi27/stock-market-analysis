@@ -146,6 +146,49 @@ func (c *Client) ExchangeRequestToken(ctx context.Context, apiSecret, requestTok
 	}, nil
 }
 
+// UserProfile holds the authenticated user's basic details.
+type UserProfile struct {
+	UserID   string
+	UserName string
+	Email    string
+}
+
+// Profile fetches the authenticated user's profile — the cheapest authenticated
+// Kite call, used to validate that the current access token is still alive.
+// Returns an error (containing "403" or "TokenException") when the token has
+// expired, so callers can prompt for a refresh before running expensive syncs.
+func (c *Client) Profile(ctx context.Context) (UserProfile, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/user/profile", nil)
+	if err != nil {
+		return UserProfile{}, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return UserProfile{}, fmt.Errorf("kite profile: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return UserProfile{}, fmt.Errorf("kite profile: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Status string `json:"status"`
+		Data   struct {
+			UserID   string `json:"user_id"`
+			UserName string `json:"user_name"`
+			Email    string `json:"email"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return UserProfile{}, fmt.Errorf("kite profile: decode: %w", err)
+	}
+	return UserProfile{
+		UserID:   out.Data.UserID,
+		UserName: out.Data.UserName,
+		Email:    out.Data.Email,
+	}, nil
+}
+
 // Instruments downloads the instrument master for an exchange, for example NSE.
 func (c *Client) Instruments(ctx context.Context, exchange string) ([]Instrument, error) {
 	path := "/instruments"
