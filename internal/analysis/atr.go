@@ -6,6 +6,44 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
+// ATRSeries returns a slice of ATR values parallel to candles using Wilder's
+// smoothing (RMA). The first period entries are 0 (not enough history). This
+// is the per-day variant of ATR, needed when a gate must check volatility on
+// each individual candle rather than just the final value.
+func ATRSeries(candles []models.Candle, period int) []float64 {
+	if period <= 0 {
+		period = 14
+	}
+	out := make([]float64, len(candles))
+	if len(candles) < period+1 {
+		return out
+	}
+
+	trs := make([]float64, len(candles)-1)
+	for i := 1; i < len(candles); i++ {
+		c := candles[i]
+		pc := candles[i-1].Close
+		tr := math.Max(c.High-c.Low,
+			math.Max(math.Abs(c.High-pc), math.Abs(pc-c.Low)))
+		trs[i-1] = tr
+	}
+
+	// Seed: SMA of first `period` TRs — applies to candles[period].
+	atr := 0.0
+	for i := 0; i < period; i++ {
+		atr += trs[i]
+	}
+	atr /= float64(period)
+	out[period] = atr
+
+	// Wilder smoothing for subsequent candles.
+	for i := period; i < len(trs); i++ {
+		atr = (atr*float64(period-1) + trs[i]) / float64(period)
+		out[i+1] = atr
+	}
+	return out
+}
+
 // ATR computes the Average True Range over the last `period` candles using
 // Wilder's smoothing (also called RMA / SMMA), which is the standard used by
 // most charting platforms (TradingView, Kite Charts, etc.).
