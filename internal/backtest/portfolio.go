@@ -111,6 +111,19 @@ type PortfolioOptions struct {
 	// StrategyHealthWindow > 0. No effect on runs where the gate never closes.
 	StrategyHealthShadow bool
 
+	// VolGateThreshold blocks new entries on days when NIFTY ATR(VolGateATRPeriod)
+	// divided by NIFTY close exceeds this fraction. A choppy, high-volatility
+	// market tends to chop swing trades; pausing entries during those windows
+	// reduces noise-stop losses. 0 = disabled. Typical: 0.010–0.015 (1.0%–1.5%).
+	// Uses VolGateBenchmark candles (NIFTY); no effect when Benchmark is empty.
+	VolGateThreshold float64
+
+	// VolGateATRPeriod is the ATR lookback for the volatility gate. Default 20.
+	VolGateATRPeriod int
+
+	// VolGateBenchmark is the index candle series for the volatility gate (NIFTY).
+	VolGateBenchmark []models.Candle
+
 	// CostPct is the total round-trip transaction cost (brokerage + STT + fees)
 	// as a percentage of notional, split evenly across the buy and sell legs.
 	// e.g. 0.25 ≈ NSE delivery. 0 = frictionless.
@@ -243,6 +256,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 
 	// Precompute the market-regime gate (date → may we open new positions?).
 	regimeOn := buildRegimeGate(opts)
+	volGate := buildVolatilityGate(opts)
 
 	// Precompute per-symbol series.
 	data := make(map[string]*symData, len(candles))
@@ -397,16 +411,18 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			}
 		}
 
-		// 3. Entries (best first per allocation ranking) — gated by market regime
-		// AND strategy health. Existing positions are still managed above; only
-		// NEW entries are blocked when a gate is closed.
+		// 3. Entries (best first per allocation ranking) — gated by market regime,
+		// volatility, AND strategy health. Existing positions are still managed
+		// above; only NEW entries are blocked when a gate is closed.
 		regimeOK := regimeOn == nil || regimeOn[dk]
+		volOK := volGate == nil || volGate[dk]
 		healthOK := strategyHealthy(healthR, opts)
-		// Shadow mode engages only while the gate is closed (and the market regime
-		// allows trading): instead of going dark, the strategy keeps measuring.
-		shadowMode := opts.StrategyHealthShadow && regimeOK && !healthOK
+		// Shadow mode engages only while the health gate is closed (and both
+		// market gates allow trading): instead of going dark, the strategy keeps
+		// measuring so the health gate can reopen.
+		shadowMode := opts.StrategyHealthShadow && regimeOK && volOK && !healthOK
 		for _, sig := range signalsByDate[dk] {
-			if !regimeOK {
+			if !regimeOK || !volOK {
 				break
 			}
 			if !healthOK && !shadowMode {
@@ -721,6 +737,32 @@ func buildRegimeGate(opts PortfolioOptions) map[string]bool {
 		default: // "price"
 			on[dk] = closes[i] > slow[i]
 		}
+	}
+	return on
+}
+
+// buildVolatilityGate returns a map date→true (may open new positions) based
+// on NIFTY's normalised ATR (ATR/close). Returns nil when the gate is disabled.
+// Days where ATR hasn't seeded yet default to true (benefit of the doubt).
+func buildVolatilityGate(opts PortfolioOptions) map[string]bool {
+	if opts.VolGateThreshold <= 0 || len(opts.VolGateBenchmark) == 0 {
+		return nil
+	}
+	bc := opts.VolGateBenchmark
+	period := opts.VolGateATRPeriod
+	if period <= 0 {
+		period = 20
+	}
+	atrSeries := analysis.ATRSeries(bc, period)
+	on := make(map[string]bool, len(bc))
+	for i, c := range bc {
+		dk := c.Timestamp.UTC().Format(dayFmt)
+		atr := atrSeries[i]
+		if atr <= 0 || c.Close <= 0 {
+			on[dk] = true // not seeded yet
+			continue
+		}
+		on[dk] = (atr / c.Close) <= opts.VolGateThreshold
 	}
 	return on
 }

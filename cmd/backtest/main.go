@@ -73,6 +73,8 @@ func main() {
 	healthWarmupFrom := flag.String("health-warmup-from", "", "[portfolio] seed the health gate with trades from this date up to --from (avoids cold-start blindness), YYYY-MM-DD")
 	healthShadow := flag.Bool("health-shadow", false, "[portfolio] keep the health gate measuring via shadow trades while it is closed, so it can REOPEN (fixes the one-way-door lockout); needs --health-window > 0")
 	equityOutput := flag.String("equity-output", "", "[portfolio] write the daily equity curve (date,equity,entries) to this CSV")
+	volGateThreshold := flag.Float64("vol-gate-threshold", 0, "[portfolio] block new entries when NIFTY ATR(N)/close > this fraction (e.g. 0.012 = 1.2%%; 0 = disabled)")
+	volGateATR := flag.Int("vol-gate-atr", 20, "[portfolio] ATR lookback period for --vol-gate-threshold")
 
 	// Scanner flags — mirror live-scan / scan for identical filter behaviour.
 	minRR := flag.Float64("min-rr", 2.0, "minimum risk/reward ratio")
@@ -303,6 +305,18 @@ func main() {
 			log.Printf("regime gate: %s on %s (EMA%d/%d), %d candles", *regimeMode, rsym, *regimeFast, *regimeSlow, len(cc))
 		}
 
+		// Volatility gate: load NIFTY candles when threshold is set.
+		var volGateCandles []models.Candle
+		if *volGateThreshold > 0 {
+			rsym := kite.NormalizeSymbol(kite.Nifty50Symbol)
+			cc, err := candleStore.GetCandles(ctx, rsym, store.CandleFilter{})
+			if err != nil || len(cc) == 0 {
+				log.Fatalf("--vol-gate-threshold needs %s candles in DB (run kite-sync): %v", rsym, err)
+			}
+			volGateCandles = cc
+			log.Printf("vol gate: ATR%d/close > %.4f blocks entries, %d %s candles", *volGateATR, *volGateThreshold, len(cc), rsym)
+		}
+
 		pf := backtest.PortfolioOptions{
 			From:         from,
 			To:           to,
@@ -324,6 +338,9 @@ func main() {
 			StrategyHealthMode:   *healthMode,
 			StrategyHealthMin:    *healthMin,
 			StrategyHealthShadow: *healthShadow,
+			VolGateThreshold:     *volGateThreshold,
+			VolGateATRPeriod:     *volGateATR,
+			VolGateBenchmark:     volGateCandles,
 			EngineOpts:      opts,
 		}
 

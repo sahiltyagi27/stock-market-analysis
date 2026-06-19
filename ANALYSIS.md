@@ -731,25 +731,94 @@ the next 2023 arrives instead of being locked in cash.
     loses every year and is *worst* in 2024–2025, the exact years it targeted.
     Rejected; the regime-switcher's "defensive compounder" leg is closed on the
     evidence. Momentum-vs-mean-reversion was never the lever.
+11. **Volatility regime filter also fails (§12).** Blocking entries when NIFTY
+    ATR(20)/close exceeds a threshold sounds intuitive but has no discriminating
+    power. In 2022 (the year it should activate) it blocked all 6 winners and kept
+    3 losers — turning +11.1% into −3.2%. The regime-filter space is now exhausted:
+    market-direction, RS/sector, and market-volatility gates all fail for the same
+    reason — the strategy's stocks have their own volatility that doesn't map to the
+    index. The individual ATR-based stop already handles stock-level risk.
+
+---
+
+## 12. Volatility regime filter (NIFTY ATR20/close gate) — REJECTED
+
+### Hypothesis
+The NIFTY-trend gate failed (§9), but a *volatility* filter might succeed:
+block new entries when NIFTY ATR(20)/close exceeds a threshold. High market
+volatility → choppy conditions → swing stops get hit on noise.
+
+### Implementation
+New `--vol-gate-threshold` flag in `cmd/backtest`. `buildVolatilityGate`
+maps each calendar date to `ATR(20)/close ≤ threshold` (true = OK to trade).
+Built in the same pattern as `buildRegimeGate`; uses `analysis.ATRSeries`
+(new helper, returns Wilder ATR per candle). Benchmark: NIFTY50 candles.
+
+### Results — threshold sweep (2022–2025)
+
+| Config | Return | CAGR | Max DD | Trades | Avg R |
+|---|---|---|---|---|---|
+| Baseline (no gate) | +72.8% | 14.6%/yr | −12.6% | 78 | +0.80R |
+| Vol gate 0.8% | +22.0% | 5.1%/yr | −10.6% | 39 | +0.66R |
+| Vol gate 1.0% | +45.5% | 9.8%/yr | −13.3% | 61 | +0.75R |
+| Vol gate 1.2% | +73.5% | 14.8%/yr | −12.8% | 77 | +0.83R |
+| Vol gate 1.5% | +69.4% | 14.1%/yr | −12.6% | 75 | +0.81R |
+
+**At 1.2%+:** the gate never activates in 2022–2025 (NIFTY ATR20/close crosses
+1.2% so rarely it blocks ≤1 trade across 4 years). Effectively a no-op.
+
+**At 0.8–1.0%:** returns collapse — gate blocks 20–50% of trades without
+improving drawdown proportionally. At 1.0%, max DD actually *worsens* (−13.3%).
+
+### Per-year analysis (baseline vs 1.0% gate — the most active threshold)
+
+| Year | Baseline | Vol-gate 1.0% | Assessment |
+|---|---|---|---|
+| 2022 | +11.1% / 14 trades / +0.74R | **−3.2% / 3 trades / −1.04R** | Gate blocks all 6 winners, keeps 3 losers |
+| 2023 | +72.9% / 35 trades / +1.78R | +67.7% / 27 trades / +2.18R | Fewer trades → lower total despite better avg R |
+| 2024 | −8.5% / 23 trades / −0.34R | **−9.7% / 13 trades / −0.74R** | Filter removes the less-bad trades, keeps the worst |
+| 2025 | −3.2% / 23 trades / −0.11R | −3.3% / 22 trades / −0.10R | Neutral |
+
+### Why it fails
+The filter has no discriminating power: NIFTY being volatile does not predict
+that a *specific* swing setup will fail. In 2022 — the year this protection
+should activate — the gate blocked all 6 winners and let through 3 losers,
+turning a +11.1% year into −3.2%. The strategy's individual ATR-based stop
+already absorbs stock-level volatility; a market-ATR gate on top just reduces
+sample size without improving sample quality.
+
+The weak 2023 signal (higher avg R per trade with gate active) is negated by
+fewer trades taken — net total return is still lower, not higher.
+
+### Verdict
+**Rejected.** NIFTY's own volatility level is not a useful predictor for
+individual stock swing success. This exhausts the regime-filter space:
+market-direction gates (§9), RS/sector filters (§8), and now market-volatility
+gates all fail for the same reason — **the strategy's selected stocks have
+their own volatility regime that doesn't map cleanly to the index.**
+
+The `--vol-gate-threshold` and `--vol-gate-atr` flags are kept in the CLI
+(and `analysis.ATRSeries` is a useful reusable helper), but they are not
+recommended for production use.
 
 ---
 
 ## 13. Open questions / next steps
 
-- **Volatility regime (not market-trend).** The NIFTY-trend gate failed (§9), but
-  a *volatility* filter is untested — e.g. no new entries when NIFTY ATR20/price
-  exceeds a threshold (sideways-volatile markets chop swing trades apart). This is
-  the remaining regime idea worth trying; market *direction* is exhausted.
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
   time-series RS filters that failed in §8. Test as a universe filter, not a tiebreak.
 - **Turnover reduction** — costs are a persistent drag; anything that lifts profit
   factor without adding trades is interesting.
+- **Walk-forward OOS validation** — all results use one 4-year in-sample block.
+  Rolling OOS (train 2y, test 1y, slide forward) would show whether the edge is
+  stable or regime-dependent.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
 risk-based sizing — the breakthrough** (§9); **mean reversion (§10, rejected —
-closes the regime-switcher's defensive-compounder leg)**._
+closes the regime-switcher's defensive-compounder leg)**;
+**volatility regime filter (§12, rejected — exhausts the regime-filter space)**._
 
 ---
 
