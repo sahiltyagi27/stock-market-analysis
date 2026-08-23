@@ -857,14 +857,56 @@ worse, and the entry filter (trend + zone break + volume) is not selective
 enough on its own — it fires 54–66x more often than swing's pullback+bounce
 setup for a comparable or worse edge.
 
+### Follow-up: does a volatility-contraction ("coiled spring") filter help?
+Motivated by the same EXIDEIND case: a stock that repeatedly retests a
+resistance level, with its trading range narrowing each time, is a classic
+"coil before release" pattern — the idea being that a break out of a *tight,
+low-volatility* consolidation is higher quality than a break out of an
+already-volatile run-up. Implemented as `RequireContraction` /
+`--br-require-contraction`: the ATR on the candle immediately before the
+breakout must be ≤ `MaxContractionRatio` (default 0.85) × the ATR from
+`ContractionLookback` (default 20) candles earlier — i.e. volatility must have
+genuinely compressed in the setup phase, not just during the breakout itself.
+
+Tested alone, combined with a higher resistance-touch requirement (≥4, i.e. a
+more thoroughly tested level), and at both stop-width settings — same
+universe, same 2022–2026 window:
+
+| Variant | Trades | Expectancy | Profit factor | Max consec. losses |
+|---|---|---|---|---|
+| Breakout, default (no contraction) | 10,763 | +0.032R | 1.12 | 36 |
+| Breakout, widened stop/trail (no contraction) | 8,788 | +0.053R | 1.20 | 47 |
+| + Contraction, default stop | 2,333 | **−0.013R** | 0.95 | 22 |
+| + Contraction, widened stop | 2,200 | +0.006R | 1.02 | 30 |
+| + Touches ≥ 4, widened stop, no contraction | 6,471 | +0.043R | 1.17 | 47 |
+| + Touches ≥ 4 + Contraction, widened stop | 1,575 | +0.002R | 1.01 | 25 |
+
+**Contraction consistently hurts, not helps** — every combination that adds it
+scores worse than the equivalent without it. The plain widened-stop breakout
+(no contraction) remains the best-performing variant, and it still doesn't
+clear swing's bar (§13 above).
+
+**Why:** ATR contraction signals an imminent large move is coming, but is
+direction-agnostic — a quiet coil doesn't imply *bullish* conviction has been
+building, only that volatility has been low. The volume-confirmation filter
+already in the base design (≥1.5x average volume) is a more direct "real
+interest is building" signal than volatility compression, and adding
+contraction on top mostly discards trades without improving the survivors.
+This tests one specific implementation (a single ATR-ratio snapshot at a
+20-day lookback) — a sustained multi-day narrowing requirement, or measuring
+zone-width contraction directly, could behave differently and hasn't been
+tried.
+
 ### Verdict
-**Rejected.** The instinct behind it was correct — EXIDEIND's momentum was
-real and swing's pullback discipline structurally cannot trade it — but this
-mechanical implementation of "buy the breakout" does not clear swing's bar on
-risk-adjusted terms at either parameter setting tested. The `internal/breakout`
-package and `--mode breakout` / `br-*` flags are kept in `cmd/backtest` for
-reproducibility and as a standalone research tool (alongside the pre-existing
-`cmd/scan --mode breakout` watchlist), but are not wired into paper trading.
+**Rejected**, including the contraction-filter follow-up. The instinct behind
+it was correct — EXIDEIND's momentum was real and swing's pullback discipline
+structurally cannot trade it — but this mechanical implementation of "buy the
+breakout" (with or without a coiled-consolidation requirement) does not clear
+swing's bar on risk-adjusted terms at any parameter setting tested. The
+`internal/breakout` package, `--mode breakout`, and `br-*` flags (including
+`--br-require-contraction`) are kept in `cmd/backtest` for reproducibility and
+as a standalone research tool (alongside the pre-existing `cmd/scan --mode
+breakout` watchlist), but are not wired into paper trading.
 
 ---
 
@@ -954,6 +996,15 @@ go run ./cmd/backtest --mode swing --from 2022-01-01 --to 2026-08-20     # basel
 go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20  # default params
 go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
   --br-stop-atr-mult 2.0 --trail-atr-mult 2.5                            # widened stop/trail
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
+  --br-require-contraction                                               # + contraction, default stop
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
+  --br-require-contraction --br-stop-atr-mult 2.0 --trail-atr-mult 2.5   # + contraction, widened stop
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
+  --br-min-resistance-touches 4 --br-stop-atr-mult 2.0 --trail-atr-mult 2.5  # touches >=4, no contraction
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
+  --br-min-resistance-touches 4 --br-require-contraction \
+  --br-stop-atr-mult 2.0 --trail-atr-mult 2.5                            # touches >=4 + contraction
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
