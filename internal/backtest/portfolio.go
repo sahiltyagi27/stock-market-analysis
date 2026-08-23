@@ -499,9 +499,16 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			}
 		}
 
-		// 2. Mark-to-market equity + drawdown.
+		// 2. Mark-to-market equity + drawdown. Symbols in deterministic (sorted)
+		// order: floating-point addition isn't perfectly order-independent, and
+		// this equity value feeds directly into position-sizing decisions
+		// (share counts via math.Floor) a few lines below — a map's randomised
+		// iteration order let a rounding-boundary difference cascade into a
+		// genuinely different trade sequence run-to-run over years of
+		// compounding, not just cosmetic last-digit noise.
 		equity := cash
-		for sym, pos := range positions {
+		for _, sym := range sortedPosSymbols(positions) {
+			pos := positions[sym]
 			sd := data[sym]
 			if idx, ok := sd.dateIdx[dk]; ok {
 				equity += pos.shares * sd.candles[idx].Close
@@ -626,9 +633,12 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		equityCurve = append(equityCurve, EquityPoint{Date: day, Equity: equity, Entries: entriesToday})
 	}
 
-	// Force-close any still-open positions at their last close.
+	// Force-close any still-open positions at their last close. Deterministic
+	// order for the same reason as the equity mark-to-market above: this
+	// directly accumulates into `cash`, i.e. FinalCapital.
 	lastDay := calendar[len(calendar)-1]
-	for sym, pos := range positions {
+	for _, sym := range sortedPosSymbols(positions) {
+		pos := positions[sym]
 		sd := data[sym]
 		lastIdx := len(sd.candles) - 1
 		exitPrice := sellFill(sd.candles[lastIdx].Close, opts.slip())
