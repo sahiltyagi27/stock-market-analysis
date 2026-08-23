@@ -369,3 +369,122 @@ func TestCheckExit_StructureMode_TrailStopOutcome(t *testing.T) {
 		t.Fatalf("expected trail-stop exit at 105, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
 	}
 }
+
+func TestCheckExit_TrendStopMode_HoldsWhileAboveEMA(t *testing.T) {
+	// Even a deep pullback that would trigger an "ema" (EMA7<EMA21) exit must
+	// be tolerated under trendstop, as long as the close stays above the
+	// long trend EMA — this mode is meant to survive the 50-60% mid-journey
+	// drawdowns ANALYSIS.md S15 found in real multibagger price histories.
+	candles := []models.Candle{
+		pfTestCandle(100, 100, 100, 100),
+		pfTestCandle(60, 65, 55, 62), // a brutal pullback, still above trendStopEMA
+	}
+	sd := &symData{
+		candles:      candles,
+		ema7:         []float64{110, 70}, // would trigger "ema" mode's recross exit
+		ema21:        []float64{105, 105},
+		trendStopEMA: []float64{50, 50},
+	}
+	pos := &pfPosition{entry: 100, sl: 40, initialSL: 40, entryIdx: 0}
+	_, _, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "trendstop"})
+	if exited {
+		t.Fatal("trendstop mode should hold through a deep pullback that stays above the trend EMA")
+	}
+}
+
+func TestCheckExit_TrendStopMode_ExitsBelowEMA(t *testing.T) {
+	candles := []models.Candle{
+		pfTestCandle(100, 100, 100, 100),
+		pfTestCandle(48, 50, 45, 47), // close breaks below trendStopEMA
+	}
+	sd := &symData{
+		candles:      candles,
+		ema7:         []float64{110, 60},
+		ema21:        []float64{105, 105},
+		trendStopEMA: []float64{50, 50},
+	}
+	pos := &pfPosition{entry: 100, sl: 40, initialSL: 40, entryIdx: 0}
+	price, outcome, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "trendstop"})
+	if !exited || outcome != OutcomeTrailStop || price != 47 {
+		t.Fatalf("expected trend-stop exit at 47, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}
+
+func TestComputeXIRR_ReducesToCAGRForLumpSum(t *testing.T) {
+	// A single deposit and a single withdrawal 2 years later at (1.1)^2 = 1.21x
+	// must solve to ~10%, same as simple CAGR for one cash flow in, one out.
+	t0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	flows := []cashFlowEvent{
+		{date: t0, amount: -100},
+		{date: t0.AddDate(2, 0, 0), amount: 121},
+	}
+	rate, ok := computeXIRR(flows)
+	if !ok {
+		t.Fatal("expected XIRR to solve")
+	}
+	if math.Abs(rate-0.10) > 0.002 {
+		t.Fatalf("expected ~10%%, got %.4f%%", rate*100)
+	}
+}
+
+func TestComputeXIRR_ZeroGrowthWithContributions(t *testing.T) {
+	// Deposit 100, deposit another 100 a year later, withdraw exactly 200 a
+	// year after that -- no actual investment growth at all, so XIRR must be
+	// ~0%% regardless of the deposit schedule (this is exactly the case naive
+	// CAGR gets wrong: (200/100)^(1/2)-1 = 41% would be nonsense here, since
+	// half the "growth" is just the second deposit, not investment return).
+	t0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	flows := []cashFlowEvent{
+		{date: t0, amount: -100},
+		{date: t0.AddDate(1, 0, 0), amount: -100},
+		{date: t0.AddDate(2, 0, 0), amount: 200},
+	}
+	rate, ok := computeXIRR(flows)
+	if !ok {
+		t.Fatal("expected XIRR to solve")
+	}
+	if math.Abs(rate) > 0.005 {
+		t.Fatalf("expected ~0%% (no real growth), got %.4f%%", rate*100)
+	}
+}
+
+func TestComputeXIRR_PositiveGrowthWithContributions(t *testing.T) {
+	// Deposit 100, deposit 100 more a year later, withdraw 242 two years after
+	// the start. If everything grew at a steady 10%/yr: year-1 100->110, plus
+	// the new 100 -> 210, year-2 210->231... this fixture uses a cleaner
+	// round-trip: verify the solved rate actually satisfies the NPV-zero
+	// condition (the real correctness bar for an iterative solver), rather
+	// than asserting a specific expected percentage by hand.
+	t0 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	flows := []cashFlowEvent{
+		{date: t0, amount: -100},
+		{date: t0.AddDate(1, 0, 0), amount: -100},
+		{date: t0.AddDate(2, 0, 0), amount: 242},
+	}
+	rate, ok := computeXIRR(flows)
+	if !ok {
+		t.Fatal("expected XIRR to solve")
+	}
+	if rate <= 0 {
+		t.Fatalf("expected clearly positive growth, got %.4f%%", rate*100)
+	}
+	// Verify the solved rate actually zeroes the NPV (the real correctness
+	// bar), not just that it's plausible-looking.
+	npv := 0.0
+	for _, f := range flows {
+		years := f.date.Sub(t0).Hours() / 24 / 365.25
+		npv += f.amount / math.Pow(1+rate, years)
+	}
+	if math.Abs(npv) > 0.01 {
+		t.Fatalf("solved rate %.4f%% does not zero NPV: residual %.4f", rate*100, npv)
+	}
+}
+
+func TestComputeXIRR_TooFewFlows(t *testing.T) {
+	if _, ok := computeXIRR(nil); ok {
+		t.Fatal("expected failure with zero flows")
+	}
+	if _, ok := computeXIRR([]cashFlowEvent{{amount: -100}}); ok {
+		t.Fatal("expected failure with a single flow")
+	}
+}

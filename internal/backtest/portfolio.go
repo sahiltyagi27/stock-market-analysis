@@ -32,10 +32,23 @@ type PortfolioOptions struct {
 	// StartCapital is the starting cash. Default: 100000.
 	StartCapital float64
 
-	// ExitMode: "ema" (hold until EMA7<EMA21), "target" (fixed resistance), or
+	// MonthlyContribution adds this amount to cash on the first trading day
+	// of every calendar month after the first (StartCapital already covers
+	// month one) within [From, To] -- a SIP-style ongoing deposit. 0 (default)
+	// disables it, in which case ReturnPct's simple CAGR is already the true
+	// return. With contributions, use PortfolioStats.XIRRPct instead: naive
+	// (FinalCapital/StartCapital)^(1/years) would count your own deposits as
+	// investment return, which is wrong.
+	MonthlyContribution float64
+
+	// ExitMode: "ema" (hold until EMA7<EMA21), "target" (fixed resistance),
 	// "structure" (trail the stop up to the most recent confirmed swing low —
 	// hold through any pullback that doesn't undercut it; exit only when a
-	// lower low actually forms). SL is always checked first. Default: "ema".
+	// lower low actually forms), or "trendstop" (exit only when the close
+	// breaks below a single long-term EMA — a multi-year-hold analogue of
+	// "structure", deliberately tolerant of the 50-60% mid-journey drawdowns
+	// ANALYSIS.md §15 found even genuine secular compounders go through).
+	// SL is always checked first. Default: "ema".
 	ExitMode string
 
 	// StructureWindow is the confirmation window for swing-low detection under
@@ -44,6 +57,11 @@ type PortfolioOptions struct {
 	// StructureWindow candles after the low to confirm it — no lookahead).
 	// Default: 2.
 	StructureWindow int
+
+	// TrendStopEMA is the long-term trend EMA period for ExitMode
+	// "trendstop" — exit when the close falls below this average. Default:
+	// 200 (matches longhold.Options.TrendEMA by convention, but independent).
+	TrendStopEMA int
 
 	// MaxHoldDays force-closes a position after this many candles (0 = no cap).
 	MaxHoldDays int
@@ -193,6 +211,17 @@ type PortfolioStats struct {
 	// — unlike reconstructing equity from per-trade R, it already accounts for
 	// concurrency, weight caps, and cash constraints.
 	EquityCurve []EquityPoint
+
+	// TotalContributions is the sum of all MonthlyContribution deposits made
+	// during the run (excludes StartCapital). 0 when MonthlyContribution is 0.
+	TotalContributions float64
+
+	// XIRRPct is the money-weighted annual rate of return, accounting for
+	// StartCapital, every contribution, and FinalCapital as cash flows on
+	// their actual dates. Only meaningful when MonthlyContribution > 0;
+	// equals the simple CAGR (within numerical tolerance) when there were no
+	// contributions, since XIRR reduces to CAGR for a single lump-sum flow.
+	XIRRPct float64
 }
 
 // EquityPoint is one day's account value on the portfolio equity curve.
@@ -212,6 +241,9 @@ type symData struct {
 	// lowest Low within ±StructureWindow), else 0. Used by ExitMode
 	// "structure" to trail the stop. Precomputed once per symbol.
 	swingLow []float64
+	// trendStopEMA is the EMA(TrendStopEMA) series, used by ExitMode
+	// "trendstop" to exit when the close falls below it.
+	trendStopEMA []float64
 }
 
 type pfSignal struct {
@@ -226,6 +258,14 @@ type pfSignal struct {
 	// rankRet is the stock's return over AllocLookback candles ending on the
 	// signal day — used to order same-day candidates when AllocLookback > 0.
 	rankRet float64
+}
+
+// cashFlowEvent is one dated cash movement for XIRR: negative for money
+// going into the account (the starting lump sum, every contribution),
+// positive for money coming out (the final portfolio value, at the end).
+type cashFlowEvent struct {
+	date   time.Time
+	amount float64
 }
 
 type pfPosition struct {
@@ -261,6 +301,9 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	}
 	if opts.StructureWindow <= 0 {
 		opts.StructureWindow = 2
+	}
+	if opts.TrendStopEMA <= 0 {
+		opts.TrendStopEMA = 200
 	}
 	if opts.MaxWeightPct <= 0 {
 		opts.MaxWeightPct = 25
@@ -301,7 +344,11 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		if opts.ExitMode == "structure" {
 			swingLow = computeSwingLows(cc, opts.StructureWindow)
 		}
-		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di, swingLow: swingLow}
+		var trendStopEMA []float64
+		if opts.ExitMode == "trendstop" {
+			trendStopEMA, _ = analysis.EMA(closes, opts.TrendStopEMA)
+		}
+		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di, swingLow: swingLow, trendStopEMA: trendStopEMA}
 	}
 
 	// Generate signals across all symbols.
@@ -337,6 +384,15 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	var totalHold int
 	equityCurve := make([]EquityPoint, 0, len(calendar))
 
+	// Cash-flow tracking for XIRR (money-weighted return, needed once
+	// MonthlyContribution makes simple CAGR wrong -- it would count deposits
+	// as investment return). contribMonth tracks the last calendar month a
+	// contribution (or the initial lump sum) was recorded, so each new month
+	// within [From, To] triggers exactly one deposit.
+	var cashFlows []cashFlowEvent
+	var totalContributions float64
+	contribMonth := ""
+
 	// Opportunity-loss tracking (M10): hypothetical outcomes of signals rejected
 	// because the portfolio was full. hypoOpenUntil dedups per symbol.
 	hypoOpenUntil := map[string]time.Time{}
@@ -351,6 +407,24 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	for _, day := range calendar {
 		dk := day.Format(dayFmt)
 		entriesToday := 0
+
+		// Cash flows: the day loop walks the FULL loaded calendar (needed for
+		// indicator warmup), so gate contributions to the actual [From, To]
+		// test window -- a zero bound means unbounded on that side.
+		inWindow := (opts.From.IsZero() || !day.Before(opts.From)) && (opts.To.IsZero() || !day.After(opts.To))
+		if inWindow {
+			month := day.Format("2006-01")
+			if contribMonth == "" {
+				// First day actually processed: the starting lump sum goes in.
+				cashFlows = append(cashFlows, cashFlowEvent{date: day, amount: -opts.StartCapital})
+				contribMonth = month
+			} else if opts.MonthlyContribution > 0 && month != contribMonth {
+				cash += opts.MonthlyContribution
+				totalContributions += opts.MonthlyContribution
+				cashFlows = append(cashFlows, cashFlowEvent{date: day, amount: -opts.MonthlyContribution})
+				contribMonth = month
+			}
+		}
 
 		// 1. Exits. Symbols are processed in deterministic (sorted) order so the
 		// order realised R is appended to healthR is reproducible run-to-run — map
@@ -573,14 +647,24 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		totalHold += lastIdx - pos.entryIdx
 	}
 
+	// Close the cash-flow series with the final portfolio value as a
+	// positive flow (money "coming out") on the last day.
+	if len(cashFlows) > 0 {
+		cashFlows = append(cashFlows, cashFlowEvent{date: lastDay, amount: cash})
+	}
+
 	stats := PortfolioStats{
-		StartCapital:   opts.StartCapital,
-		FinalCapital:   cash,
-		MaxDrawdownPct: maxDD * 100,
-		Trades:         len(trades),
-		MaxConcurrent:  maxConcurrent,
+		StartCapital:       opts.StartCapital,
+		FinalCapital:       cash,
+		MaxDrawdownPct:     maxDD * 100,
+		Trades:             len(trades),
+		MaxConcurrent:      maxConcurrent,
+		TotalContributions: totalContributions,
 	}
 	stats.ReturnPct = (cash - opts.StartCapital) / opts.StartCapital * 100
+	if xirr, ok := computeXIRR(cashFlows); ok {
+		stats.XIRRPct = xirr * 100
+	}
 	var sumPos, sumNeg, sumRR float64
 	for _, t := range trades {
 		sumRR += t.ActualRR
@@ -881,6 +965,13 @@ func checkExit(pos *pfPosition, sd *symData, idx int, opts PortfolioOptions) (fl
 	case "structure":
 		// No separate win condition — hold until the trailing structural stop
 		// (updated by updateTrailingStop before this call) or MaxHoldDays.
+	case "trendstop":
+		if idx > pos.entryIdx && idx < len(sd.trendStopEMA) && sd.trendStopEMA[idx] > 0 && c.Close < sd.trendStopEMA[idx] {
+			// Same semantics as "structure": this can close at a profit or a
+			// loss depending on where price sits relative to entry after a
+			// multi-year hold, so it isn't unconditionally a "win".
+			return c.Close, OutcomeTrailStop, true
+		}
 	default: // "ema"
 		if idx > pos.entryIdx && sd.ema7[idx] > 0 && sd.ema21[idx] > 0 && sd.ema7[idx] < sd.ema21[idx] {
 			return c.Close, OutcomeWin, true
@@ -928,4 +1019,84 @@ func updateTrailingStop(pos *pfPosition, sd *symData, idx, window int) {
 	if low > pos.sl {
 		pos.sl = low
 	}
+}
+
+// computeXIRR solves for the annualized money-weighted rate of return r such
+// that the present value of every cash flow (discounted to the first flow's
+// date) sums to zero -- the standard way to measure return when money goes
+// in and out on irregular dates (a lump sum plus ongoing SIP-style
+// contributions, here). Reduces to simple CAGR when there is exactly one
+// inflow and one outflow (no contributions).
+//
+// Uses Newton-Raphson from a 10% starting guess, falling back to bisection
+// over a wide range if Newton doesn't converge cleanly (it can overshoot
+// into the invalid (1+r) <= 0 domain for pathological cash-flow shapes).
+// Returns (rate, true) on success, (0, false) if there are fewer than two
+// flows or no root is found in range.
+func computeXIRR(flows []cashFlowEvent) (float64, bool) {
+	if len(flows) < 2 {
+		return 0, false
+	}
+	t0 := flows[0].date
+	years := make([]float64, len(flows))
+	for i, f := range flows {
+		years[i] = f.date.Sub(t0).Hours() / 24 / 365.25
+	}
+
+	npv := func(r float64) float64 {
+		sum := 0.0
+		for i, f := range flows {
+			sum += f.amount / math.Pow(1+r, years[i])
+		}
+		return sum
+	}
+	dnpv := func(r float64) float64 {
+		sum := 0.0
+		for i, f := range flows {
+			if years[i] == 0 {
+				continue
+			}
+			sum += -years[i] * f.amount / math.Pow(1+r, years[i]+1)
+		}
+		return sum
+	}
+
+	r := 0.1
+	for i := 0; i < 100; i++ {
+		fr := npv(r)
+		if math.Abs(fr) < 1e-6 {
+			return r, true
+		}
+		d := dnpv(r)
+		if d == 0 {
+			break
+		}
+		next := r - fr/d
+		if next <= -1 { // outside the valid (1+r) > 0 domain
+			next = (r - 1) / 2
+		}
+		r = next
+	}
+
+	// Newton-Raphson didn't converge cleanly (uncommon, but cash-flow shapes
+	// with large swings can do this) -- bisection is slower but always
+	// converges given a sign change in range.
+	lo, hi := -0.99, 10.0
+	flo, fhi := npv(lo), npv(hi)
+	if (flo > 0) == (fhi > 0) {
+		return 0, false
+	}
+	for i := 0; i < 200; i++ {
+		mid := (lo + hi) / 2
+		fm := npv(mid)
+		if math.Abs(fm) < 1e-6 {
+			return mid, true
+		}
+		if (fm > 0) == (flo > 0) {
+			lo, flo = mid, fm
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2, true
 }
