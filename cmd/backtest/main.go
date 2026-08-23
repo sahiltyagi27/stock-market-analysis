@@ -57,6 +57,7 @@ func main() {
 	topN := flag.Int("top", 30, "trades to print when --capital is disabled (sorted by score)")
 	outputCSV := flag.String("output", "", "write all trades to this CSV file (empty = no file)")
 	capital := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
+	monthlyContribution := flag.Float64("monthly-contribution", 0, "[portfolio] SIP-style deposit added on the first trading day of every month within --from/--to (0 = disabled). With this set, trust the printed XIRR, not the simple CAGR")
 	portfolio := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
 	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
 	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross), target, structure (trail to the last confirmed swing low), or trendstop (exit below a long trend EMA, for --mode longhold)")
@@ -373,6 +374,7 @@ func main() {
 			MinScore:             *minScore,
 			MaxPositions:         *maxPositions,
 			StartCapital:         *capital,
+			MonthlyContribution:  *monthlyContribution,
 			ExitMode:             *exitMode,
 			StructureWindow:      *structureWindow,
 			TrendStopEMA:         *trendStopEMA,
@@ -678,6 +680,14 @@ func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fr
 		display.Dim.Sprint("Total return     :"),
 		retColor("%+.1f%%", s.ReturnPct),
 		display.Dim.Sprintf("(~%.1f%%/yr CAGR)", cagr))
+
+	if s.TotalContributions > 0 {
+		fmt.Printf("  %s  %s\n", display.Dim.Sprint("Contributions    :"), formatINR(s.TotalContributions))
+		fmt.Printf("  %s  %s\n",
+			display.Dim.Sprint("XIRR (true return):"),
+			display.BoldGreen.Sprintf("%+.1f%%/yr", s.XIRRPct))
+		fmt.Println(display.Dim.Sprint("    (money-weighted -- the simple CAGR above counts your own deposits as return, ignore it)"))
+	}
 
 	fmt.Printf("  %s  %s\n", display.Dim.Sprint("Max drawdown     :"), display.Red.Sprintf("-%.1f%%", s.MaxDrawdownPct))
 

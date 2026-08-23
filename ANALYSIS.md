@@ -1280,19 +1280,61 @@ diversified across many names, not concentrated in 5), **it clears NIFTY by
   KEI alone), since the 200-day trend stop still exits during KEI's own
   internal corrections and has to re-enter, paying costs each time.
 
+### The real scenario: ₹5L start + ₹10k/month, and why naive CAGR lies with contributions
+The user's actual plan: start with ₹5L, add ₹10k/month from salary. Backtest
+this exact deposit schedule (`--monthly-contribution 10000`) rather than a
+lump sum, since ongoing SIP-style contributions change the answer to "what
+return did I actually get" in a way naive CAGR gets wrong — it would credit
+your own deposits as if they'd been invested since day one.
+
+Added `MonthlyContribution` (deposits on the first trading day of each
+calendar month within `[From, To]`) and `computeXIRR` — a proper
+money-weighted rate of return (Newton-Raphson with a bisection fallback),
+treating the start capital, every contribution, and the final value as dated
+cash flows and solving for the single rate that zeroes their combined
+present value. This is the same method (XIRR) brokerages use for portfolios
+with irregular deposits, for exactly this reason. Verified against
+known-answer cases: a pure lump sum reduces to simple CAGR; a
+zero-real-growth deposit/withdrawal schedule correctly solves to ~0% despite
+the ending balance being 2x the total deposited.
+
+**Result (2012–2026, ₹5L start, ₹10k/month, 20 positions):**
+
+| | Value |
+|---|---|
+| Final capital | ₹1,28,64,403 |
+| Total contributed (start + deposits) | ₹22,50,000 |
+| Naive "Total return" CAGR | 24.8%/yr — **wrong, ignore it** |
+| **XIRR (true money-weighted return)** | **17.9%/yr** |
+| Max drawdown | −55.9% |
+
+The naive figure (24.8%) is close to the pure-lump-sum result (24.2%,
+above) because it doesn't know about the deposits at all — it just compares
+start to end. The true XIRR (17.9%) is meaningfully lower, and the reason is
+real, not a modeling artifact: **the most recent contributions bought in
+right as the strategy entered its current drawdown** (2025 −19.2%, 2026
+−12.4% partial-year, from the equity curve above) — those deposits have had
+almost no time to recover, and a money-weighted return correctly penalizes
+that unlucky timing rather than pretending every rupee had the full 14 years
+to compound. This is exactly the real-world timing risk a SIP investor
+carries, correctly surfaced instead of hidden.
+
 ### Verdict
 **A real, verified improvement — the first strategy this session to beat
-the true passive benchmark — but not a free lunch.** The 20-position
-config's 24.2% CAGR comes bundled with a 59% max drawdown that is, as of
-this writing, an *active* drawdown the strategy is currently inside of, not
-a historical event safely in the past. Whether that trade-off is acceptable
-depends entirely on capital commitment and time horizon — this is not
-something to run with capital you might need in the next few years. Kept as
-`--mode longhold --exit-mode trendstop` in `cmd/backtest --portfolio`, with
-6 new tests (`internal/longhold`) plus 2 new tests (trendstop exit
-mechanics) covering the entry/exit logic. Not yet wired into paper trading —
-that would be the natural next step once the drawdown-tolerance question is
-settled, not before.
+the true passive benchmark — but not a free lunch, and the drawdown is
+explicitly accepted, not glossed over.** The 20-position lump-sum config's
+24.2% CAGR, and the ₹5L+₹10k/month scenario's 17.9% XIRR, both come bundled
+with a ~56–59% max drawdown that is, as of this writing, an *active*
+drawdown the strategy is currently inside of, not a historical event safely
+in the past — user confirmed this is acceptable, capital committed at ₹5L +
+₹10k/month, 20 positions. Kept as `--mode longhold --exit-mode trendstop
+--monthly-contribution N` in `cmd/backtest --portfolio`, with 6 new tests
+(`internal/longhold`), 2 for the trendstop exit mechanics, and 4 for
+`computeXIRR` (lump-sum-reduces-to-CAGR, zero-growth-with-contributions,
+positive-growth NPV-correctness, too-few-flows). Not yet wired into paper
+trading — the natural next step, per user direction, is proper walk-forward
+OOS validation on this strategy specifically (the same rigor §15 applied to
+swing) before going live.
 
 ---
 
@@ -1458,6 +1500,14 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08
   --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 100000 \
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10 \
   --equity-output /tmp/lh_equity.csv --output /tmp/lh_trades.csv
+
+# S16 — the real scenario: Rs5L start + Rs10k/month SIP, 20 positions.
+# Trust the printed XIRR, not the "Total return" CAGR line (it ignores the
+# deposits and overstates the true return).
+go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08-20 \
+  --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 500000 \
+  --monthly-contribution 10000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
