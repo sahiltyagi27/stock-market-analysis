@@ -35,6 +35,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/config"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/backtest"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/breakout"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
@@ -48,7 +49,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	fromStr := flag.String("from", "", "start of signal-date window, YYYY-MM-DD (empty = no lower bound)")
 	toStr := flag.String("to", "", "end of signal-date window, YYYY-MM-DD (empty = today)")
-	mode := flag.String("mode", "swing", "scanner strategy: swing, crossover, or meanrev (meanrev = REJECTED experiment, see ANALYSIS.md §10)")
+	mode := flag.String("mode", "swing", "scanner strategy: swing, crossover, meanrev, or breakout (meanrev and breakout = REJECTED experiments, see ANALYSIS.md §10 and §13)")
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
@@ -123,6 +124,15 @@ func main() {
 	mrStopATRMult := flag.Float64("mr-stop-atr-mult", 2.5, "[meanrev] SL = close − this × ATR (wide; mean/time exit leads)")
 	mrATRPeriod := flag.Int("mr-atr-period", 14, "[meanrev] ATR period for the stop")
 	mrMinCandles := flag.Int("mr-min-candles", 0, "[meanrev] min candles before analysis (0 = trend-period + 10)")
+
+	// Breakout-mode flags (only used when --mode breakout).
+	brMinRR := flag.Float64("br-min-rr", 2.0, "[breakout] minimum R/R; also used to size the target when no resistance zone exists above price")
+	brStopATRMult := flag.Float64("br-stop-atr-mult", 1.0, "[breakout] SL = broken resistance zone's Low − this × ATR")
+	brATRPeriod := flag.Int("br-atr-period", 14, "[breakout] ATR period for the stop")
+	brVolumeWindow := flag.Int("br-volume-window", 20, "[breakout] lookback for the average-volume baseline")
+	brMinVolumeRatio := flag.Float64("br-min-volume-ratio", 1.5, "[breakout] minimum (today's volume / average) to confirm the breakout")
+	brMinResTouches := flag.Int("br-min-resistance-touches", 2, "[breakout] minimum touches required for a resistance zone to qualify as tested")
+	brMinCandles := flag.Int("br-min-candles", 210, "[breakout] min candles before analysis (EMA200 + margin)")
 
 	flag.Parse()
 
@@ -235,8 +245,18 @@ func main() {
 		},
 	}
 
-	if *mode != "swing" && *mode != "crossover" && *mode != "meanrev" {
-		log.Fatalf("--mode must be swing, crossover, or meanrev, got %q", *mode)
+	if *mode != "swing" && *mode != "crossover" && *mode != "meanrev" && *mode != "breakout" {
+		log.Fatalf("--mode must be swing, crossover, meanrev, or breakout, got %q", *mode)
+	}
+
+	brOpts := breakout.Options{
+		MinRR:             *brMinRR,
+		StopATRMultiplier: *brStopATRMult,
+		ATRPeriod:         *brATRPeriod,
+		VolumeWindow:      *brVolumeWindow,
+		MinVolumeRatio:    *brMinVolumeRatio,
+		MinCandles:        *brMinCandles,
+		ZoneOpts:          analysis.ZoneOptions{MinResistanceTouches: *brMinResTouches},
 	}
 
 	mrOpts := meanrev.Options{
@@ -273,6 +293,7 @@ func main() {
 		ScanOpts:           scanOpts,
 		CrossoverOpts:      coOpts,
 		MeanRevOpts:        mrOpts,
+		BreakoutOpts:       brOpts,
 		Progress: func(done, total int) {
 			if done%50 == 0 || done == total {
 				log.Printf("  simulating: %d/%d symbols…", done, total)

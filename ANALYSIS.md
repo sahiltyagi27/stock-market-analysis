@@ -803,7 +803,72 @@ recommended for production use.
 
 ---
 
-## 13. Open questions / next steps
+## 13. Resistance-zone breakout entries — REJECTED
+
+### Hypothesis
+The swing scanner only trades pullback-to-support setups (bullish reversal
+candle at a tested support zone, R/R ≥ 2). Strong trending stocks that never
+pull back cleanly — e.g. EXIDEIND, +28.6% over Jun–Aug 2026 without ever
+offering a bullish-close-at-support day — are never traded. A resistance-zone
+breakout scanner (confirmed close above a tested resistance zone, ≥1.5x average
+volume) was built (`internal/breakout`) to see if it captures a genuinely
+different, additive edge.
+
+### Design
+- Constructive trend filter: price above EMA50 and EMA200 (same bar as swing/meanrev).
+- Entry: signal-day close above a resistance zone (≥2 touches) that price was
+  at or below on the prior close — a fresh break, not a chase.
+- SL: broken resistance zone's Low − `StopATRMultiplier` × ATR(14) (former
+  resistance now support, with an ATR buffer).
+- Target: nearest resistance zone above price; falls back to
+  entry + `MinRR` × risk (default 2.0) when no zone exists above.
+- Volume confirmation: today's volume ≥ `MinVolumeRatio` (default 1.5x) of the
+  20-day average — a break on thin volume is easily faked.
+
+### Results vs swing (2022-01-01 → 2026-08-20, same engine, same window)
+
+| | Swing | Breakout (default) | Breakout (wide stop/trail) |
+|---|---|---|---|
+| Total trades | 163 | 10,763 | 8,788 |
+| Expectancy | +0.051R | +0.032R | +0.053R |
+| Profit factor | 1.20 | 1.12 | 1.20 |
+| Max consecutive losses | 9 | 36 | **47** |
+| Trail-stop rate | 90% | 85% | 71% |
+| Trail-stop avg exit | −0.02R | −0.11R | −0.21R |
+| Avg hold | 5.9 days | 5.3 days | 11.0 days |
+
+The default parameters (`StopATRMultiplier: 1.0`, engine `TrailATRMultiplier:
+1.5`) underperform swing on every metric. Widening both (`--br-stop-atr-mult
+2.0 --trail-atr-mult 2.5`) — testing the hypothesis that a normal post-breakout
+retest of the broken level was triggering premature stops — recovers
+expectancy and profit factor to match swing, but at the cost of a **47-trade
+max losing streak** (vs swing's 9) and **54x the trade frequency** (8,788 vs
+163 trades over the same 4.5 years), uncosted. This backtest engine does not
+model transaction costs; at that frequency, realistic round-trip costs
+(~0.45%, per the paper-trade defaults) would erode an edge that only matches
+swing's before costs.
+
+### Why it fails
+Breakouts commonly retest the broken resistance level (now support) before
+continuing — a normal, healthy pattern that a tight stop punishes as if it
+were a failure. Widening the stop enough to survive the retest recovers the
+per-trade edge but makes losing streaks and holding-period risk materially
+worse, and the entry filter (trend + zone break + volume) is not selective
+enough on its own — it fires 54–66x more often than swing's pullback+bounce
+setup for a comparable or worse edge.
+
+### Verdict
+**Rejected.** The instinct behind it was correct — EXIDEIND's momentum was
+real and swing's pullback discipline structurally cannot trade it — but this
+mechanical implementation of "buy the breakout" does not clear swing's bar on
+risk-adjusted terms at either parameter setting tested. The `internal/breakout`
+package and `--mode breakout` / `br-*` flags are kept in `cmd/backtest` for
+reproducibility and as a standalone research tool (alongside the pre-existing
+`cmd/scan --mode breakout` watchlist), but are not wired into paper trading.
+
+---
+
+## 14. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
@@ -818,11 +883,13 @@ _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
 risk-based sizing — the breakthrough** (§9); **mean reversion (§10, rejected —
 closes the regime-switcher's defensive-compounder leg)**;
-**volatility regime filter (§12, rejected — exhausts the regime-filter space)**._
+**volatility regime filter (§12, rejected — exhausts the regime-filter space)**;
+**resistance-zone breakout entries (§13, rejected — retest whipsaw and thin
+edge at scale)**._
 
 ---
 
-## 14. Reproduce
+## 15. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -879,6 +946,14 @@ go run ./cmd/backtest --portfolio --mode meanrev --exit-mode target --max-hold 1
 # Without --health-shadow the continuous run locks into cash in early 2024.
 go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2026-06-01 \
   --health-window 20 --health-shadow --equity-output /tmp/eq.csv
+
+# §13 — resistance-zone breakout (REJECTED). Numbers here use the non-portfolio
+# per-trade R-multiple summary (no --portfolio) — the comparison is on
+# expectancy/profit-factor/streaks, not capital-allocation performance.
+go run ./cmd/backtest --mode swing --from 2022-01-01 --to 2026-08-20     # baseline
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20  # default params
+go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
+  --br-stop-atr-mult 2.0 --trail-atr-mult 2.5                            # widened stop/trail
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

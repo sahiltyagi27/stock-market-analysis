@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/breakout"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/meanrev"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
@@ -49,6 +50,8 @@ type Options struct {
 	// "crossover" uses the EMA 7×21 crossover scanner.
 	// "meanrev" uses the mean-reversion (RSI-2 oversold dip) scanner — a
 	//   REJECTED experiment kept for reproducibility (see ANALYSIS.md §10).
+	// "breakout" uses the resistance-zone breakout scanner (confirmed close
+	//   above a tested resistance zone on above-average volume).
 	Mode string
 
 	// ScanOpts are used when Mode == "swing" (or empty).
@@ -59,6 +62,9 @@ type Options struct {
 
 	// MeanRevOpts are used when Mode == "meanrev".
 	MeanRevOpts meanrev.Options
+
+	// BreakoutOpts are used when Mode == "breakout".
+	BreakoutOpts breakout.Options
 
 	// Progress is an optional callback invoked after each symbol completes.
 	// Arguments are (symbolsDone, symbolsTotal). Safe to nil; called from
@@ -191,6 +197,24 @@ func getTradeSetup(sym string, candles []models.Candle, opts Options) (ts tradeS
 		}, true
 	}
 
+	if opts.Mode == "breakout" {
+		sigs, _ := breakout.Scan(
+			[]breakout.Input{{Symbol: sym, Candles: candles}},
+			opts.BreakoutOpts,
+		)
+		if len(sigs) == 0 {
+			return ts, false
+		}
+		sig := sigs[0]
+		return tradeSetup{
+			sl:     sig.SL,
+			target: sig.Target,
+			atr:    sig.ATR,
+			score:  sig.Score,
+			trend:  "breakout",
+		}, true
+	}
+
 	// Swing mode (default).
 	sigs := scanner.Scan(
 		[]scanner.Input{{Symbol: sym, Candles: candles}},
@@ -226,6 +250,12 @@ func (o Options) minCandles() int {
 			return o.CrossoverOpts.MinCandles
 		}
 		return 50 // crossover default
+	}
+	if o.Mode == "breakout" {
+		if o.BreakoutOpts.MinCandles > 0 {
+			return o.BreakoutOpts.MinCandles
+		}
+		return 210 // breakout default (EMA200 + margin)
 	}
 	if o.ScanOpts.MinCandles > 0 {
 		return o.ScanOpts.MinCandles
