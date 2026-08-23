@@ -58,7 +58,8 @@ func main() {
 	capital := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
 	portfolio := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
 	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
-	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross) or target")
+	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross), target, or structure (trail to the last confirmed swing low)")
+	structureWindow := flag.Int("structure-window", 2, "[portfolio] confirmation window for swing-low detection under --exit-mode structure")
 	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
 	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
@@ -317,8 +318,8 @@ func main() {
 	}
 	// ── Portfolio-aware mode ────────────────────────────────────────────────────
 	if *portfolio {
-		if *exitMode != "ema" && *exitMode != "target" {
-			log.Fatalf("--exit-mode must be ema or target, got %q", *exitMode)
+		if *exitMode != "ema" && *exitMode != "target" && *exitMode != "structure" {
+			log.Fatalf("--exit-mode must be ema, target, or structure, got %q", *exitMode)
 		}
 		// Regime gate: load the benchmark candles when enabled.
 		var regimeCandles []models.Candle
@@ -345,22 +346,23 @@ func main() {
 		}
 
 		pf := backtest.PortfolioOptions{
-			From:         from,
-			To:           to,
-			MinScore:     *minScore,
-			MaxPositions: *maxPositions,
-			StartCapital: *capital,
-			ExitMode:     *exitMode,
-			MaxHoldDays:  *maxHold,
-			CostPct:         *costPct,
-			SlippagePct:     *slippagePct,
-			AllocLookback:   *allocLookback,
-			RiskPct:         *riskPct,
-			MaxWeightPct:    *maxWeightPct,
-			RegimeMode:      *regimeMode,
-			RegimeBenchmark: regimeCandles,
-			RegimeFast:      *regimeFast,
-			RegimeSlow:      *regimeSlow,
+			From:                 from,
+			To:                   to,
+			MinScore:             *minScore,
+			MaxPositions:         *maxPositions,
+			StartCapital:         *capital,
+			ExitMode:             *exitMode,
+			StructureWindow:      *structureWindow,
+			MaxHoldDays:          *maxHold,
+			CostPct:              *costPct,
+			SlippagePct:          *slippagePct,
+			AllocLookback:        *allocLookback,
+			RiskPct:              *riskPct,
+			MaxWeightPct:         *maxWeightPct,
+			RegimeMode:           *regimeMode,
+			RegimeBenchmark:      regimeCandles,
+			RegimeFast:           *regimeFast,
+			RegimeSlow:           *regimeSlow,
 			StrategyHealthWindow: *healthWindow,
 			StrategyHealthMode:   *healthMode,
 			StrategyHealthMin:    *healthMin,
@@ -368,7 +370,7 @@ func main() {
 			VolGateThreshold:     *volGateThreshold,
 			VolGateATRPeriod:     *volGateATR,
 			VolGateBenchmark:     volGateCandles,
-			EngineOpts:      opts,
+			EngineOpts:           opts,
 		}
 
 		// Cold-start fix: seed the health gate with a warmup pass so it is warm

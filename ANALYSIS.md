@@ -910,7 +910,77 @@ breakout` watchlist), but are not wired into paper trading.
 
 ---
 
-## 14. Open questions / next steps
+## 14. Structure-based ("swing low") trailing exit — a real trade-off, not adopted
+
+### Motivation
+Two anecdotes, one pattern: the user made ~+22% on TATAPOWER (§3) holding
+through a March 2025 dip the crossover system's EMA-recross exit stopped out
+of; and COALINDIA (Sep 2025–Jan 2026) rallied +18.8% out of a 4-month
+consolidation, comfortably ridden by a discretionary trader reading "higher
+lows, hasn't broken structure yet." In both cases the human held through a
+pullback an indicator-based exit interpreted as a reversal. The hypothesis:
+replace the EMA-recross / fixed-target exit with one that only exits when
+price actually breaks the chart *structure* — the most recent confirmed swing
+low — mimicking how a discretionary trend trader reads a chart.
+
+### Design (`ExitMode: "structure"`, `internal/backtest/portfolio.go`)
+- A candle's Low is a **confirmed swing low** once it is the lowest Low within
+  ±`StructureWindow` candles (default 2) — i.e. it takes `StructureWindow`
+  candles *after* the low for it to confirm (no lookahead).
+- The stop starts at the entry signal's own SL and **ratchets up** to each new
+  confirmed swing low formed after entry — never down.
+- No separate win condition: the position holds until the trailing stop is
+  hit or `MaxHoldDays` elapses. A stop that has ratcheted above entry and gets
+  hit is a **protected-profit exit** (`OutcomeTrailStop`), not a loss — same
+  semantics as the single-symbol engine's existing ATR trailing stop.
+- R-multiple accounting uses the *entry-time* SL (`pfPosition.initialSL`), not
+  the ratcheted stop, so ActualRR reflects the risk actually taken, not the
+  shrunk distance at exit.
+
+### Results — system-wide, portfolio-aware, 2022-01-01 → 2026-08-20, real costs/slippage
+
+| | Total Return | CAGR | Max DD | Win Rate | Profit Factor | Trades |
+|---|---|---|---|---|---|---|
+| Swing + EMA (production) | +68.8% | 14.0% | −14.4% | 32% | 2.45 | 81 |
+| Swing + Structure | +56.3% | 11.8% | −12.1% | 46% | 3.05 | 65 |
+| Crossover + EMA | −10.0% | −2.6% | −15.0% | 21% | 0.76 | 38 |
+| Crossover + Structure | −6.8% | −1.7% | −13.7% | 31% | 0.77 | 39 |
+
+### Why it doesn't rescue crossover
+Structure exit improves crossover (less bad: −6.8% vs −10.0%, win rate 31% vs
+21%) but doesn't flip it to a winner. The portfolio run's own opportunity-loss
+stats show why: rejected crossover signals had far better R:R than accepted
+ones (avg +4.13R rejected vs −0.18R accepted, EMA-exit run) — the *entry*
+(EMA7×21 crossover) is picking the wrong trades before the exit ever gets a
+say. This confirms §3's original finding: crossover's problem was never
+purely the exit.
+
+### The swing trade-off
+On swing — the strategy that actually works — structure exit is not a clean
+upgrade. It trades total compounding for consistency: win rate jumps from 32%
+to 46%, profit factor from 2.45 to 3.05, max drawdown improves from −14.4% to
+−12.1%, but total return and CAGR both drop (68.8%→56.3%, 14.0%→11.8% CAGR).
+Fewer trades (81→65) at similar average hold. This is the same fixed-target-
+vs-EMA-hold tension from §4, one level deeper: EMA-recross already holds
+through the *first* pullback that doesn't break momentum; structure holds
+through pullbacks even more patiently, but pays for it by occasionally
+exiting a real winner the moment a normal deeper pullback undercuts the prior
+swing low, before momentum has actually turned.
+
+### Verdict
+**Not adopted, not rejected — a genuine trade-off pending a decision.** Unlike
+mean reversion, the volatility gate, or breakout, this isn't dominated on
+every metric: swing+structure has a strictly better win rate, profit factor,
+and drawdown than swing+EMA, at the cost of CAGR. Whether that's a good trade
+depends on risk preference, not on backtest evidence alone. `--exit-mode
+structure` and `--structure-window` are kept as first-class options in
+`cmd/backtest --portfolio`, with 5 new tests covering swing-low detection,
+stop ratcheting (up-only, post-confirmation), and the trail-stop-vs-loss
+outcome labeling.
+
+---
+
+## 15. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
@@ -927,11 +997,12 @@ risk-based sizing — the breakthrough** (§9); **mean reversion (§10, rejected
 closes the regime-switcher's defensive-compounder leg)**;
 **volatility regime filter (§12, rejected — exhausts the regime-filter space)**;
 **resistance-zone breakout entries (§13, rejected — retest whipsaw and thin
-edge at scale)**._
+edge at scale)**; **structure-based trailing exit (§14, real trade-off —
+better win rate/PF/drawdown on swing, lower CAGR, not yet adopted)**._
 
 ---
 
-## 15. Reproduce
+## 16. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -1005,6 +1076,18 @@ go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
 go run ./cmd/backtest --mode breakout --from 2022-01-01 --to 2026-08-20 \
   --br-min-resistance-touches 4 --br-require-contraction \
   --br-stop-atr-mult 2.0 --trail-atr-mult 2.5                            # touches >=4 + contraction
+
+# §14 — structure-based ("swing low") trailing exit. Real trade-off, not
+# adopted: better win rate/PF/drawdown on swing, lower CAGR; doesn't rescue
+# crossover (the entry, not the exit, is crossover's problem).
+go run ./cmd/backtest --portfolio --mode swing --from 2022-01-01 --to 2026-08-20 \
+  --min-score 60 --min-rr 2 --exit-mode structure --max-positions 5 --max-hold 0 \
+  --capital 100000 --cost-pct 0.25 --slippage-pct 0.20 \
+  --risk-pct 1.0 --max-weight-pct 25 --health-window 20 --health-shadow
+go run ./cmd/backtest --portfolio --mode crossover --from 2022-01-01 --to 2026-08-20 \
+  --min-score 80 --exit-mode structure --max-positions 5 --max-hold 0 --capital 100000 \
+  --co-min-rr 3 --co-min-vol-mult 3 --co-min-target-pct 8 --co-min-risk-pct 3 \
+  --cost-pct 0.25 --slippage-pct 0.20
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

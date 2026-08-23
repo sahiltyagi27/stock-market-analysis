@@ -271,3 +271,101 @@ func TestCheckExit_NoExit(t *testing.T) {
 		t.Fatal("expected no exit when SL/target/recross/timeout none triggered")
 	}
 }
+
+func TestComputeSwingLows_DetectsConfirmedLocalMin(t *testing.T) {
+	// Lows: 100, 95, 90, 95, 100 — index 2 (90) is the only confirmed local
+	// min within a ±1 window (both neighbours strictly higher).
+	candles := []models.Candle{
+		pfTestCandle(100, 100, 100, 100),
+		pfTestCandle(95, 95, 95, 95),
+		pfTestCandle(90, 90, 90, 90),
+		pfTestCandle(95, 95, 95, 95),
+		pfTestCandle(100, 100, 100, 100),
+	}
+	got := computeSwingLows(candles, 1)
+	want := []float64{0, 0, 90, 0, 0}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("index %d: got %.2f, want %.2f (full: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestComputeSwingLows_TiesDoNotCount(t *testing.T) {
+	// A flat double-bottom within the window: neither candle at the tied low
+	// is a strict local min (this scanner requires an unambiguous single low,
+	// not a double-bottom, matching analysis.FindZones' tie-handling). The
+	// two tied lows must be within ±window of each other to see one another.
+	candles := []models.Candle{
+		pfTestCandle(100, 100, 100, 100),
+		pfTestCandle(90, 90, 90, 90),
+		pfTestCandle(95, 95, 95, 95),
+		pfTestCandle(90, 90, 90, 90),
+		pfTestCandle(100, 100, 100, 100),
+	}
+	got := computeSwingLows(candles, 2)
+	for i, v := range got {
+		if v != 0 {
+			t.Fatalf("index %d: expected no confirmed low on a tie, got %.2f", i, v)
+		}
+	}
+}
+
+func TestUpdateTrailingStop_RatchetsUpOnlyAfterConfirmation(t *testing.T) {
+	// Swing low of 95 sits at index 2; with window=1 it confirms at index 3.
+	candles := []models.Candle{
+		pfTestCandle(100, 100, 100, 100), // 0: entry day
+		pfTestCandle(97, 97, 97, 97),     // 1
+		pfTestCandle(95, 95, 95, 95),     // 2: the low
+		pfTestCandle(98, 98, 98, 98),     // 3: confirms index 2 (window=1)
+		pfTestCandle(101, 101, 101, 101), // 4
+	}
+	sd := &symData{candles: candles, swingLow: computeSwingLows(candles, 1)}
+	pos := &pfPosition{entry: 100, sl: 90, initialSL: 90, entryIdx: 0}
+
+	for idx := 1; idx <= 2; idx++ {
+		updateTrailingStop(pos, sd, idx, 1)
+		if pos.sl != 90 {
+			t.Fatalf("idx %d: stop should not move before confirmation, got %.2f", idx, pos.sl)
+		}
+	}
+	updateTrailingStop(pos, sd, 3, 1)
+	if pos.sl != 95 {
+		t.Fatalf("idx 3: expected stop ratcheted to confirmed swing low 95, got %.2f", pos.sl)
+	}
+	// A later, lower confirmed low must never pull the stop back down.
+	pos.sl = 95
+	updateTrailingStop(pos, sd, 4, 1)
+	if pos.sl != 95 {
+		t.Fatalf("stop must only ratchet up, got %.2f", pos.sl)
+	}
+}
+
+func TestCheckExit_StructureMode_HoldsThroughPullbackAboveStop(t *testing.T) {
+	// A pullback candle whose Low sits above the trailing stop, with EMA7 also
+	// below EMA21 (which would exit under "ema" mode) — structure mode must
+	// hold anyway; only the trailing SL and MaxHoldDays end a structure trade.
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 100, 100, 100), pfTestCandle(100, 102, 96, 99)},
+		[]float64{110, 90}, []float64{105, 105},
+	)
+	pos := &pfPosition{entry: 100, sl: 90, initialSL: 90, target: 200, entryIdx: 0}
+	_, _, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "structure"})
+	if exited {
+		t.Fatal("structure mode should hold through a pullback that doesn't breach the trailing stop")
+	}
+}
+
+func TestCheckExit_StructureMode_TrailStopOutcome(t *testing.T) {
+	// A ratcheted stop (above entry) gets hit — this is a protected-profit
+	// exit, not a hard loss, so it must report OutcomeTrailStop.
+	sd := buildSymData(
+		[]models.Candle{pfTestCandle(100, 100, 100, 100), pfTestCandle(110, 112, 104, 108)},
+		[]float64{110, 110}, []float64{105, 105},
+	)
+	pos := &pfPosition{entry: 100, sl: 105, initialSL: 90, target: 200, entryIdx: 0}
+	price, outcome, exited := checkExit(pos, sd, 1, PortfolioOptions{ExitMode: "structure"})
+	if !exited || outcome != OutcomeTrailStop || price != 105 {
+		t.Fatalf("expected trail-stop exit at 105, got exited=%v outcome=%s price=%.2f", exited, outcome, price)
+	}
+}

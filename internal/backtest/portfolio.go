@@ -32,9 +32,18 @@ type PortfolioOptions struct {
 	// StartCapital is the starting cash. Default: 100000.
 	StartCapital float64
 
-	// ExitMode: "ema" (hold until EMA7<EMA21) or "target" (fixed resistance).
-	// SL is always checked first. Default: "ema".
+	// ExitMode: "ema" (hold until EMA7<EMA21), "target" (fixed resistance), or
+	// "structure" (trail the stop up to the most recent confirmed swing low —
+	// hold through any pullback that doesn't undercut it; exit only when a
+	// lower low actually forms). SL is always checked first. Default: "ema".
 	ExitMode string
+
+	// StructureWindow is the confirmation window for swing-low detection under
+	// ExitMode "structure": a candle's Low is a confirmed swing low once it is
+	// the lowest Low within ±StructureWindow candles (so it takes
+	// StructureWindow candles after the low to confirm it — no lookahead).
+	// Default: 2.
+	StructureWindow int
 
 	// MaxHoldDays force-closes a position after this many candles (0 = no cap).
 	MaxHoldDays int
@@ -195,10 +204,14 @@ type EquityPoint struct {
 
 // symData holds precomputed per-symbol series for the portfolio walk.
 type symData struct {
-	candles  []models.Candle
-	ema7     []float64
-	ema21    []float64
-	dateIdx  map[string]int // "2006-01-02" -> candle index
+	candles []models.Candle
+	ema7    []float64
+	ema21   []float64
+	dateIdx map[string]int // "2006-01-02" -> candle index
+	// swingLow[i] is candles[i].Low when i is a confirmed local low (the
+	// lowest Low within ±StructureWindow), else 0. Used by ExitMode
+	// "structure" to trail the stop. Precomputed once per symbol.
+	swingLow []float64
 }
 
 type pfSignal struct {
@@ -216,10 +229,17 @@ type pfSignal struct {
 }
 
 type pfPosition struct {
-	symbol    string
-	shares    float64
-	entry     float64
-	sl        float64
+	symbol string
+	shares float64
+	entry  float64
+	// sl is the live exit-trigger stop: fixed for "ema"/"target", but ratchets
+	// up under "structure" as new swing lows confirm. Always checked first in
+	// checkExit.
+	sl float64
+	// initialSL is the stop as computed at entry, frozen for the life of the
+	// trade. Used for R-multiple accounting (Entry − initialSL is the risk
+	// taken), so a trailing "structure" stop moving up doesn't distort ActualRR.
+	initialSL float64
 	target    float64
 	entryIdx  int
 	entryDate time.Time
@@ -238,6 +258,9 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	}
 	if opts.ExitMode == "" {
 		opts.ExitMode = "ema"
+	}
+	if opts.StructureWindow <= 0 {
+		opts.StructureWindow = 2
 	}
 	if opts.MaxWeightPct <= 0 {
 		opts.MaxWeightPct = 25
@@ -274,7 +297,11 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		for i, c := range cc {
 			di[c.Timestamp.UTC().Format(dayFmt)] = i
 		}
-		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di}
+		var swingLow []float64
+		if opts.ExitMode == "structure" {
+			swingLow = computeSwingLows(cc, opts.StructureWindow)
+		}
+		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di, swingLow: swingLow}
 	}
 
 	// Generate signals across all symbols.
@@ -336,13 +363,16 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 			if !ok {
 				continue // no bar for this symbol today; hold
 			}
+			if opts.ExitMode == "structure" {
+				updateTrailingStop(pos, sd, idx, opts.StructureWindow)
+			}
 			exitTrigger, outcome, exited := checkExit(pos, sd, idx, opts)
 			if !exited {
 				continue
 			}
 			exitPrice := sellFill(exitTrigger, opts.slip())
 			cash += cashIn(pos.shares, exitPrice, opts.legCost())
-			risk := pos.entry - pos.sl
+			risk := pos.entry - pos.initialSL
 			rr := 0.0
 			if risk > 0 {
 				rr = (exitPrice - pos.entry) / risk
@@ -377,12 +407,15 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 				if !ok {
 					continue
 				}
+				if opts.ExitMode == "structure" {
+					updateTrailingStop(pos, sd, idx, opts.StructureWindow)
+				}
 				exitTrigger, _, exited := checkExit(pos, sd, idx, opts)
 				if !exited {
 					continue
 				}
 				exitPrice := sellFill(exitTrigger, opts.slip())
-				risk := pos.entry - pos.sl
+				risk := pos.entry - pos.initialSL
 				rr := 0.0
 				if risk > 0 {
 					rr = (exitPrice - pos.entry) / risk
@@ -452,7 +485,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 					continue
 				}
 				shadowPos[sig.symbol] = &pfPosition{
-					symbol: sig.symbol, shares: 0, entry: entryPrice, sl: sig.sl,
+					symbol: sig.symbol, shares: 0, entry: entryPrice, sl: sig.sl, initialSL: sig.sl,
 					target: sig.target, entryIdx: sig.entryIdx, entryDate: sig.entryDate,
 				}
 				continue
@@ -508,7 +541,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 				continue
 			}
 			positions[sig.symbol] = &pfPosition{
-				symbol: sig.symbol, shares: shares, entry: entryPrice, sl: sig.sl,
+				symbol: sig.symbol, shares: shares, entry: entryPrice, sl: sig.sl, initialSL: sig.sl,
 				target: sig.target, entryIdx: sig.entryIdx, entryDate: sig.entryDate,
 			}
 			entriesToday++
@@ -526,7 +559,7 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		lastIdx := len(sd.candles) - 1
 		exitPrice := sellFill(sd.candles[lastIdx].Close, opts.slip())
 		cash += cashIn(pos.shares, exitPrice, opts.legCost())
-		risk := pos.entry - pos.sl
+		risk := pos.entry - pos.initialSL
 		rr := 0.0
 		if risk > 0 {
 			rr = (exitPrice - pos.entry) / risk
@@ -812,10 +845,13 @@ func simulateHypo(sd *symData, sig pfSignal, opts PortfolioOptions) (rr float64,
 		return rrFrom(sig.sl), sig.entryIdx
 	}
 	pos := &pfPosition{
-		symbol: sig.symbol, entry: entryPrice, sl: sig.sl,
+		symbol: sig.symbol, entry: entryPrice, sl: sig.sl, initialSL: sig.sl,
 		target: sig.target, entryIdx: sig.entryIdx,
 	}
 	for idx := sig.entryIdx + 1; idx < len(sd.candles); idx++ {
+		if opts.ExitMode == "structure" {
+			updateTrailingStop(pos, sd, idx, opts.StructureWindow)
+		}
 		if trigger, _, exited := checkExit(pos, sd, idx, opts); exited {
 			return rrFrom(trigger), idx
 		}
@@ -829,6 +865,12 @@ func simulateHypo(sd *symData, sig pfSignal, opts PortfolioOptions) (rr float64,
 func checkExit(pos *pfPosition, sd *symData, idx int, opts PortfolioOptions) (float64, Outcome, bool) {
 	c := sd.candles[idx]
 	if c.Low <= pos.sl {
+		if opts.ExitMode == "structure" {
+			// A structural stop can have ratcheted above entry — this may be a
+			// protected profit, not a loss. Same semantics as the ATR trailing
+			// stop in the single-symbol engine (see trade.go).
+			return pos.sl, OutcomeTrailStop, true
+		}
 		return pos.sl, OutcomeLoss, true
 	}
 	switch opts.ExitMode {
@@ -836,6 +878,9 @@ func checkExit(pos *pfPosition, sd *symData, idx int, opts PortfolioOptions) (fl
 		if pos.target > 0 && c.High >= pos.target {
 			return pos.target, OutcomeWin, true
 		}
+	case "structure":
+		// No separate win condition — hold until the trailing structural stop
+		// (updated by updateTrailingStop before this call) or MaxHoldDays.
 	default: // "ema"
 		if idx > pos.entryIdx && sd.ema7[idx] > 0 && sd.ema21[idx] > 0 && sd.ema7[idx] < sd.ema21[idx] {
 			return c.Close, OutcomeWin, true
@@ -845,4 +890,42 @@ func checkExit(pos *pfPosition, sd *symData, idx int, opts PortfolioOptions) (fl
 		return c.Close, OutcomeTimeout, true
 	}
 	return 0, "", false
+}
+
+// computeSwingLows returns a slice parallel to candles where entry i is
+// candles[i].Low when it is a confirmed local low — the lowest Low within
+// ±window candles — and 0 otherwise. Ties do not count (a flat double-bottom
+// doesn't confirm either candle as a swing low); this mirrors
+// analysis.FindZones' local-extreme detection.
+func computeSwingLows(candles []models.Candle, window int) []float64 {
+	out := make([]float64, len(candles))
+	for i := window; i < len(candles)-window; i++ {
+		isLow := true
+		for j := i - window; j <= i+window; j++ {
+			if j != i && candles[j].Low <= candles[i].Low {
+				isLow = false
+				break
+			}
+		}
+		if isLow {
+			out[i] = candles[i].Low
+		}
+	}
+	return out
+}
+
+// updateTrailingStop ratchets pos.sl up to the most recently confirmed swing
+// low formed after entry, if that low sits above the current stop. Called
+// once per day, before checkExit, only under ExitMode "structure". A swing
+// low at index j is confirmed once j+window <= idx (window candles after it
+// have been seen) — no lookahead.
+func updateTrailingStop(pos *pfPosition, sd *symData, idx, window int) {
+	confirmedIdx := idx - window
+	if confirmedIdx <= pos.entryIdx || confirmedIdx < 0 || confirmedIdx >= len(sd.swingLow) {
+		return
+	}
+	low := sd.swingLow[confirmedIdx]
+	if low > pos.sl {
+		pos.sl = low
+	}
 }
