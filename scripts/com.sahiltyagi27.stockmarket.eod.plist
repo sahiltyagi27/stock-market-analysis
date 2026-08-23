@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd plist for the daily EOD paper-trade cycle.
+
+  Fires at 15:45 IST (Mon–Fri). Assumes your Mac's timezone is set to IST
+  (Asia/Kolkata). If it is set to UTC, change Hour to 10 and Minute to 15.
+
+  Install once with:  scripts/install-launchd.sh
+  Uninstall with:     scripts/install-launchd.sh --uninstall
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sahiltyagi27.stockmarket.eod</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <!-- Replaced by install-launchd.sh with the absolute path -->
+        <string>PLACEHOLDER_EOD_SH</string>
+    </array>
+
+    <!-- Mon–Fri at 15:45 local time (IST). launchd weekday: 0=Sun 1=Mon … 6=Sat -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer></dict>
+    </array>
+
+    <!-- Logs (separate from the eod.sh dated log, captures launchd-level errors) -->
+    <key>StandardOutPath</key>
+    <string>PLACEHOLDER_LOG_DIR/eod-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>PLACEHOLDER_LOG_DIR/eod-launchd-err.log</string>
+
+    <!-- Run from the project root so relative paths (config/, .env) resolve. -->
+    <key>WorkingDirectory</key>
+    <string>PLACEHOLDER_PROJ</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
