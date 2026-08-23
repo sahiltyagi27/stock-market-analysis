@@ -6,6 +6,22 @@ This document records the full analysis we ran to evaluate and improve the
 trading strategies in this repo. Read top-to-bottom it tells the story; the
 **Conclusions** section at the end is the actionable summary.
 
+> **⚠ Read §15 before trusting any CAGR/return number below.** Every result
+> in §1–§14, including the "Major Finding" immediately below, was validated
+> only on the 2022–2026 window. §15's walk-forward OOS test (2012–2025, now
+> that deeper history is available) found the in-sample 14.0% CAGR compresses
+> to 2.7–4.4% CAGR out-of-sample, driven almost entirely by one year (2023) —
+> and underperformed plain buy-and-hold NIFTY (12.9% CAGR) by 3–4x. A
+> follow-up found why: the strategy structurally can't hold genuine
+> multibaggers (took 1 losing trade, total, across the 3 biggest compounders
+> in the universe over 14+ years — the target-setting logic requires a
+> resistance zone above price, which a stock at new highs doesn't have). A
+> second follow-up checked real fundamental data (this codebase has none) for
+> those multibaggers: genuine profit-growth inflections do precede/coincide
+> with their big moves, but each also survived a 50–60% mid-journey drawdown
+> — so even perfect stock-picking needs a drawdown-tolerance framework this
+> codebase doesn't have either. Unresolved as of this writing — see §15.
+
 ---
 
 ## Strategy-Health Regime Filter (Major Finding)
@@ -980,29 +996,268 @@ outcome labeling.
 
 ---
 
-## 15. Open questions / next steps
+## 15. Walk-forward OOS validation (2010–2025) — MAJOR FINDING, unresolved
+
+### Why this test became possible
+All prior results in this document (§1–§14) were evaluated on a single
+2022–2026 in-sample window — the only history Kite's historical API would
+return under the old `--period`-relative sync (capped at ~2000 days per
+request). `cmd/kite-sync` was extended to auto-chunk requests wider than that
+limit, and Kite's data turned out to go back to at least 2010 for liquid NSE
+names — confirmed directly (a 2010–2012 test request for RELIANCE returned
+499 real candles). The DB now holds 2010-01-03 → present, 1.56M candle rows,
+including the 2020 COVID crash the prior window entirely missed.
+
+### Method
+Production config (swing, EMA exit, `--risk-pct 1.0 --max-weight-pct 25`),
+frozen exactly as validated in §9/§11, walked forward one calendar year at a
+time from 2012 through 2025 (14 full years). Each year is evaluated as a
+standalone OOS test: `--health-warmup-from 2011-01-01` seeds the health gate
+from real prior history strictly *before* the test year starts (no
+lookahead), and `--from`/`--to` bound the test year itself. Run for both the
+production (health-gate-on) config and baseline (gate off), to check whether
+§"Strategy-Health Regime Filter" also generalizes.
+
+### Results
+
+| Year | Gate ON | Baseline |
+|---|---|---|
+| 2012 | −0.8% | −0.8% |
+| 2013 | −2.1% | −2.5% |
+| 2014 | −1.0% | +2.6% |
+| 2015 | −1.4% | +6.6% |
+| 2016 | 0.0% | −1.5% |
+| 2017 | −0.4% | +7.4% |
+| 2018 | −6.5% | −8.0% |
+| 2019 | 0.0% | −11.2% |
+| 2020 | 0.0% | +11.6% |
+| 2021 | +3.3% | +15.1% |
+| 2022 | +2.0% | +2.0% |
+| 2023 | **+74.4%** | **+74.2%** |
+| 2024 | −9.0% | −9.0% |
+| 2025 | −1.1% | −3.3% |
+
+Sequentially compounded from ₹1L over these 14 years:
+
+| | Final capital | CAGR |
+|---|---|---|
+| Gate ON | ₹1,46,003 | **2.7%** |
+| Baseline (no gate) | ₹1,83,619 | **4.4%** |
+
+For comparison, the headline number from the 2022–2026-only study (§9/M12)
+was **14.0% CAGR**.
+
+### Three findings, none comfortable
+1. **The entire 14-year compounded gain comes from one year.** Remove 2023
+   and the strategy is roughly flat-to-negative across the other 13 years
+   combined. The single best trade that year (CUMMINSIND, entered Nov 2023,
+   +22.8R) was individually checked for a split/data-adjustment artifact —
+   none found; the price series has no discontinuous gaps, the move is a
+   real, gradual ~7-month rally on real volume. This is the same
+   "fat-tail fragile" pattern already documented for crossover (§4), now
+   showing up in swing too, just invisible on a window that happened to
+   include the tail.
+2. **The health gate underperforms baseline over the full span** (₹1.46L vs
+   ₹1.83L) — the opposite of §"Strategy-Health Regime Filter"'s claim, which
+   was validated only on 2022–2025. The gate correctly sat out clearly bad
+   years (2013, 2018, 2019), but it also sat out mixed years that still had
+   profitable trades available (2014, 2015, 2017, 2020, 2021 — baseline beats
+   gate in every one of these); being defensive costs more in missed upside
+   than it saves in avoided downside often enough, over 14 years, to net
+   negative.
+3. **14.0% CAGR (in-sample) becomes 2.7–4.4% CAGR (walk-forward OOS).** Every
+   parameter choice validated this session — health-window=20, risk-pct=1%,
+   the EMA-vs-structure exit call, the whole breakout/contraction
+   exploration — was checked only against the 2022–2026 window, which this
+   result suggests was an unusually favorable stretch rather than a
+   representative one.
+
+### Follow-up: the passive benchmark, and why the strategy misses secular winners
+Two further checks, prompted by asking "what would simply have worked over
+this period?" — and together they explain *why* §15's OOS result is weak,
+not just confirm that it is.
+
+**1. Buy-and-hold NIFTY beat the active strategy by 3–4x.** Compounding
+NIFTY50's own 2012–2025 yearly returns: ₹1L → **₹5.47L (12.9% CAGR)** — vs
+₹1.46L (gate ON) / ₹1.84L (baseline) for the active system. Zero effort, zero
+trading cost, zero skill, and it outperformed by a wide margin. Any active
+strategy has to clear this bar to justify its existence, and this one
+currently doesn't.
+
+**2. The strategy structurally excludes genuine multibaggers.** Screened all
+symbols with data since ~2012 for total return to present; the top 3 —
+KEI (+427x), NEULANDLAB (+396x), JBMA (+264x) — were checked for
+split/bonus-adjustment artifacts (none found; Kite's series has no
+unadjusted-split-style price discontinuities, so these are real investor
+returns). Running the swing strategy against just these three stocks across
+their *entire* history: **one trade, total, and it lost.**
+
+Diagnosing why (sampling KEI's full 14-year run at ~60-day intervals and
+recording the scanner's rejection reason each time):
+
+| Reason | Share |
+|---|---|
+| Signal candle bearish — no bounce confirmation | ~25% |
+| Trend neutral, not bullish | 19% |
+| R/R below minimum 2.00 | 17% |
+| Trend bearish, not bullish (even mid-427x-run) | 12% |
+| **No resistance zone above price** | **12%** |
+| Misc (EMA200 declining, too close to EMA200, etc.) | ~15% |
+
+The "no resistance zone above price" reason is structural, not incidental:
+the scanner sizes its target off the nearest *tested resistance zone above*
+entry. A stock making genuine new all-time highs — which is what a
+multibagger spends most of its life doing — has no resistance zone above it
+by construction, so the scanner can't even build a valid trade. Combined with
+the bullish-bounce-candle requirement (the same failure mode already found
+for EXIDEIND, §13), the entry logic is biased *against* exactly the stocks
+that drive most of a market's long-run wealth creation (consistent with
+Bessembinder's well-known finding that a small minority of stocks account for
+most total stock-market gains over decades).
+
+This reframes §15's result: the weak OOS CAGR isn't just noise or an
+unlucky sample — it's partly a direct, explainable consequence of a design
+that structurally can't hold a secular winner. Every strategy tested this
+session (swing, crossover, meanrev, breakout, contraction, structure-exit) is
+a *short-hold, tactical* system (days to weeks); none was ever designed to
+identify and hold a multi-year compounder. That is a distinct, well-defined
+gap — not a tweak to the existing scanner, but a structurally different
+strategy: buy demonstrated strength (a new high is a signal, not a
+disqualifier), hold through corrections as long as the long-term trend
+structure stays intact, size for volatility, rarely sell.
+
+### Follow-up: does fundamental data (quarterly profit/revenue) explain the entries — and would a fundamentals-driven strategy actually be tradeable?
+Motivated by the observation that these multibaggers rarely show clean chart
+patterns (EMA crossovers, tested support/resistance) — they just grind
+higher for years — the natural next question is whether *fundamentals*
+(quarterly/annual profit and revenue growth) explain the entries better than
+price action does. This codebase has **zero fundamental data** — every
+strategy tested is 100% OHLCV. Kite Connect doesn't provide financial
+statements either, so this would require a new data source entirely (options
+considered: Screener.in bulk export — only via their paid Premium plan, not
+scraping, which would violate their ToS; a paid India-focused fundamentals
+API such as Tijori Finance or Trendlyne; or parsing NSE/BSE XBRL filings
+directly — free and authoritative but a real multi-week parsing effort given
+inconsistent taxonomy across companies and years).
+
+Rather than commit to any of those before knowing if the hypothesis even
+holds, did a small, targeted validation first — quarterly profit/revenue
+history for KEI and NEULANDLAB, pulled from public sources (Screener.in's
+public pages, Business Standard earnings coverage), no bulk scraping:
+
+- **KEI**: profit flat-to-declining through 2012–13 (FY13 profit +8.3%,
+  Q4FY13 profit −41%, sales −15%), then a sharp inflection — Sept 2014
+  quarter profit **+530% YoY**, sales +34.5% — which lines up almost exactly
+  with the price's first big acceleration that same year (₹48→₹120,
+  2014→2015).
+- **NEULANDLAB**: two distinct fundamental *and* price regimes. An early
+  turnaround (FY13 profit +571% YoY on a small base) coincided with a
+  2013–2016 run (₹115→₹1,032). Then a real business-model pivot from
+  low-margin generics to high-value CDMO (contract pharma manufacturing),
+  which became a major "China+1" supply-chain-diversification beneficiary —
+  a genuine, nameable structural catalyst — drove record profit margins and
+  a **33x** move (₹418→₹13,724) from 2020–2024.
+
+**The hypothesis holds: real, identifiable fundamental inflections precede or
+coincide with these stocks' major compounding phases**, not just in
+hindsight-fitted retrospect — KEI's Q3FY15 profit explosion and NEULANDLAB's
+CDMO pivot are both nameable, real business events, not curve-fit patterns.
+
+**But a complication that matters more than the data-sourcing question:**
+none of these stocks rose smoothly. Checking full year-end price history
+(free, from our own DB) revealed brutal multi-year drawdowns mid-journey:
+
+| Symbol | Drawdown | Window |
+|---|---|---|
+| NEULANDLAB | **−60%** (₹1,032 → ₹418) | 2016 → 2019, *before* the 33x CDMO-driven run |
+| JBMA | **−50%** (₹110 → ₹55) | 2017 → 2020, before its next leg up |
+
+A strategy that correctly identified the fundamental turnaround would *still*
+have needed to sit through a 50–60% drawdown to capture the eventual payoff.
+That is not a data-sourcing problem — every strategy in this codebase
+(technical or hypothetically fundamental) uses tight, ATR-based stops sized
+for days-to-weeks trades; none could survive a 60% drawdown without exiting
+long before any recovery. **Sourcing fundamental data would answer *what* to
+buy; it does not solve the harder, still-open problem of *how to hold it* —
+a position-sizing and drawdown-tolerance framework built for multi-year
+holds, an order of magnitude more tolerant than anything currently in this
+codebase.**
+
+### Status: unresolved, not yet a verdict
+Unlike §10/§12/§13 (rejected) or §14 (a real trade-off), this isn't a
+candidate-feature test with a clean accept/reject call — it questions the
+core validated strategy itself, tuned entirely on §9's in-sample window. Two
+follow-ups have sharpened *why*, without yet resolving *what to do*:
+- The multibagger diagnosis: the scanner's entry/target logic structurally
+  excludes new-high stocks — a design gap, not a tuning issue.
+- The fundamentals check: real fundamental inflections do precede/coincide
+  with these stocks' big moves (validating that a fundamentals-aware
+  long-hold strategy is worth pursuing), but even perfect stock selection
+  would still require surviving 50–60% drawdowns — a risk-framework problem
+  at least as hard as the stock-selection problem.
+
+Still needs a decision on scope and priority — build the long-hold,
+drawdown-tolerant strategy (and which fundamentals data source funds it),
+pursue regime-detection/re-tuning on the existing tactical strategies in
+parallel, or something else — before further feature work builds on top of
+this. Left open pending discussion rather than resolved unilaterally.
+
+---
+
+## 16. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
   time-series RS filters that failed in §8. Test as a universe filter, not a tiebreak.
 - **Turnover reduction** — costs are a persistent drag; anything that lifts profit
   factor without adding trades is interesting.
-- **Walk-forward OOS validation** — all results use one 4-year in-sample block.
-  Rolling OOS (train 2y, test 1y, slide forward) would show whether the edge is
-  stable or regime-dependent.
+- **Walk-forward OOS validation — DONE, see §15.** Surfaced a major,
+  unresolved finding: the in-sample 14.0% CAGR (§9) compresses to 2.7–4.4%
+  CAGR walking forward through 2012–2025, underperforming plain buy-and-hold
+  NIFTY (12.9% CAGR) by 3–4x. Follow-up diagnosis found a structural cause:
+  the scanner's target-setting (project to nearest tested resistance zone
+  above) can't construct a valid trade for a stock at new highs, so it
+  structurally excludes genuine multibaggers — 1 losing trade, total, across
+  the 3 biggest compounders in the universe over 14+ years.
+- **Long-hold, buy-strength strategy** — new, not started. Every strategy in
+  this codebase (swing, crossover, meanrev, breakout, contraction,
+  structure-exit) is short-hold/tactical (days–weeks). §15's multibagger
+  follow-up shows none of them can identify or hold a multi-year secular
+  compounder — a structurally different design (new-high entries treated as
+  a signal not a disqualifier, hold through corrections while trend
+  structure holds, size for volatility) rather than a tweak to the existing
+  scanner.
+- **Fundamental data source + drawdown-tolerance framework — parked, not
+  scheduled.** Hypothesis validated (§15), deliberately left open for later
+  rather than picked up now: no fundamental data exists in this codebase or
+  via Kite; a small, targeted validation (public-source lookups for
+  KEI/NEULANDLAB, no bulk scraping) confirmed real profit-growth inflections
+  do precede/coincide with these stocks' big moves, so the hypothesis is
+  worth pursuing eventually. But both stocks also survived 50–60%
+  mid-journey drawdowns before their big runs — meaning the harder unsolved
+  piece isn't the data source (Tijori Finance / Trendlyne are the credible
+  paid options; Screener.in only via their paid Premium export, not
+  scraping; NSE/BSE XBRL is free but a multi-week parsing effort), it's a
+  position-sizing/drawdown-tolerance framework an order of magnitude more
+  tolerant than anything here today. Revisit when there's appetite for that
+  scope of work.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
-risk-based sizing — the breakthrough** (§9); **mean reversion (§10, rejected —
+risk-based sizing — the breakthrough** (§9, now qualified by §15's OOS
+result); **mean reversion (§10, rejected —
 closes the regime-switcher's defensive-compounder leg)**;
 **volatility regime filter (§12, rejected — exhausts the regime-filter space)**;
 **resistance-zone breakout entries (§13, rejected — retest whipsaw and thin
 edge at scale)**; **structure-based trailing exit (§14, real trade-off —
-better win rate/PF/drawdown on swing, lower CAGR, not yet adopted)**._
+better win rate/PF/drawdown on swing, lower CAGR, not yet adopted)**;
+**walk-forward OOS validation + multibagger diagnosis (§15, MAJOR FINDING —
+in-sample edge does not generalize, and the strategy structurally can't hold
+secular winners; unresolved)**._
 
 ---
 
-## 16. Reproduce
+## 17. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -1088,6 +1343,17 @@ go run ./cmd/backtest --portfolio --mode crossover --from 2022-01-01 --to 2026-0
   --min-score 80 --exit-mode structure --max-positions 5 --max-hold 0 --capital 100000 \
   --co-min-rr 3 --co-min-vol-mult 3 --co-min-target-pct 8 --co-min-risk-pct 3 \
   --cost-pct 0.25 --slippage-pct 0.20
+
+# §15 — walk-forward OOS (MAJOR FINDING, unresolved). Deep history first:
+go run ./cmd/kite-sync --from 2010-01-01   # auto-chunked, ~5-6 min, all symbols + indices
+# Then one fold per year (2012 shown; repeat for 2013..2025, --health-warmup-from fixed):
+go run ./cmd/backtest --portfolio --mode swing --from 2012-01-01 --to 2012-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25 \
+  --health-window 20 --health-shadow --health-warmup-from 2011-01-01   # gate ON
+go run ./cmd/backtest --portfolio --mode swing --from 2012-01-01 --to 2012-12-31 \
+  --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25   # baseline, no gate
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
