@@ -58,6 +58,36 @@ func resistanceZone(level float64, breakoutVolume int64) []candleSpec {
 	}
 }
 
+// contractionFixture builds: a base uptrend (seeds EMA) → 3 wide-range
+// resistance touches at `level` (large absolute daily range, so ATR is high
+// heading into the setup window) → `tightDays` days of a narrow absolute
+// range below `level` (a genuine volatility coil — small, constant true
+// range) → a breakout candle above `level`. Constant ranges make the ATR
+// converge toward the range itself, so the contraction is deterministic
+// rather than dependent on a specific price-scaling coincidence.
+func contractionFixture(level float64, tightDays int, tightVolume int64) []candleSpec {
+	spec := baseUptrend(200, level/1.8)
+	// 15 cycles (not just enough for 3 zone touches) so Wilder's ATR has fully
+	// converged to the wide range well before the 20-day lookback point — a
+	// single wide candle barely moves a 14-period EMA-style average. Touches
+	// are 3 candles apart (matching resistanceZone below) so consecutive
+	// touches at the identical level don't tie within the ±2 local-max window
+	// and cancel each other out.
+	for i := 0; i < 15; i++ {
+		spec = append(spec,
+			candleSpec{open: level - 5, high: level, low: level - 20, close: level - 8, volume: 1000},
+			candleSpec{open: level - 25, high: level - 15, low: level - 40, close: level - 20, volume: 1000},
+			candleSpec{open: level - 20, high: level - 12, low: level - 30, close: level - 15, volume: 1000},
+		)
+	}
+	tightPrice := level - 10
+	for i := 0; i < tightDays; i++ {
+		spec = append(spec, candleSpec{open: tightPrice, high: tightPrice + 1, low: tightPrice - 1, close: tightPrice, volume: 1000})
+	}
+	spec = append(spec, candleSpec{open: level + 1, high: level * 1.05, low: level - 2, close: level * 1.03, volume: tightVolume})
+	return spec
+}
+
 func withMinCandles(spec []candleSpec, min int) []candleSpec {
 	if len(spec) >= min {
 		return spec
@@ -166,6 +196,33 @@ func TestScan_RejectsShortHistory(t *testing.T) {
 	sigs, errs := Scan([]Input{{Symbol: "TEST", Candles: buildCandles(spec)}}, Options{})
 	if len(sigs) != 0 {
 		t.Fatalf("expected no signal with insufficient history, got %d", len(sigs))
+	}
+	if errs["TEST"] == nil {
+		t.Fatal("expected a rejection reason for TEST")
+	}
+}
+
+func TestScan_ContractionFilter_FiresOnGenuineCoil(t *testing.T) {
+	// 15 tight-range days (< the 20-day lookback) after a wide-range touch
+	// phase: the 20-days-ago ATR sits in the wide regime, the setup-candle
+	// ATR has decayed well into the tight regime — a real contraction.
+	spec := contractionFixture(180, 15, 3500)
+
+	sigs, errs := Scan([]Input{{Symbol: "TEST", Candles: buildCandles(spec)}}, Options{RequireContraction: true})
+	if len(sigs) != 1 {
+		t.Fatalf("expected 1 signal on a genuine volatility coil, got %d (errs: %v)", len(sigs), errs)
+	}
+}
+
+func TestScan_ContractionFilter_RejectsWithoutCoil(t *testing.T) {
+	// The standard confirmed-breakout fixture: a choppy zigzag consolidation
+	// whose swings don't narrow heading into the breakout — no contraction.
+	spec := append(baseUptrend(200, 100), resistanceZone(180, 3500)...)
+	spec = withMinCandles(spec, 210)
+
+	sigs, errs := Scan([]Input{{Symbol: "TEST", Candles: buildCandles(spec)}}, Options{RequireContraction: true})
+	if len(sigs) != 0 {
+		t.Fatalf("expected no signal without a volatility contraction, got %d", len(sigs))
 	}
 	if errs["TEST"] == nil {
 		t.Fatal("expected a rejection reason for TEST")

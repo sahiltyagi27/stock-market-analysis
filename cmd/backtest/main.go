@@ -133,6 +133,9 @@ func main() {
 	brMinVolumeRatio := flag.Float64("br-min-volume-ratio", 1.5, "[breakout] minimum (today's volume / average) to confirm the breakout")
 	brMinResTouches := flag.Int("br-min-resistance-touches", 2, "[breakout] minimum touches required for a resistance zone to qualify as tested")
 	brMinCandles := flag.Int("br-min-candles", 210, "[breakout] min candles before analysis (EMA200 + margin)")
+	brRequireContraction := flag.Bool("br-require-contraction", false, "[breakout] require a volatility contraction (coil) before the breakout candle")
+	brContractionLookback := flag.Int("br-contraction-lookback", 20, "[breakout] candles back to compare ATR against for the contraction check")
+	brMaxContractionRatio := flag.Float64("br-max-contraction-ratio", 0.85, "[breakout] setup-candle ATR must be <= this x ATR from br-contraction-lookback candles earlier")
 
 	flag.Parse()
 
@@ -250,13 +253,16 @@ func main() {
 	}
 
 	brOpts := breakout.Options{
-		MinRR:             *brMinRR,
-		StopATRMultiplier: *brStopATRMult,
-		ATRPeriod:         *brATRPeriod,
-		VolumeWindow:      *brVolumeWindow,
-		MinVolumeRatio:    *brMinVolumeRatio,
-		MinCandles:        *brMinCandles,
-		ZoneOpts:          analysis.ZoneOptions{MinResistanceTouches: *brMinResTouches},
+		MinRR:               *brMinRR,
+		StopATRMultiplier:   *brStopATRMult,
+		ATRPeriod:           *brATRPeriod,
+		VolumeWindow:        *brVolumeWindow,
+		MinVolumeRatio:      *brMinVolumeRatio,
+		MinCandles:          *brMinCandles,
+		ZoneOpts:            analysis.ZoneOptions{MinResistanceTouches: *brMinResTouches},
+		RequireContraction:  *brRequireContraction,
+		ContractionLookback: *brContractionLookback,
+		MaxContractionRatio: *brMaxContractionRatio,
 	}
 
 	mrOpts := meanrev.Options{

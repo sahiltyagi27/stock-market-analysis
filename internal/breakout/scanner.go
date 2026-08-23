@@ -71,6 +71,25 @@ type Options struct {
 	// MinCandles is the minimum candle count required before any analysis.
 	// EMA200 needs 200 candles to seed reliably. Default: 210.
 	MinCandles int
+
+	// RequireContraction, when true, additionally requires that volatility
+	// has genuinely coiled before the breakout: ATR on the candle immediately
+	// before the breakout must be ≤ MaxContractionRatio × ATR from
+	// ContractionLookback candles further back. This targets the "repeated
+	// retest, narrowing range, then release" pattern specifically, rejecting
+	// breakouts that follow an already-expanded, volatile run-up. The
+	// breakout candle itself is excluded from the measurement so its own
+	// expansion doesn't get credited as part of the setup.
+	RequireContraction bool
+
+	// ContractionLookback is how many candles before the setup candle to
+	// compare ATR against. Default: 20.
+	ContractionLookback int
+
+	// MaxContractionRatio is the maximum allowed ratio of setup-candle ATR to
+	// ContractionLookback-candles-ago ATR. Default: 0.85 (at least a 15%
+	// contraction).
+	MaxContractionRatio float64
 }
 
 func (o Options) withDefaults() Options {
@@ -95,6 +114,12 @@ func (o Options) withDefaults() Options {
 	}
 	if out.MinCandles <= 0 {
 		out.MinCandles = 210
+	}
+	if out.ContractionLookback <= 0 {
+		out.ContractionLookback = 20
+	}
+	if out.MaxContractionRatio <= 0 {
+		out.MaxContractionRatio = 0.85
 	}
 	return out
 }
@@ -155,6 +180,23 @@ func analyzeOne(in Input, opts Options) (*Signal, error) {
 	}
 	if price <= ema.EMA50 || price <= ema.EMA200 {
 		return nil, fmt.Errorf("price %.2f not above EMA50 %.2f / EMA200 %.2f — trend not constructive", price, ema.EMA50, ema.EMA200)
+	}
+
+	if opts.RequireContraction {
+		setupIdx := n - 2 // the candle immediately before the breakout day
+		lookbackIdx := setupIdx - opts.ContractionLookback
+		if lookbackIdx < 0 {
+			return nil, errors.New("insufficient history for contraction check")
+		}
+		atrSetup := analysis.ATR(in.Candles[:setupIdx+1], opts.ATRPeriod)
+		atrPast := analysis.ATR(in.Candles[:lookbackIdx+1], opts.ATRPeriod)
+		if atrSetup <= 0 || atrPast <= 0 {
+			return nil, errors.New("ATR unavailable for contraction check")
+		}
+		if atrSetup > opts.MaxContractionRatio*atrPast {
+			return nil, fmt.Errorf("no volatility contraction: setup ATR %.2f is %.0f%% of ATR %d days earlier (%.2f), need ≤ %.0f%%",
+				atrSetup, atrSetup/atrPast*100, opts.ContractionLookback, atrPast, opts.MaxContractionRatio*100)
+		}
 	}
 
 	// Zone detection excludes today's candle so the resistance zone being
