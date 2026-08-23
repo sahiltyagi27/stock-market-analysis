@@ -43,7 +43,8 @@ import (
 func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	exchange := flag.String("exchange", "NSE", "Kite exchange")
-	period := flag.String("period", "5y", "history window (e.g. 5y, 2y, 6m, 90d). Capped by Kite's ~2000-day daily-candle limit")
+	period := flag.String("period", "5y", "history window (e.g. 5y, 2y, 6m, 90d), relative to now. Overridden by --from. Automatically chunked into <=1900-day requests to respect Kite's ~2000-day-per-call limit.")
+	fromStr := flag.String("from", "", "absolute start date YYYY-MM-DD (overrides --period). Kite's historical API generally has data for liquid NSE equities back to 2008-2010+; auto-chunked into <=1900-day requests either way.")
 	includeNifty := flag.Bool("include-nifty", true, "also sync NIFTY 50 index candles as NIFTY50 for relative-strength filters")
 	includeSectorIndices := flag.Bool("include-sector-indices", true, "also sync verified NSE sector index candles for sector-strength filters")
 	sectorIndicesFlag := flag.String("sector-indices", "", "comma-separated sector index names to sync (empty = default verified list)")
@@ -95,9 +96,17 @@ func main() {
 	}
 
 	to := time.Now()
-	from, err := parsePeriod(*period, to)
-	if err != nil {
-		log.Fatalf("period: %v", err)
+	var from time.Time
+	if *fromStr != "" {
+		from, err = time.Parse("2006-01-02", *fromStr)
+		if err != nil {
+			log.Fatalf("--from: %v", err)
+		}
+	} else {
+		from, err = parsePeriod(*period, to)
+		if err != nil {
+			log.Fatalf("period: %v", err)
+		}
 	}
 
 	client := kite.NewClient(cfg.KiteBaseURL, cfg.KiteAPIKey, cfg.KiteAccessToken)
@@ -107,10 +116,17 @@ func main() {
 	}
 	log.Printf("loaded %d %s instruments from Kite", len(instruments), *exchange)
 
+	// A SHARED rate limiter paces every Kite fetch — the concurrent symbol
+	// workers below and the sequential NIFTY/sector-index/chunked fetches
+	// above all draw from it. Kite throttles historical data (~3/s); unpaced
+	// concurrency just trips 429s (slower + dropped symbols).
+	limiter := time.NewTicker(time.Second / time.Duration(*rate))
+	defer limiter.Stop()
+
 	var synced, skipped int
 	var indexSynced, indexSkipped int
 	if *includeNifty && strings.EqualFold(*exchange, "NSE") {
-		candles, err := client.HistoricalDaily(ctx, kite.Nifty50InstrumentToken, kite.Nifty50Symbol, from, to)
+		candles, err := fetchHistoricalChunked(ctx, client, kite.Nifty50InstrumentToken, kite.Nifty50Symbol, from, to, limiter, *retries)
 		if err != nil {
 			log.Printf("skip %s: historical fetch failed: %v", kite.Nifty50Symbol, err)
 			indexSkipped++
@@ -126,19 +142,14 @@ func main() {
 		}
 	}
 	if *includeSectorIndices && strings.EqualFold(*exchange, "NSE") {
-		s, k := syncSectorIndices(ctx, client, candleStore, instruments, *exchange, parseSectorIndices(*sectorIndicesFlag), from, to)
+		s, k := syncSectorIndices(ctx, client, candleStore, instruments, *exchange, parseSectorIndices(*sectorIndicesFlag), from, to, limiter, *retries)
 		indexSynced += s
 		indexSkipped += k
 	}
 
 	// Sync symbols concurrently with a fixed worker pool. Each symbol is an
 	// independent fetch + upsert, so workers overlap DB writes with network
-	// waits. A SHARED rate limiter paces the Kite fetches across all workers —
-	// Kite throttles historical data (~3/s), and unpaced concurrency just trips
-	// 429s (slower + dropped symbols), so the limiter is what makes this both
-	// faster and reliable. Counters are atomic; log.Printf is concurrency-safe.
-	limiter := time.NewTicker(time.Second / time.Duration(*rate))
-	defer limiter.Stop()
+	// waits, sharing the same rate limiter set up above.
 	log.Printf("syncing %d symbols with %d workers, %d req/s rate cap, %d retries",
 		len(symbols), *workers, *rate, *retries)
 
@@ -178,11 +189,81 @@ func main() {
 	fmt.Printf("Indices skipped: %d\n", indexSkipped)
 }
 
-// syncSymbol fetches one symbol's daily history and upserts it. Safe for
+// maxChunkDays is the widest single from/to span requested per Kite call —
+// safely under Kite's ~2000-day daily-candle limit. A [from, to) range wider
+// than this is automatically split into sequential chunked requests.
+const maxChunkDays = 1900
+
+// chunkWindows splits [from, to) into sequential windows no wider than
+// maxChunkDays, oldest first. A single window is returned unchanged when the
+// whole range already fits.
+func chunkWindows(from, to time.Time) [][2]time.Time {
+	var windows [][2]time.Time
+	cur := from
+	for cur.Before(to) {
+		end := cur.AddDate(0, 0, maxChunkDays)
+		if end.After(to) {
+			end = to
+		}
+		windows = append(windows, [2]time.Time{cur, end})
+		cur = end
+	}
+	if len(windows) == 0 {
+		windows = append(windows, [2]time.Time{from, to})
+	}
+	return windows
+}
+
+// fetchHistoricalChunked fetches [from, to) for one instrument, splitting into
+// <=maxChunkDays windows when the range is wider (Kite's per-call limit) and
+// concatenating the results, oldest first. Each window's fetch waits on the
+// shared rate limiter and is retried up to `retries` times with backoff.
+func fetchHistoricalChunked(
+	ctx context.Context,
+	client *kite.Client,
+	token int64,
+	symbol string,
+	from, to time.Time,
+	limiter *time.Ticker,
+	retries int,
+) ([]models.Candle, error) {
+	var all []models.Candle
+	for _, w := range chunkWindows(from, to) {
+		var candles []models.Candle
+		var err error
+		for attempt := 0; attempt <= retries; attempt++ {
+			// Pace this fetch against Kite's limit (shared across all workers).
+			select {
+			case <-limiter.C:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			candles, err = client.HistoricalDaily(ctx, token, symbol, w[0], w[1])
+			if err == nil {
+				break
+			}
+			if attempt < retries {
+				// Back off before retrying (likely a 429 throttle): 250ms, 500ms, …
+				backoff := time.Duration(250*(attempt+1)) * time.Millisecond
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("window %s to %s: %w", w[0].Format("2006-01-02"), w[1].Format("2006-01-02"), err)
+		}
+		all = append(all, candles...)
+	}
+	return all, nil
+}
+
+// syncSymbol fetches one symbol's daily history (auto-chunked across
+// maxChunkDays windows when the range is wide) and upserts it. Safe for
 // concurrent use: the Kite client (HTTP) and candle store (DB pool) are both
-// goroutine-safe. Each Kite fetch waits on the shared rate limiter, and a
-// throttled/failed fetch is retried up to `retries` times with backoff before
-// giving up. Returns true when candles were synced, false on any skip.
+// goroutine-safe. Returns true when candles were synced, false on any skip.
 func syncSymbol(
 	ctx context.Context,
 	client *kite.Client,
@@ -200,30 +281,7 @@ func syncSymbol(
 		return false
 	}
 
-	var candles []models.Candle
-	var err error
-	for attempt := 0; attempt <= retries; attempt++ {
-		// Pace this fetch against Kite's limit (shared across all workers).
-		select {
-		case <-limiter.C:
-		case <-ctx.Done():
-			log.Printf("skip %s: interrupted", symbol)
-			return false
-		}
-		candles, err = client.HistoricalDaily(ctx, inst.InstrumentToken, symbol, from, to)
-		if err == nil {
-			break
-		}
-		if attempt < retries {
-			// Back off before retrying (likely a 429 throttle): 250ms, 500ms, …
-			backoff := time.Duration(250*(attempt+1)) * time.Millisecond
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return false
-			}
-		}
-	}
+	candles, err := fetchHistoricalChunked(ctx, client, inst.InstrumentToken, symbol, from, to, limiter, retries)
 	if err != nil {
 		log.Printf("skip %s: historical fetch failed after %d retries: %v", symbol, retries, err)
 		return false
@@ -249,6 +307,8 @@ func syncSectorIndices(
 	indexNames []string,
 	from time.Time,
 	to time.Time,
+	limiter *time.Ticker,
+	retries int,
 ) (synced, skipped int) {
 	for _, indexName := range indexNames {
 		inst, ok := kite.FindInstrumentByName(instruments, exchange, indexName)
@@ -259,7 +319,7 @@ func syncSectorIndices(
 			continue
 		}
 
-		candles, err := client.HistoricalDaily(ctx, inst.InstrumentToken, dbSymbol, from, to)
+		candles, err := fetchHistoricalChunked(ctx, client, inst.InstrumentToken, dbSymbol, from, to, limiter, retries)
 		if err != nil {
 			log.Printf("skip %s: historical fetch failed: %v", dbSymbol, err)
 			skipped++
