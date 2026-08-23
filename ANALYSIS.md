@@ -20,7 +20,11 @@ trading strategies in this repo. Read top-to-bottom it tells the story; the
 > those multibaggers: genuine profit-growth inflections do precede/coincide
 > with their big moves, but each also survived a 50–60% mid-journey drawdown
 > — so even perfect stock-picking needs a drawdown-tolerance framework this
-> codebase doesn't have either. Unresolved as of this writing — see §15.
+> codebase doesn't have either. §16 built that strategy (`longhold` +
+> `trendstop`): 24.2% CAGR at 20 positions, beating buy-and-hold NIFTY by
+> ~2x — but with a 59% max drawdown that is *currently active*, not
+> historical, as of this writing. Also fixed a real CAGR-display bug found
+> along the way (hardcoded 4-year assumption). See §15–§16 for details.
 
 ---
 
@@ -1204,7 +1208,95 @@ this. Left open pending discussion rather than resolved unilaterally.
 
 ---
 
-## 16. Open questions / next steps
+## 16. Long-hold, buy-strength strategy — beats the passive benchmark, real drawdown cost
+
+### Design (`internal/longhold`, `ExitMode: "trendstop"`)
+Direct response to §15: entry deliberately avoids both failure modes found
+there — no same-day bullish-candle requirement, no resistance-zone target.
+- **Entry**: a fresh N-day high (default 252, ~1 trading year) while price
+  sits above a *rising* long-term EMA (default 200) with volume confirmation
+  (≥1.5x the 20-day average). A new high is the signal, not a disqualifier.
+- **Exit**: no fixed target. The position is held until the close breaks
+  below the same long trend EMA — a single-average trend-following stop,
+  deliberately tolerant of the 50–60% mid-journey drawdowns §15 found even
+  genuine compounders go through.
+- **Sizing**: reuses the existing risk-based sizing unchanged. SL = the trend
+  EMA at entry (wide and structural, not a tight ATR buffer), so a more
+  extended/volatile setup naturally gets a smaller allocation — "size for
+  volatility" falls out of existing infrastructure, no new sizing logic.
+
+### A bug found and fixed along the way
+While backtesting this over the new 2010–2026 history, the tool's own
+printed CAGR looked implausible (26.7%/yr for a 158% total return over 14.6
+years — the correct figure is 6.7%/yr). Root cause: `printPortfolio` had
+`years := 4.0` **hardcoded**, not derived from the actual `--from`/`--to`
+window. Every prior result in this document was run on a ~4-year window
+(2022–2025/2026), so the hardcoded value was silently correct by
+coincidence — this is the first backtest run long enough to expose it.
+Fixed to compute years from the real test-window bounds (falling back to the
+equity curve's span only when `--from`/`--to` are unbounded — the equity
+curve itself spans the *entire loaded history* for indicator warmup, not
+the test window, so it can't be used directly). Verified against a known
+value (§9's documented ~12.1%/yr swing config now reads 11.3%/yr on current
+data — consistent). All CAGR figures below use the corrected formula.
+
+### Results (2012-01-01 → 2026-08-20, portfolio-aware, real costs/slippage)
+
+| | Max Positions | Final Capital | CAGR | Max DD | Trades | Profit Factor |
+|---|---|---|---|---|---|---|
+| Swing + EMA (production, §9) | 5 | — | 4.4%* | −14.4%* | — | 2.45* |
+| **Longhold + trendstop** | 5 | ₹2.58L | **6.7%** | −21.5% | 117 | 3.69 |
+| **Longhold + trendstop** | 20 | ₹23.72L | **24.2%** | −59.1% | 417 | 4.65 |
+| *Buy-and-hold NIFTY (§15)* | — | ₹5.47L | *12.9%* | — | 0 | — |
+
+\* §9/§15 baseline figures, shorter/different window; shown for reference only.
+
+**At 5 positions, longhold clears swing but not NIFTY.** At 20 positions
+(more consistent with how this style of investing is actually practiced —
+diversified across many names, not concentrated in 5), **it clears NIFTY by
+~2x** — the first strategy built this session to beat the passive benchmark
+§15 established as the real bar.
+
+### The concentration and drawdown checks (same rigor as every other finding)
+- **Trade concentration** at 20 positions: top 10 of 417 trades (2.4%)
+  account for 49.5% of total R — concentrated, as expected for a
+  trend-following payoff shape, but spread across 10 different names
+  (EICHERMOT, HEG, UNOMINDA, TARIL, ZENTEC, IRCON, ATGL, LAURUSLABS,
+  JSWSTEEL, VBL), not one lucky year like swing's 2023. The single largest
+  winner (TARIL, +34.5R, ₹27.76→₹400.20 over 585 days) was checked directly
+  against the candle data for unadjusted-split-style price discontinuities —
+  none found.
+- **Year-by-year distribution** (20 positions): 12 of 15 years positive,
+  including several genuinely large ones (2014 +79.4%, 2017 +106.4%, 2023
+  +50.1%, 2024 +55.4%) — not a single-year-dependent result.
+- **But the drawdown is real and current, not theoretical.** −59.1% max DD;
+  the equity curve peaked in 2025 (₹22.1L) and is down to ₹15.8L (−12.4%
+  partial-year 2026, on top of −19.2% in 2025) as of the most recent data —
+  an active, ongoing drawdown at the time of this writing, not a resolved
+  historical footnote.
+- **Sanity check on KEI specifically**: the strategy now engages with it (8
+  trades, profit factor 15.47, avg hold 249 days) where swing took zero —
+  but doesn't ride the full 427x buy-and-hold move either (+51.4% total on
+  KEI alone), since the 200-day trend stop still exits during KEI's own
+  internal corrections and has to re-enter, paying costs each time.
+
+### Verdict
+**A real, verified improvement — the first strategy this session to beat
+the true passive benchmark — but not a free lunch.** The 20-position
+config's 24.2% CAGR comes bundled with a 59% max drawdown that is, as of
+this writing, an *active* drawdown the strategy is currently inside of, not
+a historical event safely in the past. Whether that trade-off is acceptable
+depends entirely on capital commitment and time horizon — this is not
+something to run with capital you might need in the next few years. Kept as
+`--mode longhold --exit-mode trendstop` in `cmd/backtest --portfolio`, with
+6 new tests (`internal/longhold`) plus 2 new tests (trendstop exit
+mechanics) covering the entry/exit logic. Not yet wired into paper trading —
+that would be the natural next step once the drawdown-tolerance question is
+settled, not before.
+
+---
+
+## 17. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
@@ -1219,14 +1311,13 @@ this. Left open pending discussion rather than resolved unilaterally.
   above) can't construct a valid trade for a stock at new highs, so it
   structurally excludes genuine multibaggers — 1 losing trade, total, across
   the 3 biggest compounders in the universe over 14+ years.
-- **Long-hold, buy-strength strategy** — new, not started. Every strategy in
-  this codebase (swing, crossover, meanrev, breakout, contraction,
-  structure-exit) is short-hold/tactical (days–weeks). §15's multibagger
-  follow-up shows none of them can identify or hold a multi-year secular
-  compounder — a structurally different design (new-high entries treated as
-  a signal not a disqualifier, hold through corrections while trend
-  structure holds, size for volatility) rather than a tweak to the existing
-  scanner.
+- **Long-hold, buy-strength strategy — DONE, see §16.** Built and backtested
+  (`internal/longhold`, `--exit-mode trendstop`). Result: 24.2% CAGR at 20
+  concurrent positions, beating buy-and-hold NIFTY (12.9%) by ~2x — but with
+  a 59% max drawdown that is an *active, ongoing* drawdown as of this
+  writing, not a resolved historical one. Found and fixed a real CAGR
+  display bug along the way (hardcoded 4-year assumption, silently correct
+  until this longer backtest exposed it).
 - **Fundamental data source + drawdown-tolerance framework — parked, not
   scheduled.** Hypothesis validated (§15), deliberately left open for later
   rather than picked up now: no fundamental data exists in this codebase or
@@ -1253,11 +1344,13 @@ edge at scale)**; **structure-based trailing exit (§14, real trade-off —
 better win rate/PF/drawdown on swing, lower CAGR, not yet adopted)**;
 **walk-forward OOS validation + multibagger diagnosis (§15, MAJOR FINDING —
 in-sample edge does not generalize, and the strategy structurally can't hold
-secular winners; unresolved)**._
+secular winners; unresolved)**; **long-hold buy-strength strategy (§16,
+built — beats buy-and-hold NIFTY by ~2x at 20 positions, with a severe and
+currently-active drawdown as the real cost)**._
 
 ---
 
-## 17. Reproduce
+## 18. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -1354,6 +1447,17 @@ go run ./cmd/backtest --portfolio --mode swing --from 2012-01-01 --to 2012-12-31
 go run ./cmd/backtest --portfolio --mode swing --from 2012-01-01 --to 2012-12-31 \
   --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25   # baseline, no gate
+
+# §16 — long-hold buy-strength strategy (24.2% CAGR at 20 positions vs
+# NIFTY's 12.9%, but with an active 59% drawdown -- see S16 for the full
+# honest picture, including the CAGR-display bug found and fixed here).
+go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08-20 \
+  --exit-mode trendstop --max-positions 5 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25
+go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08-20 \
+  --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10 \
+  --equity-output /tmp/lh_equity.csv --output /tmp/lh_trades.csv
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

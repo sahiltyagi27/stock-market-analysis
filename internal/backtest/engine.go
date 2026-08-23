@@ -10,6 +10,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/analysis"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/breakout"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/longhold"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/meanrev"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
@@ -52,6 +53,13 @@ type Options struct {
 	//   REJECTED experiment kept for reproducibility (see ANALYSIS.md §10).
 	// "breakout" uses the resistance-zone breakout scanner (confirmed close
 	//   above a tested resistance zone on above-average volume).
+	// "longhold" uses the buy-strength scanner (fresh N-day high in a
+	//   constructive trend). NOTE: this single-symbol engine has no
+	//   equivalent of the portfolio engine's "trendstop" exit (a single wide
+	//   trend EMA) — it substitutes a very large target sentinel so the
+	//   fixed-target check never fires, and falls back to the ATR trailing
+	//   stop instead, which is NOT representative of how this strategy is
+	//   meant to exit. Use --portfolio --exit-mode trendstop for real results.
 	Mode string
 
 	// ScanOpts are used when Mode == "swing" (or empty).
@@ -65,6 +73,9 @@ type Options struct {
 
 	// BreakoutOpts are used when Mode == "breakout".
 	BreakoutOpts breakout.Options
+
+	// LongHoldOpts are used when Mode == "longhold".
+	LongHoldOpts longhold.Options
 
 	// Progress is an optional callback invoked after each symbol completes.
 	// Arguments are (symbolsDone, symbolsTotal). Safe to nil; called from
@@ -215,6 +226,27 @@ func getTradeSetup(sym string, candles []models.Candle, opts Options) (ts tradeS
 		}, true
 	}
 
+	if opts.Mode == "longhold" {
+		sigs, _ := longhold.Scan(
+			[]longhold.Input{{Symbol: sym, Candles: candles}},
+			opts.LongHoldOpts,
+		)
+		if len(sigs) == 0 {
+			return ts, false
+		}
+		sig := sigs[0]
+		return tradeSetup{
+			sl: sig.SL,
+			// No fixed target by design (see package doc) — a sentinel far
+			// above any realistic price so walkForward's target check never
+			// fires. Not representative of the real exit; see Mode doc comment.
+			target: sig.Entry * 1000,
+			atr:    sig.ATR,
+			score:  sig.Score,
+			trend:  "longhold",
+		}, true
+	}
+
 	// Swing mode (default).
 	sigs := scanner.Scan(
 		[]scanner.Input{{Symbol: sym, Candles: candles}},
@@ -256,6 +288,12 @@ func (o Options) minCandles() int {
 			return o.BreakoutOpts.MinCandles
 		}
 		return 210 // breakout default (EMA200 + margin)
+	}
+	if o.Mode == "longhold" {
+		if o.LongHoldOpts.MinCandles > 0 {
+			return o.LongHoldOpts.MinCandles
+		}
+		return 452 // longhold default (252-day high lookback + EMA200 trend)
 	}
 	if o.ScanOpts.MinCandles > 0 {
 		return o.ScanOpts.MinCandles

@@ -32,10 +32,14 @@ type PortfolioOptions struct {
 	// StartCapital is the starting cash. Default: 100000.
 	StartCapital float64
 
-	// ExitMode: "ema" (hold until EMA7<EMA21), "target" (fixed resistance), or
+	// ExitMode: "ema" (hold until EMA7<EMA21), "target" (fixed resistance),
 	// "structure" (trail the stop up to the most recent confirmed swing low —
 	// hold through any pullback that doesn't undercut it; exit only when a
-	// lower low actually forms). SL is always checked first. Default: "ema".
+	// lower low actually forms), or "trendstop" (exit only when the close
+	// breaks below a single long-term EMA — a multi-year-hold analogue of
+	// "structure", deliberately tolerant of the 50-60% mid-journey drawdowns
+	// ANALYSIS.md §15 found even genuine secular compounders go through).
+	// SL is always checked first. Default: "ema".
 	ExitMode string
 
 	// StructureWindow is the confirmation window for swing-low detection under
@@ -44,6 +48,11 @@ type PortfolioOptions struct {
 	// StructureWindow candles after the low to confirm it — no lookahead).
 	// Default: 2.
 	StructureWindow int
+
+	// TrendStopEMA is the long-term trend EMA period for ExitMode
+	// "trendstop" — exit when the close falls below this average. Default:
+	// 200 (matches longhold.Options.TrendEMA by convention, but independent).
+	TrendStopEMA int
 
 	// MaxHoldDays force-closes a position after this many candles (0 = no cap).
 	MaxHoldDays int
@@ -212,6 +221,9 @@ type symData struct {
 	// lowest Low within ±StructureWindow), else 0. Used by ExitMode
 	// "structure" to trail the stop. Precomputed once per symbol.
 	swingLow []float64
+	// trendStopEMA is the EMA(TrendStopEMA) series, used by ExitMode
+	// "trendstop" to exit when the close falls below it.
+	trendStopEMA []float64
 }
 
 type pfSignal struct {
@@ -262,6 +274,9 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 	if opts.StructureWindow <= 0 {
 		opts.StructureWindow = 2
 	}
+	if opts.TrendStopEMA <= 0 {
+		opts.TrendStopEMA = 200
+	}
 	if opts.MaxWeightPct <= 0 {
 		opts.MaxWeightPct = 25
 	}
@@ -301,7 +316,11 @@ func RunPortfolio(_ context.Context, candles map[string][]models.Candle, opts Po
 		if opts.ExitMode == "structure" {
 			swingLow = computeSwingLows(cc, opts.StructureWindow)
 		}
-		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di, swingLow: swingLow}
+		var trendStopEMA []float64
+		if opts.ExitMode == "trendstop" {
+			trendStopEMA, _ = analysis.EMA(closes, opts.TrendStopEMA)
+		}
+		data[sym] = &symData{candles: cc, ema7: e7, ema21: e21, dateIdx: di, swingLow: swingLow, trendStopEMA: trendStopEMA}
 	}
 
 	// Generate signals across all symbols.
@@ -881,6 +900,13 @@ func checkExit(pos *pfPosition, sd *symData, idx int, opts PortfolioOptions) (fl
 	case "structure":
 		// No separate win condition — hold until the trailing structural stop
 		// (updated by updateTrailingStop before this call) or MaxHoldDays.
+	case "trendstop":
+		if idx > pos.entryIdx && idx < len(sd.trendStopEMA) && sd.trendStopEMA[idx] > 0 && c.Close < sd.trendStopEMA[idx] {
+			// Same semantics as "structure": this can close at a profit or a
+			// loss depending on where price sits relative to entry after a
+			// multi-year hold, so it isn't unconditionally a "win".
+			return c.Close, OutcomeTrailStop, true
+		}
 	default: // "ema"
 		if idx > pos.entryIdx && sd.ema7[idx] > 0 && sd.ema21[idx] > 0 && sd.ema7[idx] < sd.ema21[idx] {
 			return c.Close, OutcomeWin, true

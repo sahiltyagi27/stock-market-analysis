@@ -39,6 +39,7 @@ import (
 	"github.com/sahiltyagi27/stock-market-analysis/internal/crossover"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/display"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/kite"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/longhold"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/meanrev"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/scanner"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
@@ -49,7 +50,7 @@ func main() {
 	symbolsFile := flag.String("symbols", "config/symbols.txt", "path to watchlist file")
 	fromStr := flag.String("from", "", "start of signal-date window, YYYY-MM-DD (empty = no lower bound)")
 	toStr := flag.String("to", "", "end of signal-date window, YYYY-MM-DD (empty = today)")
-	mode := flag.String("mode", "swing", "scanner strategy: swing, crossover, meanrev, or breakout (meanrev and breakout = REJECTED experiments, see ANALYSIS.md §10 and §13)")
+	mode := flag.String("mode", "swing", "scanner strategy: swing, crossover, meanrev, breakout, or longhold (meanrev and breakout = REJECTED experiments, see ANALYSIS.md §10 and §13; longhold = buy-strength/multi-year-hold, see ANALYSIS.md §15)")
 	minScore := flag.Float64("min-score", 0, "skip signals below this score (0 = all)")
 	maxHold := flag.Int("max-hold", 20, "maximum candles to hold before timing out")
 	workers := flag.Int("workers", 8, "parallel goroutines for simulation")
@@ -58,8 +59,9 @@ func main() {
 	capital := flag.Float64("capital", 100000, "starting capital in INR for the P&L journey; 0 = show top-N by score instead")
 	portfolio := flag.Bool("portfolio", false, "portfolio-aware mode: shared capital pool, concurrent-position cap")
 	maxPositions := flag.Int("max-positions", 5, "[portfolio] maximum simultaneous open positions")
-	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross), target, or structure (trail to the last confirmed swing low)")
+	exitMode := flag.String("exit-mode", "ema", "[portfolio] exit rule: ema (EMA7<EMA21 recross), target, structure (trail to the last confirmed swing low), or trendstop (exit below a long trend EMA, for --mode longhold)")
 	structureWindow := flag.Int("structure-window", 2, "[portfolio] confirmation window for swing-low detection under --exit-mode structure")
+	trendStopEMA := flag.Int("trend-stop-ema", 200, "[portfolio] EMA period for --exit-mode trendstop")
 	costPct := flag.Float64("cost-pct", 0.25, "[portfolio] round-trip transaction cost %% of notional (brokerage+STT+fees); 0 = frictionless")
 	slippagePct := flag.Float64("slippage-pct", 0.20, "[portfolio] adverse fill haircut %% per leg; 0 = perfect fills")
 	allocLookback := flag.Int("alloc-lookback", 0, "[portfolio] rank same-day candidates for free slots by N-candle leadership return (0 = by scanner score)")
@@ -137,6 +139,16 @@ func main() {
 	brRequireContraction := flag.Bool("br-require-contraction", false, "[breakout] require a volatility contraction (coil) before the breakout candle")
 	brContractionLookback := flag.Int("br-contraction-lookback", 20, "[breakout] candles back to compare ATR against for the contraction check")
 	brMaxContractionRatio := flag.Float64("br-max-contraction-ratio", 0.85, "[breakout] setup-candle ATR must be <= this x ATR from br-contraction-lookback candles earlier")
+
+	// Long-hold-mode flags (only used when --mode longhold). Deliberately
+	// permissive by design (ANALYSIS.md S15) -- no same-day bullish-candle
+	// requirement, no resistance-zone target.
+	lhHighLookback := flag.Int("lh-high-lookback", 252, "[longhold] fresh N-day-high lookback window (~1 trading year)")
+	lhTrendEMA := flag.Int("lh-trend-ema", 200, "[longhold] long-term trend EMA period; price must be above it and it must be rising")
+	lhTrendSlopeLookback := flag.Int("lh-trend-slope-lookback", 20, "[longhold] candles back to confirm the trend EMA is rising")
+	lhVolumeWindow := flag.Int("lh-volume-window", 20, "[longhold] lookback for the average-volume baseline")
+	lhMinVolumeRatio := flag.Float64("lh-min-volume-ratio", 1.5, "[longhold] minimum (today's volume / average) to confirm the breakout has real participation")
+	lhMinCandles := flag.Int("lh-min-candles", 0, "[longhold] min candles before analysis (0 = high-lookback + trend-ema)")
 
 	flag.Parse()
 
@@ -249,8 +261,8 @@ func main() {
 		},
 	}
 
-	if *mode != "swing" && *mode != "crossover" && *mode != "meanrev" && *mode != "breakout" {
-		log.Fatalf("--mode must be swing, crossover, meanrev, or breakout, got %q", *mode)
+	if *mode != "swing" && *mode != "crossover" && *mode != "meanrev" && *mode != "breakout" && *mode != "longhold" {
+		log.Fatalf("--mode must be swing, crossover, meanrev, breakout, or longhold, got %q", *mode)
 	}
 
 	brOpts := breakout.Options{
@@ -264,6 +276,15 @@ func main() {
 		RequireContraction:  *brRequireContraction,
 		ContractionLookback: *brContractionLookback,
 		MaxContractionRatio: *brMaxContractionRatio,
+	}
+
+	lhOpts := longhold.Options{
+		HighLookback:       *lhHighLookback,
+		TrendEMA:           *lhTrendEMA,
+		TrendSlopeLookback: *lhTrendSlopeLookback,
+		VolumeWindow:       *lhVolumeWindow,
+		MinVolumeRatio:     *lhMinVolumeRatio,
+		MinCandles:         *lhMinCandles,
 	}
 
 	mrOpts := meanrev.Options{
@@ -301,6 +322,7 @@ func main() {
 		CrossoverOpts:      coOpts,
 		MeanRevOpts:        mrOpts,
 		BreakoutOpts:       brOpts,
+		LongHoldOpts:       lhOpts,
 		Progress: func(done, total int) {
 			if done%50 == 0 || done == total {
 				log.Printf("  simulating: %d/%d symbols…", done, total)
@@ -318,8 +340,8 @@ func main() {
 	}
 	// ── Portfolio-aware mode ────────────────────────────────────────────────────
 	if *portfolio {
-		if *exitMode != "ema" && *exitMode != "target" && *exitMode != "structure" {
-			log.Fatalf("--exit-mode must be ema, target, or structure, got %q", *exitMode)
+		if *exitMode != "ema" && *exitMode != "target" && *exitMode != "structure" && *exitMode != "trendstop" {
+			log.Fatalf("--exit-mode must be ema, target, structure, or trendstop, got %q", *exitMode)
 		}
 		// Regime gate: load the benchmark candles when enabled.
 		var regimeCandles []models.Candle
@@ -353,6 +375,7 @@ func main() {
 			StartCapital:         *capital,
 			ExitMode:             *exitMode,
 			StructureWindow:      *structureWindow,
+			TrendStopEMA:         *trendStopEMA,
 			MaxHoldDays:          *maxHold,
 			CostPct:              *costPct,
 			SlippagePct:          *slippagePct,
@@ -393,7 +416,7 @@ func main() {
 		log.Printf("running PORTFOLIO backtest: %s → %s | mode: %s | exit: %s | max-pos %d | capital %.0f | cost %.2f%% | slip %.2f%%",
 			fromLabel, toLabel, *mode, *exitMode, *maxPositions, *capital, *costPct, *slippagePct)
 		trades, stats := backtest.RunPortfolio(ctx, candlesMap, pf)
-		printPortfolio(trades, stats, fromLabel, toLabel, *mode, *exitMode, *maxPositions, *costPct, *slippagePct)
+		printPortfolio(trades, stats, from, to, fromLabel, toLabel, *mode, *exitMode, *maxPositions, *costPct, *slippagePct)
 		if *equityOutput != "" {
 			if err := writeEquityCSV(*equityOutput, stats.EquityCurve); err != nil {
 				log.Printf("warn: equity CSV write failed: %v", err)
@@ -606,7 +629,7 @@ func printSummary(s backtest.Summary, fromLabel, toLabel string) {
 	fmt.Println()
 }
 
-func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fromLabel, toLabel, mode, exitMode string, maxPos int, costPct, slippagePct float64) {
+func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, from, to time.Time, fromLabel, toLabel, mode, exitMode string, maxPos int, costPct, slippagePct float64) {
 	sep := display.Dim.Sprint(strings.Repeat("─", 60))
 	banner := fmt.Sprintf("━━━  Portfolio Backtest  %s → %s  ━━━", fromLabel, toLabel)
 	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(banner))
@@ -627,7 +650,26 @@ func printPortfolio(trades []backtest.TradeResult, s backtest.PortfolioStats, fr
 	if s.ReturnPct < 0 {
 		retColor = display.Red.Sprintf
 	}
+	// Years elapsed comes from the actual --from/--to test window, not a
+	// fixed assumption -- a hardcoded 4.0 here silently produced
+	// correct-looking CAGR only because every backtest run happened to use a
+	// ~4-year window (2022-2025) until longer history (ANALYSIS.md S15)
+	// exposed it. The portfolio engine's own EquityCurve spans the full
+	// loaded DB history for indicator warmup, not just the test window, so
+	// it can't be used here -- it's only a fallback when --from/--to are
+	// unbounded ("all-time"/"today").
 	years := 4.0
+	if !from.IsZero() && !to.IsZero() {
+		years = to.Sub(from).Hours() / 24 / 365.25
+	} else if n := len(s.EquityCurve); n >= 2 {
+		days := s.EquityCurve[n-1].Date.Sub(s.EquityCurve[0].Date).Hours() / 24
+		if days > 0 {
+			years = days / 365.25
+		}
+	}
+	if years <= 0 {
+		years = 4.0
+	}
 	cagr := 0.0
 	if s.StartCapital > 0 && s.FinalCapital > 0 {
 		cagr = (pow(s.FinalCapital/s.StartCapital, 1.0/years) - 1) * 100
