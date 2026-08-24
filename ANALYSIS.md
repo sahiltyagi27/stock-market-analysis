@@ -1742,6 +1742,40 @@ useful information about where this relationship holds and where it
 doesn't — worth watching over the next few batches rather than reacting to
 a single data point.
 
+**Batch 2: 18 more stocks (72 → 90).** Same alphabetical, no-cherry-picking
+approach. A few sourcing notes worth keeping: AMBER's headline PAT (−97%)
+is almost entirely a one-off exceptional loss tied to an acquisition —
+adjusted PAT actually grew +19%, but the headline figure was used for
+consistency with how every other row is sourced, so this row's Total
+column should be read with real caution. APOLLOTYRE's PAT "grew" +2,608%
+only because last year's comparison quarter had an unusually tiny ₹12.88
+Cr base — not a genuine 26x improvement in the business, flagged the same
+way NEULANDLAB/ETERNAL's outlier percentages were.
+
+**Result: r=0.185 at 90 stocks — a real, sharp drop from r=0.37 at 72,
+diagnosed rather than just reported.** Two things are true at once:
+
+1. **About half the drop is a single-point artifact.** Excluding
+   APOLLOTYRE alone (that one extreme, low-base PAT% paired with an
+   unremarkable +3.7% reaction) brings r back to 0.33 — a leverage-point
+   effect, not a broad signal collapse. This is exactly the failure mode
+   unstable percentages create, and is why ANURAS/AARTIIND/AEGISLOG's
+   similarly extreme-but-smaller percentages were flagged in their own
+   Notes rather than silently trusted.
+2. **The rest is real and substantive.** Splitting the 90 stocks by when
+   they were added: the original 54 (mega/large-cap — either Nifty 50
+   constituents or pre-selected longhold winners) still show r=0.43,
+   essentially unchanged. The 36 stocks added in batches 1–2 (mid-cap,
+   less analyst coverage, thinner liquidity) show r=0.16 **on their own**
+   — genuinely weaker, not just diluted by mixing in with the strong
+   large-cap signal. This is a real, useful finding in its own right:
+   the fundamentals→reaction relationship this study keeps finding looks
+   like it may be a large-cap phenomenon (more analysts pricing in
+   expectations precisely, more liquid price discovery) rather than a
+   universal one — exactly the kind of result the earlier "worth
+   watching as coverage broadens" caution was pointing at, now with
+   actual numbers behind it instead of just a hypothesis.
+
 Reproduce: `go run ./cmd/earnings-reaction --seed` (idempotent, includes
 all batches so far), `go run ./cmd/earnings-dashboard` for the live
 sector-filterable table and the daily-movers tab.
@@ -1812,10 +1846,16 @@ sector-filterable table and the daily-movers tab.
   §17b.** Sector filter and a live daily-movers table (`/api/movers`,
   all 501 symbols in ~250ms via a new bulk `CandleStore.LatestTwo`) both
   shipped in one pass since neither needed new research. PAT coverage is
-  expanding in batches (54 → 72 so far, alphabetical, no cherry-picking);
-  r softened from 0.43 to 0.37 on the first batch — still real, worth
-  watching as coverage broadens past the large/mega-cap-skewed original
-  set toward genuinely smaller names.
+  expanding in batches (54 → 72 → 90 so far, alphabetical, no cherry-
+  picking). r moved 0.43 → 0.37 → 0.185 across the three batches, but
+  that last drop was diagnosed, not just reported: about half is a single
+  extreme-outlier artifact (APOLLOTYRE's low-base +2,608% PAT "growth"),
+  and the rest is real — the 36 stocks added in batches 1–2 show r=0.16
+  **on their own**, clearly weaker than the original 54's r=0.43. Emerging
+  hypothesis: this fundamentals→reaction relationship may be a large-cap
+  phenomenon (more analyst coverage, more liquid price discovery) rather
+  than universal — worth testing further as more batches come in, rather
+  than concluding from two batches.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -1833,14 +1873,14 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
-**quarterly-results price reaction pilot (§17, in progress — 54 stocks
-(full Nifty 50 + 4), 1 quarter, real moderate correlation (r≈0.43) between
-PAT growth and reaction that holds steady from 15 to 54 stocks but still
-one quarter, too small to size positions on; NSE/BSE direct access ruled
-out, free news-source sourcing works instead; extended in §17b to 72
-stocks (r≈0.37) plus a sector filter and a live daily-movers table;
-`earnings_watchlist` tracks
-all 54 symbols' upcoming quarters)**._
+**quarterly-results price reaction pilot (§17, in progress — 90 stocks
+and growing, 1 quarter; r≈0.43 on the original 54 (Nifty 50 + 4) holds
+steady, but the 36 mid-cap names added since (§17b) show a much weaker
+r≈0.16 on their own — a large-cap-vs-broader-market split worth more
+data before drawing conclusions; still too small/short to size positions
+on; NSE/BSE direct access ruled out, free news-source sourcing works
+instead; sector filter + live daily-movers table shipped alongside;
+`earnings_watchlist` tracks all 90 symbols' upcoming quarters)**._
 
 ---
 
