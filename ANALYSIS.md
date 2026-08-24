@@ -1932,7 +1932,12 @@ That's a small, well-defined follow-up on the same four stocks (the data
 above is already halfway there) before spending more effort on either
 more stocks or more quarters of granularity.
 
-### Verdict
+_This was tested properly against the full history below, and it's
+backwards — the same-period relationship turned out to be the real one,
+not the lagged one. Left here as the actual reasoning trail rather than
+quietly edited away._
+
+### Verdict (first pass, superseded below)
 Genuinely mixed evidence, reported as such rather than rounded toward
 either "confirmed" or "rejected." The naive coincident-year story is
 weak-to-backwards for KEI/JBMA and only loosely supportive for
@@ -1944,6 +1949,88 @@ KEI catch, that historical multi-year aggregation via search carries its
 own data-quality risk distinct from the report-date/YoY-sign issues
 found in §17/§17b, and needs the same margin-plausibility discipline
 applied before trusting a number.
+
+### Testing the lag hypothesis properly — 12 years, all 4 stocks, and a reversal
+The write-up above was built from eyeballing 2-3 "burst years" per stock
+— exactly the kind of small, pattern-matched sample that has burned this
+document before (§9's rotation scare, §17b's APOLLOTYRE leverage point).
+So before trusting the lag hypothesis, it got tested against the
+complete annual history instead of the hand-picked highlights.
+
+**Full 12-year P&L in one shot per stock.** `screener.in`'s free
+consolidated Profit & Loss table covers FY2015–FY2026 for all four
+names — one fetch each instead of a search per quarter, and roughly 8x
+more efficient than the search-per-quarter approach used earlier in
+§17c. **True 2010–2014 history is not practically available for free**:
+`screener.in`'s table starts at FY2015 with no expandable "more years"
+option, and `stockanalysis.com` (checked as a second source) only goes
+back to FY2022. Confirmed by one direct attempt (a targeted search for
+KEI's FY2011–2014 PAT surfaced nothing usable) rather than assumed —
+older annual reports exist but aren't digitized/summarized the way
+recent ones are, the same coverage drop-off §17b found for smaller
+current-day listings, just along the time axis instead of market cap.
+FY2015–2026 (12 years, 43 fiscal-year data points across 4 stocks) is
+what this analysis actually covers, not the full 2010–2026 asked for.
+
+**The KEI 10x error, fully closed.** `stockanalysis.com`'s income
+statement showed the *identical* figures from the earlier bad search
+(4,773 / 5,807) but correctly labeled **"INR Millions."** 4,773 million =
+₹477.3 Cr, 5,807 million = ₹580.7 Cr — exactly the corrected values used
+in §17c. Root cause: a millions-labeled-as-crores unit error somewhere
+upstream in the original source chain, not a random hallucination or
+typo — good to have closed definitively rather than left as "probably a
+parsing error."
+
+**The reversal.** Pooling all 4 stocks' fiscal-year PAT growth against
+same-calendar-year price return: **r = 0.568** (n=43) — clearly stronger
+than the **r = 0.168** (n=44) for the lagged (PAT growth in year *N* vs.
+price return in year *N+1*) version this section's first pass had
+proposed as the more promising angle. Tested directly, the lag
+hypothesis does not hold up; the coincident-year relationship is the
+real one. The smaller, hand-picked "just the burst years" sample from
+the first pass pointed the wrong way — a useful reminder that even a
+pattern found in the stocks the hypothesis was built for needs testing
+against the full series, not just the years that looked interesting by
+eye.
+
+**But diagnose the 0.568, don't just report it.** Excluding the 3 most
+extreme PAT-growth data points (NEULANDLAB FY21 +406%, LAURUSLABS FY21
++286%, JBMA FY22 +218%) drops the pooled r from 0.568 to **0.256** —
+roughly half the pooled correlation is a small number of leverage points,
+the same failure mode APOLLOTYRE caused in §17b. Per-stock, with each
+stock's own single most extreme year excluded:
+
+| Symbol | r (all years) | r (excl. own outlier year) |
+|---|---|---|
+| KEI | 0.528 | **0.447** |
+| JBMA | 0.832 | **0.592** |
+| LAURUSLABS | 0.736 | 0.396 |
+| NEULANDLAB | 0.402 | 0.124 |
+
+KEI and JBMA hold up as genuinely robust, moderate-to-strong same-period
+relationships even with their biggest single year removed. LAURUSLABS
+roughly halves to a moderate signal. NEULANDLAB's correlation is almost
+entirely one data point (FY21's +406% PAT jump) — excluded, it's
+essentially noise (0.124), despite being the name whose *qualitative*
+story (a huge fundamental jump, a quiet price year, then a large
+re-rating later) most motivated the lag hypothesis in the first place.
+
+### Verdict (revised)
+Same-period, not lagged: that's the corrected headline, established by
+testing against the full 12-year series rather than a hand-picked
+sample. The relationship is real but genuinely stock-specific rather
+than a uniform property of "being a multibagger" — strong and robust for
+KEI and JBMA, present but leverage-point-dependent for LAURUSLABS, and
+nearly absent for NEULANDLAB once its one outlier year is set aside.
+That heterogeneity is itself the finding: whatever is producing a
+same-period fundamentals-to-price link for these names isn't one
+mechanism working identically across all four, and averaging them
+together (r=0.568) would have overstated how reliable this is as a
+general property of multibaggers. Two honest gaps remain open rather
+than papered over: the requested 2010–2014 window isn't covered (no
+practical free source found), and this is still annual granularity on
+four names, not the quarterly resolution or broader sample §17/§17b
+already showed matters for signal strength.
 
 ---
 
@@ -2019,21 +2106,23 @@ applied before trusting a number.
   relationship. Deliberately paused here rather than running more batches
   that would likely just reconfirm the same gap — see §17c for what came
   next instead.
-- **Multi-year fundamentals vs. price on the actual multibaggers —
-  DONE (first pass), see §17c.** Directly confronted the §17b tension by
-  going back to KEI/NEULANDLAB/JBMA/LAURUSLABS and testing multi-year
-  PAT trends against each stock's actual biggest price years (found from
-  our own candle data, no new research needed for that part). Same-period
-  correlation is weak-to-backwards (KEI's PAT growth decelerated through
-  its two biggest price years; JBMA's PAT fell 20% in a year the stock
-  nearly tripled) — but a one-year-lag pattern shows up repeatedly
-  (NEULANDLAB's huge FY23 PAT jump landed in a flat price year, with the
-  price explosion the *following* year). Concrete next step: test PAT
-  growth in period *N* against price return in period *N+1* specifically,
-  rather than same-period correlation, on the same four stocks before
-  expanding further. Also caught a real data-quality issue along the
-  way — search-sourced historical KEI PAT figures were off by exactly
-  10x, caught via a margin-plausibility check, not assumed correct.
+- **Multi-year fundamentals vs. price on the actual multibaggers — DONE
+  (two passes), see §17c.** First pass (eyeballing 2-3 burst years per
+  stock) suggested a one-year lag pattern. Tested properly against the
+  full FY2015-2026 annual history (12 years, 43 data points, all 4
+  stocks) and it reversed: **same-period correlation (r=0.568) is the
+  real one, not lagged (r=0.168)** — the small hand-picked sample pointed
+  the wrong way. Diagnosed rather than trusted at face value: excluding
+  the 3 most extreme PAT-growth years drops pooled r to 0.256 (a
+  leverage-point effect, same failure mode as APOLLOTYRE in §17b), and
+  per-stock (excluding each stock's own outlier year) the relationship is
+  genuinely uneven — robust for KEI (r=0.45) and JBMA (r=0.59), fragile
+  for LAURUSLABS (r=0.40) and nearly absent for NEULANDLAB (r=0.12).
+  True 2010-2014 history wasn't obtainable free (checked two aggregators,
+  both cap out earlier). Also fully closed the KEI 10x data-quality catch
+  from the first pass: a second source showed the identical figures
+  correctly labeled "INR Millions," confirming a units mislabeling
+  upstream, not a random error.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -2058,12 +2147,14 @@ every batch, but the 54 broader-market names added since (§17b, batches
 equal-size comparison, not just a hypothesis; sector filter + live
 daily-movers table shipped alongside; `earnings_watchlist` tracks all
 108 symbols' upcoming quarters)**; **multi-year fundamentals vs. price
-on the actual multibaggers (§17c, first pass — same-period correlation
-weak-to-backwards for KEI/JBMA, but a one-year-lag pattern shows up
-repeatedly, especially NEULANDLAB; concrete next step is testing PAT
-growth in period N against price return in N+1 on the same four stocks;
-also caught a 10x historical-data error via a margin-plausibility
-check)**._
+on the actual multibaggers (§17c — a first small-sample pass suggested a
+one-year lag; tested properly against 12 years/43 data points and it
+reversed, same-period r=0.568 vs lagged r=0.168; diagnosed further and
+found genuinely uneven per-stock (robust for KEI/JBMA, fragile/near-zero
+for LAURUSLABS/NEULANDLAB once each stock's own outlier year is
+excluded); also fully closed a 10x historical-data error via a
+margin-plausibility check, confirmed as a units mislabeling by a second
+source)**._
 
 ---
 
