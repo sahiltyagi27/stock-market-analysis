@@ -1460,7 +1460,7 @@ universe, no slippage-under-stress modeling in a real drawdown, etc.).
 
 ---
 
-## 17. Quarterly-results price reaction study (5 stocks, Q1 FY27) — pilot
+## 17. Quarterly-results price reaction study (15 stocks, Q1 FY27) — pilot
 
 ### Motivation
 §15/§17's parked hypothesis: genuine profit-growth inflections precede/coincide
@@ -1511,78 +1511,119 @@ trading date. It only becomes a bug when comparing against an
 externally-sourced true-IST date, as here._
 
 ### Results (calendar week before → calendar week after report date)
-_Revised from an earlier version of this section that used 7 *trading* days
-each side, which silently widened the window beyond a literal week (e.g. for
-JBMA it spanned 21 Jul–10 Aug, not the requested 23 Jul–6 Aug) — caught when
-asked to account for the "15 days" directly. Fixed to `report_date − 7
-calendar days` through `report_date + 7 calendar days`, whatever trading
-days fall inside that span; `cmd/earnings-reaction` now also prints the
-full day-by-day close table for each stock, not just the summary row._
+_The window definition was revised from an earlier version that used 7
+*trading* days each side, which silently widened the window beyond a
+literal week (e.g. for JBMA it spanned 21 Jul–10 Aug, not the requested
+23 Jul–6 Aug) — caught when asked to account for the "15 days" directly.
+Fixed to `report_date − 7 calendar days` through `report_date + 7 calendar
+days`, whatever trading days fall inside that span; `cmd/earnings-reaction`
+now also prints the full day-by-day close table per stock via
+`--detail SYMBOL`, not just the summary row._
 
-| Symbol | Report (IST) | Window (calendar) | PAT YoY | Week-before | Post-week | Total |
+Expanded from the original 5 (longhold's biggest winners, §16 — a
+pre-selected, already-winning sample) to 15 by adding 10 large, liquid,
+well-known Nifty 50 names spanning different sectors (energy, IT x2,
+banking x2, telecom, auto, pharma, consumer) as a genuine control group —
+this directly answers the §17 Verdict's next-step #2 from the first pass
+of this pilot.
+
+| Symbol | Report (IST) | PAT YoY | Rev/NII YoY | Week-before | Post-week | Total |
 |---|---|---|---|---|---|---|
-| JSWSTEEL | 2026-07-17 | Jul 10 → Jul 24 | +112.6% | −0.7% | +0.3% | **−0.4%** |
-| LAURUSLABS | 2026-07-24 | Jul 17 → Jul 31 | +125.5% | +4.7% | +13.4% | **+18.7%** |
-| JBMA | 2026-07-30 | Jul 23 → Aug 6 | +13.4% | +2.9% | −3.1% | **−0.2%** |
-| KEI | 2026-08-03 | Jul 27 → Aug 10 | +40.0% | +3.1% | +12.7% | **+16.1%** |
-| NEULANDLAB | 2026-08-05 | Jul 29 → Aug 12 | +962.0% | +1.3% | +12.8% | **+14.3%** |
+| TCS | 2026-07-09 | +4.6% | +13.9% | −0.9% | +7.4% | **+6.4%** |
+| ICICIBANK | 2026-07-17 | +15.9% | +6.3% | +3.1% | −0.8% | **+2.3%** |
+| JSWSTEEL | 2026-07-17 | +112.6% | +9.8% | −0.7% | +0.3% | **−0.4%** |
+| RELIANCE | 2026-07-17 | −22.4% | +25.4% | +1.5% | −3.7% | **−2.3%** |
+| HDFCBANK | 2026-07-20 | +4.9% | +6.7% | −4.9% | −4.5% | **−9.2%** |
+| INFY | 2026-07-23 | +12.3% | +14.0% | −3.2% | +10.3% | **+6.7%** |
+| LAURUSLABS | 2026-07-24 | +125.5% | +29.1% | +4.7% | +13.4% | **+18.7%** |
+| JBMA | 2026-07-30 | +13.4% | +15.0% | +2.9% | −3.1% | **−0.2%** |
+| MARUTI | 2026-07-31 | −9.7% | +36.0% | +5.9% | −1.4% | **+4.4%** |
+| SUNPHARMA | 2026-07-31 | +27.0% | +10.5% | +2.5% | −2.3% | **+0.2%** |
+| KEI | 2026-08-03 | +40.0% | +23.0% | +3.1% | +12.7% | **+16.1%** |
+| BHARTIARTL | 2026-08-04 | +37.3% | +18.4% | +3.6% | −2.8% | **+0.7%** |
+| NEULANDLAB | 2026-08-05 | +962.0% | +116.3% | +1.3% | +12.8% | **+14.3%** |
+| SBIN | 2026-08-07 | +10.2% | n/a | +6.8% | −2.7% | **+3.9%** |
+| TITAN | 2026-08-07 | +62.9% | +40.3% | +1.3% | +2.3% | **+3.7%** |
 
-Reproduce: `go run ./cmd/earnings-reaction --seed` then `go run ./cmd/earnings-reaction`
-(prints the day-by-day table per stock, then this summary line).
+For the two banks (HDFCBANK, ICICIBANK), the Rev/NII column is Net Interest
+Income growth — the standard "revenue" proxy for a lender, not a topline
+revenue line. SBIN's revenue/NII YoY wasn't cleanly found in this search
+pass and is left as "n/a," not a real 0%.
 
-### Reading it honestly — 5 data points, one quarter, all-bull-market names
-This is a pilot, not a statistically meaningful sample — no claim here should
-be read as more than "worth investigating further":
+Reproduce: `go run ./cmd/earnings-reaction --seed` for the summary table
+above, `go run ./cmd/earnings-reaction --detail SYMBOL` for any one stock's
+full day-by-day price table.
 
-- **The calendar-week fix changes the picture, not just the label.**
-  JSWSTEEL and JBMA both flip from small-positive/negative to essentially
-  flat (−0.4%, −0.2%) once the window stops overshooting past a literal
-  week. LAURUSLABS, KEI, and NEULANDLAB stay clearly positive either way —
-  the strong reactions were real, not a window-width artifact; the weak
-  ones were partly a measurement artifact, now corrected.
-- **Directionally mixed on a corrected read.** 3 of 5 (LAURUSLABS, KEI,
-  NEULANDLAB) had a clear positive reaction; 2 of 5 (JSWSTEEL, JBMA) were
-  essentially flat despite both growing PAT and revenue YoY. That's a
-  weaker "fundamentals predict reaction" signal than the pre-fix numbers
-  suggested — worth being honest about rather than keeping the more
-  flattering (but wrong) window.
-- **Magnitude still doesn't track PAT growth cleanly.** NEULANDLAB's PAT
-  grew 962% and reacted +14.3% — consistent. JSWSTEEL's PAT grew 112.6%
-  (second-largest in this set) and reacted −0.4% — the largest gap between
-  earnings growth and price reaction in the set.
-- **A plausible reason for JSWSTEEL's flat reaction**: JSW Steel publishes
-  monthly/quarterly crude-steel production figures well before the formal
-  P&L (a production update was out ~9 July, a week before the 17 July
-  results) — the market had a head start on the operational story, so the
-  formal results carried less genuine surprise. Worth testing on more
-  names: **large, closely-covered companies with interim operational
-  disclosures may show muted results-day reactions relative to headline
-  PAT growth**, precisely because the "surprise" leaked out earlier
-  through a different channel.
-- **JBMA's flat reaction is confounded, not necessarily neutral on the
-  results themselves**: the same board meeting also proposed a ₹1,500 Cr
-  securities issue (dilution risk), announced the same day as the results —
-  impossible to cleanly separate "market was lukewarm on the numbers" from
-  "market discounted the dilution" with only price data and no news-flow
-  tagging.
+### Does PAT growth actually predict the reaction? A real, moderate signal
+With 15 stocks instead of 5, and a genuine control group instead of an
+all-winners sample, this is the first pass worth computing a correlation
+on: **Pearson r = 0.44** between PAT YoY growth and the total 15-day price
+reaction (r = 0.45 excluding NEULANDLAB's 962% PAT-growth outlier — the
+relationship isn't an artifact of that one extreme point). 11 of 15 stocks
+had a positive total reaction. That's a real, moderate positive
+relationship — not nothing, but not strong enough on 15 points from one
+quarter to size positions on.
+
+Two individual cases are more informative than the aggregate number:
+
+- **HDFCBANK is the cleanest counter-example to naive "growth = good"
+  reasoning.** PAT grew +4.9% YoY — genuinely positive — but the stock fell
+  **−5.1% on the result day itself** (the single-day move accounts for
+  almost the entire −9.2% total window reaction; see
+  `--detail HDFCBANK`). News coverage at the time described the print as
+  "missing estimates" despite the YoY gain. This is the market pricing
+  forward expectations, not trailing YoY comparison — a reminder that
+  "grew vs. last year" and "beat what the market expected" are different
+  questions, and this dataset can only currently see the first one.
+- **MARUTI is the mirror case**: PAT *fell* −9.7% YoY (input-cost pressure
+  compressed EBITDA margin from 10.4% to 8.2%) but the stock finished the
+  window **+4.4%**, and per `--detail MARUTI` almost all of that gain
+  happened *before* the report (+5.9% week-before, only −1.4% after) — the
+  market appears to have already been rewarding the +36% revenue growth
+  story ahead of the results, and the margin miss barely dented it
+  afterward. A volume-growth-over-margin story the market had already
+  priced in.
+- **JSWSTEEL and JBMA remain the flattest reactions** despite both growing
+  PAT and revenue YoY — consistent with the original 5-stock pilot's
+  finding that large, closely-covered names with interim disclosures (JSW
+  Steel's monthly production updates) or same-day confounds (JBMA's
+  proposed ₹1,500 Cr securities issue) can show muted reactions regardless
+  of the headline growth number.
+
+### Tracking upcoming quarters — `earnings_watchlist`
+Added a second table, `earnings_watchlist` (`internal/store/earnings_store.go`,
+`symbol, quarter, quarter_end, declared, checked_at`), so "has this stock's
+next quarter come out yet" is a query against a known list instead of
+re-deriving the symbol set from scratch every time. `go run
+./cmd/earnings-reaction --watch` registers the next quarter (currently Q2
+FY27, quarter end 2026-09-30) for all 15 tracked symbols; `--pending` lists
+which watched symbol/quarter pairs haven't been declared yet; `--seed`
+automatically marks a watchlist entry declared once its matching event is
+seeded. **This is a tracking mechanism, not an automated downloader** —
+Indian companies typically only announce their board-meeting date 1-2 weeks
+ahead, so there's no real date to fetch this far out, and NSE/BSE are still
+blocked (see above), so "downloading once available" still means a manual
+WebSearch pass per stock once each quarter-end has passed by ~4-6 weeks —
+the watchlist just makes that check systematic (`--pending` names exactly
+who's left) instead of ad hoc.
 
 ### Verdict and next steps
-Worth continuing, not worth building a sizing framework on yet — and the
-window-width correction is itself a reminder to double-check every derived
-number against the plain-English request before trusting it. The
-data-collection mechanics work (seed once, re-run the analysis freely,
-extend to new quarters/symbols without re-doing the manual research each
-time), and both bugs found so far (timezone, window width) are fixed and
-will carry forward correctly to future runs. Before this can inform actual
-position sizing: (1) more quarters per stock — one quarter can't separate
-signal from noise, (2) a control group of NIFTY 500 names *not* pre-selected
-as longhold winners, to check the pattern isn't just "stocks already in an
-uptrend keep going up regardless of results," (3) tag confounding corporate
-actions (like JBMA's securities issue) so they don't get misread as a
-results reaction, (4) test the "pre-telegraphed via interim disclosures"
-hypothesis explicitly on more large-caps with monthly business updates
-(steel, cement, auto OEMs typically publish these; smaller/single-segment
-companies like NEULANDLAB typically don't).
+A real, moderate signal (r≈0.44) survives the jump from a 5-stock
+pre-selected pilot to a 15-stock sample with a genuine control group — this
+is more informative than either "no signal" or "clean strong signal" would
+have been, and it's honest: still one quarter, still too small to size
+positions on. `earnings_watchlist` now makes it straightforward to add Q2
+FY27 data as it comes out over the next few months, which is the single
+highest-value next step (more quarters per stock, not more stocks per
+quarter). Also still open from the original pilot: (1) tag confounding
+corporate actions (JBMA's securities issue) so they don't get misread as a
+pure results reaction, (2) test the "pre-telegraphed via interim
+disclosures" hypothesis explicitly (JSWSTEEL, MARUTI's pre-drift both point
+at this) by cross-referencing companies' monthly/interim business updates
+against results-day reaction size, (3) once there's enough data across
+quarters, check whether the correlation holds out-of-sample on a quarter
+the pattern wasn't observed on — the same discipline §15 applied to swing
+and §16b applied to longhold.
 
 ---
 
@@ -1620,19 +1661,19 @@ companies like NEULANDLAB typically don't).
   own era CAGR), and the sensitivity sweep shows a smooth risk/return
   frontier rather than a fragile in-sample optimum.
 - **Fundamental data source + drawdown-tolerance framework — IN PROGRESS,
-  see §17.** Picked back up: free-source pilot on 5 stocks' Q1 FY27 results
-  (§17, calendar-week-before/after window) found 3 of 5 (LAURUSLABS, KEI,
-  NEULANDLAB) had a clear positive reaction while 2 of 5 (JSWSTEEL, JBMA)
-  were essentially flat despite both growing PAT/revenue YoY — a mixed
-  signal, not a clean "fundamentals predict reaction" result. PAT growth
-  magnitude does not cleanly predict reaction size (JSWSTEEL's 112.6% PAT
-  growth got only −0.4%, plausibly because its monthly production
-  disclosures pre-telegraph the story). One quarter on a
-  pre-selected (already-winning) sample isn't enough to build a sizing
-  framework on yet — next: more quarters, a non-pre-selected control group,
-  and confound-tagging for corporate actions (§17's Verdict has the full
-  list). Data now persists in `earnings_events`, reusable without re-running
-  the manual research each time.
+  see §17.** Expanded from 5 pre-selected winners to 15 stocks (10 large,
+  liquid Nifty 50 names across sectors added as a genuine control group).
+  Result: a real, moderate correlation between PAT YoY growth and 15-day
+  price reaction (Pearson r≈0.44, stable excluding the NEULANDLAB outlier),
+  with two informative counter-examples — HDFCBANK fell −5.1% on results
+  day despite +4.9% PAT growth (missed estimates despite YoY growth), while
+  MARUTI finished +4.4% despite −9.7% PAT decline (the market had already
+  priced in its +36% revenue story before results day). One quarter still
+  isn't enough to build a sizing framework on, but the signal is real
+  enough to keep collecting. Data persists in `earnings_events`; a new
+  `earnings_watchlist` table now tracks which symbols' next quarter hasn't
+  been declared yet (`--watch` / `--pending`), so extending this across
+  quarters is a systematic check, not a from-scratch search each time.
 - **NSE/BSE direct scraping — ruled out for this environment, see §17.**
   Both domains are blocked by browser-automation policy, and NSE's own site
   serves a 403 to direct HTTP requests before even reaching an API. Company
@@ -1656,10 +1697,11 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
-**quarterly-results price reaction pilot (§17, in progress — 5 stocks, 1
-quarter, directionally consistent with fundamentals but too small a sample
-to size positions on; NSE/BSE direct access ruled out, free news-source
-sourcing works instead)**._
+**quarterly-results price reaction pilot (§17, in progress — 15 stocks, 1
+quarter, real moderate correlation (r≈0.44) between PAT growth and
+reaction but still too small a sample to size positions on; NSE/BSE direct
+access ruled out, free news-source sourcing works instead;
+`earnings_watchlist` now tracks upcoming quarters)**._
 
 ---
 
@@ -1796,10 +1838,13 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08
 # Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
 # --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
 
-# §17 — quarterly-results price reaction pilot (5 stocks, Q1 FY27).
+# §17 — quarterly-results price reaction pilot (15 stocks, Q1 FY27).
 # --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.
-go run ./cmd/earnings-reaction --seed
-go run ./cmd/earnings-reaction
+go run ./cmd/earnings-reaction --seed      # seed the 15 known Q1 FY27 events
+go run ./cmd/earnings-reaction             # summary table, all stored events
+go run ./cmd/earnings-reaction --detail KEI  # full day-by-day table, one symbol
+go run ./cmd/earnings-reaction --watch     # register the next quarter to watch
+go run ./cmd/earnings-reaction --pending   # list symbols not yet declared
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

@@ -116,3 +116,95 @@ func (s *EarningsStore) Query(ctx context.Context, f EarningsFilter) ([]Earnings
 	}
 	return out, rows.Err()
 }
+
+// WatchlistEntry tracks one symbol's next expected quarterly results before
+// they've been declared -- a placeholder to check back on, not a prediction
+// of the exact date (Indian companies typically only announce the board
+// meeting date 1-2 weeks ahead, so an exact date usually isn't knowable
+// this far out).
+type WatchlistEntry struct {
+	Symbol     string
+	Quarter    string    // e.g. "Q2 FY27"
+	QuarterEnd time.Time // fiscal quarter end date, e.g. 2026-09-30
+	Declared   bool      // true once the matching earnings_events row has been seeded
+}
+
+// NewWatchlistStore creates the earnings_watchlist table (if it does not
+// already exist) and returns a ready-to-use store.
+func NewWatchlistStore(db *sql.DB) (*WatchlistStore, error) {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS earnings_watchlist (
+			id           BIGSERIAL   PRIMARY KEY,
+			symbol       TEXT        NOT NULL,
+			quarter      TEXT        NOT NULL,
+			quarter_end  DATE        NOT NULL,
+			declared     BOOLEAN     NOT NULL DEFAULT FALSE,
+			checked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+			UNIQUE (symbol, quarter)
+		);
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("earnings_watchlist migrate: %w", err)
+	}
+	return &WatchlistStore{db: db}, nil
+}
+
+// WatchlistStore tracks which symbols' next-quarter results are still
+// pending, so "check whether results are out yet" is a query against a
+// known list instead of a re-derivation from scratch every time.
+type WatchlistStore struct {
+	db *sql.DB
+}
+
+// Add registers a symbol/quarter pair to watch for, if not already present.
+// Safe to call repeatedly (idempotent via ON CONFLICT DO NOTHING) so it
+// won't reset an entry that's already been marked declared.
+func (s *WatchlistStore) Add(ctx context.Context, symbol, quarter string, quarterEnd time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO earnings_watchlist (symbol, quarter, quarter_end, declared, checked_at)
+		VALUES ($1,$2,$3,FALSE,now())
+		ON CONFLICT (symbol, quarter) DO NOTHING
+	`, symbol, quarter, quarterEnd)
+	if err != nil {
+		return fmt.Errorf("add watchlist entry %s %s: %w", symbol, quarter, err)
+	}
+	return nil
+}
+
+// MarkDeclared flags a watched symbol/quarter as declared (its results have
+// been fetched and seeded into earnings_events).
+func (s *WatchlistStore) MarkDeclared(ctx context.Context, symbol, quarter string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE earnings_watchlist SET declared = TRUE, checked_at = now()
+		WHERE symbol = $1 AND quarter = $2
+	`, symbol, quarter)
+	if err != nil {
+		return fmt.Errorf("mark declared %s %s: %w", symbol, quarter, err)
+	}
+	return nil
+}
+
+// Pending returns watchlist entries not yet marked declared, ordered by
+// quarter_end ASC (soonest-due first).
+func (s *WatchlistStore) Pending(ctx context.Context) ([]WatchlistEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT symbol, quarter, quarter_end, declared
+		FROM earnings_watchlist
+		WHERE declared = FALSE
+		ORDER BY quarter_end ASC, symbol ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []WatchlistEntry
+	for rows.Next() {
+		var w WatchlistEntry
+		if err := rows.Scan(&w.Symbol, &w.Quarter, &w.QuarterEnd, &w.Declared); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
