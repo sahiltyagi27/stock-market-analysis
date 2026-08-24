@@ -85,6 +85,12 @@ var watchedSymbols = []string{
 	"AIIL", "AJANTPHARM", "ALKEM", "AMBER", "AMBUJACEM",
 	"ANANDRATHI", "ANANTRAJ", "ANGELONE", "ANTHEM", "ANURAS",
 	"APARINDS", "APLAPOLLO", "APOLLOTYRE",
+	// Batch 3 (90 -> 108). Continuing alphabetically; ABDL/ABLBL still
+	// untracked (same reason as batches 1-2).
+	"APTUS", "ARE&M", "ASAHIINDIA", "ASHOKLEY", "ASTERDM",
+	"ASTRAL", "ATGL", "ATHERENERG", "ATUL", "AUBANK",
+	"AUROPHARMA", "AWL", "BAJAJHFL", "BAJAJHLDNG", "BALKRISIND",
+	"BALRAMCHIN", "BANDHANBNK", "BANKBARODA",
 }
 
 // seedEvents is the manually-researched Q1 FY27 (quarter ended 30 June 2026)
@@ -639,6 +645,115 @@ func seedEvents() []store.EarningsEvent {
 			RevenueCr: 7397.79, RevenueYoYPct: 12.8, PATCr: 348.87, PATYoYPct: 2608.6,
 			SourceURL: "https://www.business-standard.com (Apollo Tyres Q1 FY27), kotakneo.com",
 			Notes:     "Extreme PAT growth is a low-base artifact -- prior-year Q1 FY26 PAT was only Rs 12.88 Cr (an unusually weak comparison quarter), not a genuine 26x improvement in the underlying business. Treat this row's PAT YoY like NEULANDLAB/ETERNAL's outlier percentages, not as a normal growth rate. Operating margin actually compressed to 11.7% on higher raw material costs.",
+		},
+		// --- Batch 3 of the full-501 expansion (18 stocks) ---
+		{
+			Symbol: "APTUS", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 610.65, RevenueYoYPct: 15.19, PATCr: 260.94, PATYoYPct: 19.01,
+			SourceURL: "https://www.sahi.com (Aptus Value Housing Finance Q1 FY27), scanx.trade",
+			Notes:     "RevenueCr is total income. AUM +21% YoY, disbursements +36% YoY.",
+		},
+		{
+			Symbol: "ARE&M", ReportDate: date(2026, 8, 10), Quarter: "Q1 FY27",
+			RevenueCr: 4214.54, RevenueYoYPct: 23.9, PATCr: 190.94, PATYoYPct: 15.9,
+			SourceURL: "https://tradebrains.in (Amara Raja Energy & Mobility Q1 FY27), freepressjournal.in",
+			Notes:     "Ticker ARE&M is Amara Raja Energy & Mobility (formerly Amara Raja Batteries). New-energy segment revenue +73% YoY off a small base, lead-acid batteries (the core business) +22%.",
+		},
+		{
+			Symbol: "ASAHIINDIA", ReportDate: date(2026, 8, 5), Quarter: "Q1 FY27",
+			RevenueCr: 1413.39, RevenueYoYPct: 15.03, PATCr: 149.08, PATYoYPct: 165.41,
+			SourceURL: "https://www.sahi.com (Asahi India Glass Q1 FY27), business-standard.com",
+			Notes:     "Large PAT growth off a fairly small prior-year base (Rs 56.17 Cr) -- treat with more caution than the large-cap figures in this set. Automotive and float glass segments both grew.",
+		},
+		{
+			Symbol: "ASHOKLEY", ReportDate: date(2026, 8, 14), Quarter: "Q1 FY27",
+			RevenueCr: 13069.59, RevenueYoYPct: 11.62, PATCr: 667.77, PATYoYPct: 1.52,
+			SourceURL: "https://www.freepressjournal.in (Ashok Leyland Q1 FY27), business-standard.com",
+			Notes:     "Record commercial-vehicle volumes (48,763 units) but PAT barely grew -- higher material costs ate almost all the revenue gain, a margin-compression story similar to TCS/WIPRO/ABB in this set.",
+		},
+		{
+			Symbol: "ASTERDM", ReportDate: date(2026, 8, 6), Quarter: "Q1 FY27",
+			RevenueCr: 1311, RevenueYoYPct: 21.6, PATCr: 16.06, PATYoYPct: -81.2,
+			SourceURL: "https://www.freepressjournal.in (Aster DM Quality Care Q1 FY27), prokerala.com",
+			Notes:     "Revenue grew strongly but consolidated PAT collapsed -- standalone PAT (Rs 25.19 Cr) tells a somewhat different story than consolidated (Rs 16.06 Cr), another standalone/consolidated divergence case like ONGC/NTPC/M&M.",
+		},
+		{
+			Symbol: "ASTRAL", ReportDate: date(2026, 8, 12), Quarter: "Q1 FY27",
+			RevenueCr: 1578, RevenueYoYPct: 15.9, PATCr: 120.2, PATYoYPct: 51.8,
+			SourceURL: "https://www.angelone.in (Astral Q1 FY27), kotakneo.com",
+			Notes:     "Paints/adhesives business hit EBITDA breakeven for the first time this quarter -- a new-segment inflection point, not just organic growth in the core pipes business.",
+		},
+		{
+			Symbol: "ATGL", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 1906.79, RevenueYoYPct: 27, PATCr: 141.72, PATYoYPct: -14.2,
+			SourceURL: "https://upstox.com (Adani Total Gas Q1 FY27), equitybulls.com",
+			Notes:     "Revenue and volumes both grew strongly but PAT fell on higher natural gas input costs -- a clean margin-compression case (revenue up, cost up more, PAT down), distinct from a demand problem.",
+		},
+		{
+			Symbol: "ATHERENERG", ReportDate: date(2026, 8, 3), Quarter: "Q1 FY27",
+			RevenueCr: 1216.92, RevenueYoYPct: 88.79, PATCr: -51.09, PATYoYPct: 71.33,
+			SourceURL: "https://www.business-standard.com (Ather Energy Q1 FY27), angelone.in",
+			Notes:     "Still loss-making, but the loss NARROWED 71.33% YoY (from ~Rs -178 Cr to Rs -51.09 Cr) -- the opposite direction from ABFRL/ABREL's widening losses. PATYoYPct here is positive because narrowing a loss is genuine improvement, using the same sign-flip convention as those two rows (for a worsening loss) but flipped the other way (for an improving one) -- both chosen so the sign matches whether the news was actually good or bad, not just the raw formula's mechanical output. EBITDA turned positive for the first time this quarter.",
+		},
+		{
+			Symbol: "ATUL", ReportDate: date(2026, 7, 24), Quarter: "Q1 FY27",
+			RevenueCr: 1847.95, RevenueYoYPct: 25.03, PATCr: 253.93, PATYoYPct: 91.85,
+			SourceURL: "https://www.equitybulls.com (Atul Ltd Q1 FY27), indianchemicalnews.com",
+			Notes:     "Performance and Other Chemicals segment +34% YoY was the key driver.",
+		},
+		{
+			Symbol: "AUBANK", ReportDate: date(2026, 7, 25), Quarter: "Q1 FY27",
+			RevenueCr: 2695, RevenueYoYPct: 32, PATCr: 796, PATYoYPct: 37,
+			SourceURL: "https://www.equitybulls.com (AU Small Finance Bank Q1 FY27), niftytrader.in",
+			Notes:     "RevenueCr is NII (bank revenue proxy). NIM improved 47bps YoY to 5.9%.",
+		},
+		{
+			Symbol: "AUROPHARMA", ReportDate: date(2026, 8, 5), Quarter: "Q1 FY27",
+			RevenueCr: 9150, RevenueYoYPct: 16.30, PATCr: 1032, PATYoYPct: 25.22,
+			SourceURL: "https://www.sahi.com (Aurobindo Pharma Q1 FY27), indianpharmapost.com",
+			Notes:     "Broad-based growth across European and emerging-markets operations; PAT beat Street estimates per contemporaneous coverage.",
+		},
+		{
+			Symbol: "AWL", ReportDate: date(2026, 7, 30), Quarter: "Q1 FY27",
+			RevenueCr: 20048.14, RevenueYoYPct: 17.5, PATCr: 351.39, PATYoYPct: 47.67,
+			SourceURL: "https://www.equitybulls.com (AWL Agri Business Q1 FY27), pninews.com",
+			Notes:     "Formerly Adani Wilmar. EBITDA margin expanded significantly (2.14% -> 3.46%) on a food-mix shift -- a genuine margin story, not just volume growth.",
+		},
+		{
+			Symbol: "BAJAJHFL", ReportDate: date(2026, 7, 29), Quarter: "Q1 FY27",
+			RevenueCr: 3063, RevenueYoYPct: 17, PATCr: 715.28, PATYoYPct: 22.6,
+			SourceURL: "https://www.sahi.com (Bajaj Housing Finance Q1 FY27), upstox.com",
+			Notes:     "AUM +24% YoY, disbursements +33% YoY.",
+		},
+		{
+			Symbol: "BAJAJHLDNG", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 419.32, RevenueYoYPct: 24.19, PATCr: 2708.08, PATYoYPct: -22.69,
+			SourceURL: "https://www.freepressjournal.in (Bajaj Holdings Q1 FY27), marketsmojo.com",
+			Notes:     "Headline PAT decline is almost entirely a high-base effect -- Q1 FY26 included a one-time Rs 1,521.88 Cr gain from selling Bajaj Finserv shares that didn't repeat. Standalone PAT (dividend-income-driven) actually surged. Another case, like AMBER/BANKBARODA in this batch, where the headline YoY% is dominated by a one-off rather than the operating business.",
+		},
+		{
+			Symbol: "BALKRISIND", ReportDate: date(2026, 7, 29), Quarter: "Q1 FY27",
+			RevenueCr: 3455.27, RevenueYoYPct: 25.19, PATCr: 450.77, PATYoYPct: 56.35,
+			SourceURL: "https://www.sahi.com (Balkrishna Industries Q1 FY27), business-standard.com",
+			Notes:     "EBITDA margin expanded 320bps to 21.53% -- a genuine operational turnaround, not just a one-off.",
+		},
+		{
+			Symbol: "BALRAMCHIN", ReportDate: date(2026, 8, 11), Quarter: "Q1 FY27",
+			RevenueCr: 1636.79, RevenueYoYPct: 6.1, PATCr: 44.2, PATYoYPct: -14.3,
+			SourceURL: "https://www.theglobeandmail.com (Balrampur Chini Mills Q1 FY27), multibagg.ai",
+			Notes:     "Revenue grew on higher sugar realisations and distillery volumes, but compressed ethanol margins and higher input costs dragged PAT down -- a sector-specific margin story.",
+		},
+		{
+			Symbol: "BANDHANBNK", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 2921, RevenueYoYPct: 6, PATCr: 502, PATYoYPct: 35,
+			SourceURL: "https://theprint.in (Bandhan Bank Q1 FY27), business-standard.com",
+			Notes:     "RevenueCr is NII. PAT growth driven by lower provisions and improving asset quality (GNPA down to 3.15% from 4.96% a year ago) rather than core income growth -- NII itself grew only 6%. PAT was down 6.1% sequentially (QoQ) despite the strong YoY figure.",
+		},
+		{
+			Symbol: "BANKBARODA", ReportDate: date(2026, 7, 24), Quarter: "Q1 FY27",
+			RevenueCr: 12524, RevenueYoYPct: 9.5, PATCr: 1278.39, PATYoYPct: -71.8,
+			SourceURL: "https://upstox.com (Bank of Baroda Q1 FY27), freepressjournal.in",
+			Notes:     "Headline PAT collapse is almost entirely a Rs 5,680 Cr one-time NMC Group settlement charge -- excluding it, PAT would have been ~Rs 5,528 Cr, actually +21.7% YoY. Used the headline (unadjusted) figure for dataset consistency, same as AMBER/BAJAJHLDNG in this batch, but this is one of the largest headline-vs-adjusted gaps in the whole dataset -- read this row's Total column with real caution.",
 		},
 	}
 }
