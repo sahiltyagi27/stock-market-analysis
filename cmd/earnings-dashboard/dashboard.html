@@ -59,7 +59,7 @@
   }
   body { padding: 28px clamp(14px, 3vw, 36px) 48px; }
 
-  .wrap { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .wrap { max-width: 1440px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 
   header.page-head {
     display: flex;
@@ -120,6 +120,30 @@
     margin-top: 4px;
   }
 
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 9px 16px 11px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.12s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .view { display: none; flex-direction: column; gap: 18px; }
+  .view.active { display: flex; }
+
   .stat-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
@@ -158,8 +182,8 @@
   }
   .search-box {
     position: relative;
-    flex: 1 1 240px;
-    max-width: 320px;
+    flex: 1 1 220px;
+    max-width: 300px;
   }
   .search-box input {
     width: 100%;
@@ -171,20 +195,22 @@
     font-family: "IBM Plex Mono", ui-monospace, monospace;
     font-size: 13px;
   }
-  .search-box input:focus {
-    outline: 2px solid var(--focus);
-    outline-offset: 1px;
-  }
+  .search-box input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
   .search-box svg {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 14px;
-    height: 14px;
-    color: var(--text-faint);
-    pointer-events: none;
+    position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
   }
+  select.sector-select {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    max-width: 220px;
+  }
+  select.sector-select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
   .hint {
     font-size: 12px;
     color: var(--text-faint);
@@ -202,11 +228,7 @@
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
   .filter-chip:hover { border-color: var(--accent); color: var(--text); }
-  .filter-chip.active {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
+  .filter-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
   .table-shell {
     border: 1px solid var(--border);
@@ -215,12 +237,11 @@
     overflow: hidden;
     box-shadow: var(--shadow);
   }
-  .table-scroll { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; min-width: 1140px; }
+  .table-scroll { overflow-x: auto; max-height: 70vh; }
+  table { border-collapse: collapse; width: 100%; min-width: 1000px; }
 
   thead th {
-    position: sticky;
-    top: 0;
+    position: sticky; top: 0;
     background: var(--header-bg);
     z-index: 2;
     text-align: left;
@@ -243,82 +264,30 @@
   tbody tr:nth-child(even) { background: var(--surface-alt); }
   tbody tr:hover { background: var(--accent-soft); }
 
-  td {
-    padding: 9px 12px;
-    font-size: 13px;
-    vertical-align: top;
-  }
-  td.sym {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  td.date {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    color: var(--text-muted);
-    white-space: nowrap;
-    font-size: 12.5px;
-  }
-  td.num {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  td.comment {
-    color: var(--text-muted);
-    font-size: 12.5px;
-    line-height: 1.45;
-    min-width: 280px;
-    max-width: 420px;
-  }
+  td { padding: 9px 12px; font-size: 13px; vertical-align: top; }
+  td.sym { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; white-space: nowrap; }
+  td.sector { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+  td.date { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--text-muted); white-space: nowrap; font-size: 12.5px; }
+  td.num { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.comment { color: var(--text-muted); font-size: 12.5px; line-height: 1.45; min-width: 260px; max-width: 420px; }
   .pos { color: var(--pos); }
   .neg { color: var(--neg); }
   .neu { color: var(--neutral-num); }
   .na { color: var(--text-faint); font-style: italic; }
 
-  .pill {
-    display: inline-block;
-    padding: 1px 7px;
-    border-radius: 5px;
-    font-size: 11.5px;
-    font-weight: 600;
-  }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
   .pill.pos { background: var(--pos-soft); color: var(--pos); }
   .pill.neg { background: var(--neg-soft); color: var(--neg); }
 
-  tfoot td {
-    padding: 10px 12px;
-    font-size: 12px;
-    color: var(--text-faint);
-    border-top: 1px solid var(--border-strong);
-  }
+  tfoot td { padding: 10px 12px; font-size: 12px; color: var(--text-faint); border-top: 1px solid var(--border-strong); }
 
-  .state-msg {
-    padding: 40px 20px;
-    text-align: center;
-    color: var(--text-muted);
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-size: 13px;
-  }
+  .state-msg { padding: 40px 20px; text-align: center; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
   .state-msg.error { color: var(--neg); }
 
-  footer.source-note {
-    font-size: 12px;
-    color: var(--text-faint);
-    line-height: 1.6;
-    max-width: 78ch;
-  }
-  footer.source-note code {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    background: var(--surface-alt);
-    padding: 1px 5px;
-    border-radius: 4px;
-    font-size: 11.5px;
-  }
+  footer.source-note { font-size: 12px; color: var(--text-faint); line-height: 1.6; max-width: 82ch; }
+  footer.source-note code { font-family: "IBM Plex Mono", ui-monospace, monospace; background: var(--surface-alt); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
 
-  @media (max-width: 640px) {
-    .stat-strip { grid-template-columns: repeat(2, 1fr); }
-  }
+  @media (max-width: 640px) { .stat-strip { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
@@ -328,7 +297,7 @@
     <div class="page-head-text">
       <span class="eyebrow">stock-market-analysis &middot; live from Postgres</span>
       <h1>Earnings Reaction Dashboard</h1>
-      <p class="subhead">Every quarterly-results event stored in <code>earnings_events</code>, queried fresh on every load. Reaction window is the calendar week before through the calendar week after the report date.</p>
+      <p class="subhead" id="subhead">Every quarterly-results event stored in <code>earnings_events</code>, queried fresh on every load.</p>
       <span class="last-updated" id="lastUpdated"></span>
     </div>
     <button class="refresh-btn" id="refreshBtn" title="Re-query the database">
@@ -337,69 +306,112 @@
     </button>
   </header>
 
-  <div class="stat-strip" id="statStrip"></div>
-
-  <div class="toolbar">
-    <div class="search-box">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input id="searchInput" type="text" placeholder="Filter by symbol or comment&hellip;" autocomplete="off">
-    </div>
-    <button class="filter-chip active" data-filter="all">All</button>
-    <button class="filter-chip" data-filter="pos">Reaction &gt; 0</button>
-    <button class="filter-chip" data-filter="neg">Reaction &lt; 0</button>
-    <button class="filter-chip" data-filter="loss">Swung to loss</button>
-    <span class="hint" id="rowCount"></span>
+  <div class="tabs">
+    <button class="tab active" data-view="earnings">Earnings Reactions</button>
+    <button class="tab" data-view="movers">Daily Movers</button>
   </div>
 
-  <div class="table-shell">
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th data-key="symbol">Symbol<span class="arrow"></span></th>
-            <th data-key="reportDate">Report<span class="arrow"></span></th>
-            <th class="num" data-key="patCr">PAT (&#8377;Cr)<span class="arrow"></span></th>
-            <th class="num" data-key="patYoy">PAT YoY<span class="arrow"></span></th>
-            <th class="num" data-key="revenueCr">Rev/NII (&#8377;Cr)<span class="arrow"></span></th>
-            <th class="num" data-key="revenueYoy">Rev/NII YoY<span class="arrow"></span></th>
-            <th class="num" data-key="weekBefore">Wk-before<span class="arrow"></span></th>
-            <th class="num" data-key="postWeek">Post-wk<span class="arrow"></span></th>
-            <th class="num" data-key="total">Total<span class="arrow"></span></th>
-            <th>Comments</th>
-          </tr>
-        </thead>
-        <tbody id="tbody">
-          <tr><td colspan="10" class="state-msg">Loading from database&hellip;</td></tr>
-        </tbody>
-        <tfoot>
-          <tr><td colspan="10">Reaction = close(report date &minus; 7cal days) &rarr; close(report date) &rarr; close(report date + 7cal days). Rev/NII YoY is Net Interest/Premium Income growth for banks &amp; insurers, not topline revenue.</td></tr>
-        </tfoot>
-      </table>
+  <!-- ===================== EARNINGS VIEW ===================== -->
+  <section class="view active" id="view-earnings">
+    <div class="stat-strip" id="earningsStats"></div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="earningsSearch" type="text" placeholder="Filter by symbol or comment&hellip;" autocomplete="off">
+      </div>
+      <select class="sector-select" id="earningsSector"><option value="">All sectors</option></select>
+      <button class="filter-chip active" data-filter="all">All</button>
+      <button class="filter-chip" data-filter="pos">Reaction &gt; 0</button>
+      <button class="filter-chip" data-filter="neg">Reaction &lt; 0</button>
+      <button class="filter-chip" data-filter="loss">Swung to loss</button>
+      <span class="hint" id="earningsCount"></span>
     </div>
-  </div>
+
+    <div class="table-shell">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-key="symbol">Symbol<span class="arrow"></span></th>
+              <th data-key="sector">Sector<span class="arrow"></span></th>
+              <th data-key="reportDate">Report<span class="arrow"></span></th>
+              <th class="num" data-key="patCr">PAT (&#8377;Cr)<span class="arrow"></span></th>
+              <th class="num" data-key="patYoy">PAT YoY<span class="arrow"></span></th>
+              <th class="num" data-key="revenueCr">Rev/NII (&#8377;Cr)<span class="arrow"></span></th>
+              <th class="num" data-key="revenueYoy">Rev/NII YoY<span class="arrow"></span></th>
+              <th class="num" data-key="weekBefore">Wk-before<span class="arrow"></span></th>
+              <th class="num" data-key="postWeek">Post-wk<span class="arrow"></span></th>
+              <th class="num" data-key="total">Total<span class="arrow"></span></th>
+              <th>Comments</th>
+            </tr>
+          </thead>
+          <tbody id="earningsBody"><tr><td colspan="11" class="state-msg">Loading from database&hellip;</td></tr></tbody>
+          <tfoot>
+            <tr><td colspan="11">Reaction = close(report date &minus; 7cal days) &rarr; close(report date) &rarr; close(report date + 7cal days). Rev/NII YoY is Net Interest/Premium Income growth for banks &amp; insurers, not topline revenue.</td></tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MOVERS VIEW ===================== -->
+  <section class="view" id="view-movers">
+    <div class="stat-strip" id="moversStats"></div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="moversSearch" type="text" placeholder="Filter by symbol&hellip;" autocomplete="off">
+      </div>
+      <select class="sector-select" id="moversSector"><option value="">All sectors</option></select>
+      <button class="filter-chip active" data-filter="all">All</button>
+      <button class="filter-chip" data-filter="gainers">Gainers</button>
+      <button class="filter-chip" data-filter="losers">Losers</button>
+      <span class="hint" id="moversCount"></span>
+    </div>
+
+    <div class="table-shell">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-key="symbol">Symbol<span class="arrow"></span></th>
+              <th data-key="sector">Sector<span class="arrow"></span></th>
+              <th data-key="date">Date<span class="arrow"></span></th>
+              <th class="num" data-key="open">Open<span class="arrow"></span></th>
+              <th class="num" data-key="high">High<span class="arrow"></span></th>
+              <th class="num" data-key="low">Low<span class="arrow"></span></th>
+              <th class="num" data-key="close">Close<span class="arrow"></span></th>
+              <th class="num" data-key="changePct">Change<span class="arrow"></span></th>
+              <th class="num" data-key="volume">Volume<span class="arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="moversBody"><tr><td colspan="9" class="state-msg">Not loaded yet &mdash; click the tab to fetch.</td></tr></tbody>
+          <tfoot>
+            <tr><td colspan="9">Change = latest close vs. the prior trading day's close, for every symbol in the watchlist (<code>config/symbols.txt</code>).</td></tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </section>
 
   <footer class="source-note">
-    Sourced from company press releases and financial news (NSE/BSE direct access is policy-blocked in the environment this data was researched in); prices from Kite daily candles. Pearson r (shown above) is computed live in your browser from whatever rows are currently loaded, so it updates automatically as more quarters get seeded. Add data with <code>go run ./cmd/earnings-reaction --seed</code> in the repo, then click Refresh &mdash; no restart needed.
+    Sourced from company press releases and financial news (NSE/BSE direct access is policy-blocked in the environment this data was researched in); prices from Kite daily candles. Pearson r is computed live in your browser from whatever earnings rows are currently loaded. Add earnings data with <code>go run ./cmd/earnings-reaction --seed</code>, then click Refresh &mdash; no restart needed.
   </footer>
 </div>
 
 <script>
-let DATA = [];
-let sortKey = 'reportDate';
-let sortDir = 1;
-let activeFilter = 'all';
-let query = '';
-
+// ---------- shared helpers ----------
 const fmtPct = (v) => {
   if (v === null || v === undefined) return '<span class="na">n/a</span>';
   const cls = v > 0.05 ? 'pos' : v < -0.05 ? 'neg' : 'neu';
   const sign = v > 0 ? '+' : '';
   return `<span class="${cls}">${sign}${v.toFixed(1)}%</span>`;
 };
-const fmtCr = (v) => {
-  if (!v) return '<span class="na">n/a</span>';
-  return v.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-};
+const fmtCr = (v) => (!v ? '<span class="na">n/a</span>' : v.toLocaleString('en-IN', { maximumFractionDigits: 0 }));
+const fmtNum = (v) => (v === null || v === undefined ? '<span class="na">n/a</span>' : v.toLocaleString('en-IN', { maximumFractionDigits: 2 }));
+const fmtInt = (v) => (v === null || v === undefined ? '<span class="na">n/a</span>' : v.toLocaleString('en-IN'));
 
 function pearson(xs, ys) {
   const n = xs.length;
@@ -413,35 +425,77 @@ function pearson(xs, ys) {
   return cov / (sx * sy);
 }
 
-function applyFilters(rows) {
-  return rows.filter(r => {
-    if (activeFilter === 'pos' && !(r.hasReaction && r.total > 0)) return false;
-    if (activeFilter === 'neg' && !(r.hasReaction && r.total < 0)) return false;
-    if (activeFilter === 'loss' && !(r.patYoy < -100)) return false;
-    if (query) {
-      const hay = (r.symbol + ' ' + (r.notes || '')).toLowerCase();
-      if (!hay.includes(query)) return false;
-    }
-    return true;
+function populateSectorSelect(el, rows) {
+  const sectors = [...new Set(rows.map(r => r.sector).filter(Boolean))].sort();
+  const current = el.value;
+  el.innerHTML = '<option value="">All sectors</option>' +
+    sectors.map(s => `<option value="${s}">${s}</option>`).join('');
+  if (sectors.includes(current)) el.value = current;
+}
+
+function sortRows(rows, key, dir) {
+  return rows.slice().sort((a, b) => {
+    let av = a[key], bv = b[key];
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    if (av === undefined || av === null) return 1;
+    if (bv === undefined || bv === null) return -1;
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
   });
 }
 
-function render() {
-  let rows = applyFilters(DATA);
-  rows = rows.slice().sort((a, b) => {
-    let av = a[sortKey], bv = b[sortKey];
-    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
-    if (av < bv) return -1 * sortDir;
-    if (av > bv) return 1 * sortDir;
-    return 0;
+function setSortArrows(theadSelector, sortKey, sortDir) {
+  document.querySelectorAll(theadSelector).forEach(th => {
+    th.classList.toggle('sorted', th.dataset.key === sortKey);
+    const arrow = th.querySelector('.arrow');
+    arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
   });
+}
 
-  if (DATA.length === 0) {
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="10" class="state-msg">No earnings events stored yet &mdash; run <code>go run ./cmd/earnings-reaction --seed</code> in the repo, then Refresh.</td></tr>';
+// ---------- tabs ----------
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('view-' + tab.dataset.view).classList.add('active');
+    if (tab.dataset.view === 'earnings') {
+      document.getElementById('subhead').textContent = 'Every quarterly-results event stored in earnings_events, queried fresh on every load. Reaction window is the calendar week before through the calendar week after the report date.';
+    } else {
+      document.getElementById('subhead').textContent = 'Latest daily candle for every watchlist symbol, queried fresh on every load. Change is vs. the prior trading day.';
+      if (!moversLoaded) loadMovers();
+    }
+  });
+});
+
+// ================= EARNINGS =================
+let earningsData = [];
+let earningsSortKey = 'reportDate', earningsSortDir = 1, earningsFilter = 'all', earningsQuery = '';
+
+function renderEarnings() {
+  let rows = earningsData.filter(r => {
+    if (earningsFilter === 'pos' && !(r.hasReaction && r.total > 0)) return false;
+    if (earningsFilter === 'neg' && !(r.hasReaction && r.total < 0)) return false;
+    if (earningsFilter === 'loss' && !(r.patYoy < -100)) return false;
+    const sectorSel = document.getElementById('earningsSector').value;
+    if (sectorSel && r.sector !== sectorSel) return false;
+    if (earningsQuery) {
+      const hay = (r.symbol + ' ' + (r.notes || '')).toLowerCase();
+      if (!hay.includes(earningsQuery)) return false;
+    }
+    return true;
+  });
+  rows = sortRows(rows, earningsSortKey, earningsSortDir);
+
+  const tbody = document.getElementById('earningsBody');
+  if (earningsData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="11" class="state-msg">No earnings events stored yet &mdash; run <code>go run ./cmd/earnings-reaction --seed</code> in the repo, then Refresh.</td></tr>';
   } else {
-    document.getElementById('tbody').innerHTML = rows.map(r => `
+    tbody.innerHTML = rows.map(r => `
       <tr>
         <td class="sym">${r.symbol}</td>
+        <td class="sector">${r.sector || '<span class="na">unmapped</span>'}</td>
         <td class="date">${r.reportDate}</td>
         <td class="num">${fmtCr(r.patCr)}</td>
         <td class="num">${r.patYoy < -100 ? `<span class="pill neg">swung to loss ${r.patYoy.toFixed(0)}%</span>` : fmtPct(r.patYoy)}</td>
@@ -454,23 +508,17 @@ function render() {
       </tr>
     `).join('');
   }
-
-  document.getElementById('rowCount').textContent = `${rows.length} of ${DATA.length} shown`;
-
-  document.querySelectorAll('thead th[data-key]').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.key === sortKey);
-    const arrow = th.querySelector('.arrow');
-    arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
-  });
+  document.getElementById('earningsCount').textContent = `${rows.length} of ${earningsData.length} shown`;
+  setSortArrows('#view-earnings thead th[data-key]', earningsSortKey, earningsSortDir);
 }
 
-function renderStats() {
-  const n = DATA.length;
-  const withReaction = DATA.filter(r => r.hasReaction);
+function renderEarningsStats() {
+  const n = earningsData.length;
+  const withReaction = earningsData.filter(r => r.hasReaction);
   const pos = withReaction.filter(r => r.total > 0).length;
   const avgTotal = withReaction.length ? withReaction.reduce((s, r) => s + r.total, 0) / withReaction.length : 0;
   const r = pearson(withReaction.map(x => x.patYoy), withReaction.map(x => x.total));
-  const quarters = [...new Set(DATA.map(x => x.quarter))].join(', ') || '—';
+  const quarters = [...new Set(earningsData.map(x => x.quarter))].join(', ') || '—';
   const stats = [
     { num: n, label: 'Stocks tracked' },
     { num: quarters, label: 'Quarter(s)' },
@@ -478,55 +526,142 @@ function renderStats() {
     { num: withReaction.length ? `${avgTotal >= 0 ? '+' : ''}${avgTotal.toFixed(1)}%` : '—', label: 'Avg total reaction' },
     { num: r === null ? '—' : r.toFixed(2), label: 'Pearson r (PAT&harr;reaction)' },
   ];
-  document.getElementById('statStrip').innerHTML = stats.map(s => `
-    <div class="stat"><span class="num">${s.num}</span><span class="label">${s.label}</span></div>
-  `).join('');
+  document.getElementById('earningsStats').innerHTML = stats.map(s => `<div class="stat"><span class="num">${s.num}</span><span class="label">${s.label}</span></div>`).join('');
 }
 
-async function loadData(isRefresh) {
-  const btn = document.getElementById('refreshBtn');
-  if (isRefresh) btn.classList.add('spinning');
+async function loadEarnings(isRefresh) {
   try {
     const res = await fetch('/api/reactions');
     if (!res.ok) throw new Error(`API returned ${res.status}`);
-    DATA = await res.json();
-    renderStats();
-    render();
-    document.getElementById('lastUpdated').textContent =
-      'Last updated ' + new Date().toLocaleTimeString();
+    earningsData = await res.json();
+    populateSectorSelect(document.getElementById('earningsSector'), earningsData);
+    renderEarningsStats();
+    renderEarnings();
   } catch (err) {
-    document.getElementById('tbody').innerHTML =
-      `<tr><td colspan="10" class="state-msg error">Failed to load: ${err.message}. Is the dashboard server still running?</td></tr>`;
-  } finally {
-    if (isRefresh) btn.classList.remove('spinning');
+    document.getElementById('earningsBody').innerHTML = `<tr><td colspan="11" class="state-msg error">Failed to load: ${err.message}. Is the dashboard server still running?</td></tr>`;
   }
 }
 
-document.querySelectorAll('thead th[data-key]').forEach(th => {
+document.querySelectorAll('#view-earnings thead th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
-    const key = th.dataset.key;
-    if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = 1; }
-    render();
+    if (earningsSortKey === th.dataset.key) earningsSortDir *= -1; else { earningsSortKey = th.dataset.key; earningsSortDir = 1; }
+    renderEarnings();
   });
 });
-
-document.querySelectorAll('.filter-chip').forEach(btn => {
+document.querySelectorAll('#view-earnings .filter-chip').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#view-earnings .filter-chip').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    activeFilter = btn.dataset.filter;
-    render();
+    earningsFilter = btn.dataset.filter;
+    renderEarnings();
   });
 });
+document.getElementById('earningsSearch').addEventListener('input', (e) => { earningsQuery = e.target.value.trim().toLowerCase(); renderEarnings(); });
+document.getElementById('earningsSector').addEventListener('change', renderEarnings);
 
-document.getElementById('searchInput').addEventListener('input', (e) => {
-  query = e.target.value.trim().toLowerCase();
-  render();
+// ================= MOVERS =================
+let moversData = [];
+let moversLoaded = false;
+let moversSortKey = 'changePct', moversSortDir = -1, moversFilter = 'all', moversQuery = '';
+
+function renderMovers() {
+  let rows = moversData.filter(r => {
+    if (moversFilter === 'gainers' && !(r.hasChange && r.changePct > 0)) return false;
+    if (moversFilter === 'losers' && !(r.hasChange && r.changePct < 0)) return false;
+    const sectorSel = document.getElementById('moversSector').value;
+    if (sectorSel && r.sector !== sectorSel) return false;
+    if (moversQuery && !r.symbol.toLowerCase().includes(moversQuery)) return false;
+    return true;
+  });
+  rows = sortRows(rows, moversSortKey, moversSortDir);
+
+  const tbody = document.getElementById('moversBody');
+  if (moversData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">No candle data found for the watchlist.</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="sym">${r.symbol}</td>
+        <td class="sector">${r.sector || '<span class="na">unmapped</span>'}</td>
+        <td class="date">${r.date}</td>
+        <td class="num">${fmtNum(r.open)}</td>
+        <td class="num">${fmtNum(r.high)}</td>
+        <td class="num">${fmtNum(r.low)}</td>
+        <td class="num">${fmtNum(r.close)}</td>
+        <td class="num">${r.hasChange ? fmtPct(r.changePct) : '<span class="na">&mdash;</span>'}</td>
+        <td class="num">${fmtInt(r.volume)}</td>
+      </tr>
+    `).join('');
+  }
+  document.getElementById('moversCount').textContent = `${rows.length} of ${moversData.length} shown`;
+  setSortArrows('#view-movers thead th[data-key]', moversSortKey, moversSortDir);
+}
+
+function renderMoversStats() {
+  const withChange = moversData.filter(r => r.hasChange);
+  const gainers = withChange.filter(r => r.changePct > 0).length;
+  const losers = withChange.filter(r => r.changePct < 0).length;
+  const avgChange = withChange.length ? withChange.reduce((s, r) => s + r.changePct, 0) / withChange.length : 0;
+  const latestDate = moversData.length ? moversData[0].date : '—';
+  const stats = [
+    { num: moversData.length, label: 'Symbols' },
+    { num: latestDate, label: 'Latest session' },
+    { num: gainers, label: 'Gainers' },
+    { num: losers, label: 'Losers' },
+    { num: `${avgChange >= 0 ? '+' : ''}${avgChange.toFixed(2)}%`, label: 'Avg change' },
+  ];
+  document.getElementById('moversStats').innerHTML = stats.map(s => `<div class="stat"><span class="num">${s.num}</span><span class="label">${s.label}</span></div>`).join('');
+}
+
+async function loadMovers() {
+  document.getElementById('moversBody').innerHTML = '<tr><td colspan="9" class="state-msg">Loading from database&hellip; (500+ symbols, may take a moment)</td></tr>';
+  try {
+    const res = await fetch('/api/movers');
+    if (!res.ok) throw new Error(`API returned ${res.status}`);
+    moversData = await res.json();
+    moversLoaded = true;
+    populateSectorSelect(document.getElementById('moversSector'), moversData);
+    renderMoversStats();
+    renderMovers();
+  } catch (err) {
+    document.getElementById('moversBody').innerHTML = `<tr><td colspan="9" class="state-msg error">Failed to load: ${err.message}</td></tr>`;
+  }
+}
+
+document.querySelectorAll('#view-movers thead th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    if (moversSortKey === th.dataset.key) moversSortDir *= -1; else { moversSortKey = th.dataset.key; moversSortDir = 1; }
+    renderMovers();
+  });
+});
+document.querySelectorAll('#view-movers .filter-chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#view-movers .filter-chip').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    moversFilter = btn.dataset.filter;
+    renderMovers();
+  });
+});
+document.getElementById('moversSearch').addEventListener('input', (e) => { moversQuery = e.target.value.trim().toLowerCase(); renderMovers(); });
+document.getElementById('moversSector').addEventListener('change', renderMovers);
+
+// ================= refresh + init =================
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('spinning');
+  const activeView = document.querySelector('.view.active').id;
+  if (activeView === 'view-earnings') {
+    await loadEarnings(true);
+  } else {
+    await loadMovers();
+  }
+  document.getElementById('lastUpdated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
+  btn.classList.remove('spinning');
 });
 
-document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
-
-loadData(false);
+loadEarnings(false).then(() => {
+  document.getElementById('lastUpdated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
+});
 </script>
 </body>
 </html>
