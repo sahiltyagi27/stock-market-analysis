@@ -1674,17 +1674,77 @@ own doesn't tell you *how much* to size a position, just that fundamentals
 and reaction are related more often than chance. `earnings_watchlist` now
 tracks all 54 symbols, making it straightforward to add Q2 FY27 data as it
 comes out over the next few months, which is the single highest-value next
-step (more quarters per stock, not more stocks per quarter — that
-dimension is now close to exhausted at "the whole Nifty 50"). Also still
-open: (1) tag confounding corporate actions (JBMA's securities issue) so
-they don't get misread as a pure results reaction, (2) test the
-"pre-telegraphed via interim disclosures" hypothesis explicitly
-(JSWSTEEL, MARUTI, ONGC's standalone/consolidated split all point at
-related ideas) by cross-referencing companies' monthly/interim business
-updates against results-day reaction size, (3) once there's enough data
-across quarters, check whether the correlation holds out-of-sample on a
-quarter the pattern wasn't observed on — the same discipline §15 applied
-to swing and §16b applied to longhold.
+step. Also still open: (1) tag confounding corporate actions (JBMA's
+securities issue) so they don't get misread as a pure results reaction,
+(2) test the "pre-telegraphed via interim disclosures" hypothesis
+explicitly (JSWSTEEL, MARUTI, ONGC's standalone/consolidated split all
+point at related ideas) by cross-referencing companies' monthly/interim
+business updates against results-day reaction size, (3) once there's
+enough data across quarters, check whether the correlation holds
+out-of-sample on a quarter the pattern wasn't observed on — the same
+discipline §15 applied to swing and §16b applied to longhold.
+
+## 17b. Full-501 expansion, sector filter, and a daily-movers view
+
+Three follow-ups, planned together: (1) extend PAT tracking from the 54
+Nifty 50 names to the full ~501-symbol watchlist (`config/symbols.txt`),
+incrementally in batches rather than all at once, since each batch is a
+real WebSearch effort with declining source quality further down the
+market-cap scale; (2) a sector filter, since the dashboard had no way to
+slice by industry; (3) a live daily-movers table, a different question
+(today's price action across the whole watchlist) from the earnings-
+reaction table (results-day price action for stocks that reported).
+
+**Sector filter — free, because the data already existed.**
+`config/sector-map.csv` (from earlier swing-strategy work, §8) already
+maps ~360 of 501 symbols to a Kite sector index. `cmd/earnings-dashboard`
+now loads it at startup via the existing `config.LoadSectorMap` and joins
+it into both API responses — no new classification work needed. The ~141
+unmapped symbols (industries the swing filter never had a clean sector-
+index proxy for: Capital Goods, Chemicals, Consumer Services, Diversified,
+Services, Textiles) show as "unmapped" in the UI rather than silently
+guessed at.
+
+**Daily movers — a new, separate table**, `/api/movers`, one row per
+watchlist symbol with its latest close vs. the prior day's close. Needed a
+genuinely new `CandleStore.LatestTwo(symbols)` method (one windowed SQL
+query for all symbols at once) rather than one round trip per symbol,
+which is what made it practical to serve all 501 in ~250ms. This view
+answers a different question than the earnings table on purpose — general
+daily price action across the watchlist, not results-specific — and is
+lazy-loaded on first tab click since it's ~7x the row count.
+
+**Batch 1 of the PAT expansion: 18 new stocks** (54 → 72), picked
+alphabetically from the remaining ~447 symbols (no cherry-picking, so the
+sample stays representative rather than biased toward names that are easy
+to find data on). Two attempted names — ABDL (Allied Blenders and
+Distillers) and ABLBL (Aditya Birla Lifestyle Brands) — were dropped:
+search turned up PAT/revenue figures for both but no clean report date for
+either, exactly the smaller/newer-listing coverage gap flagged before this
+expansion started. **Two swing-to-loss-adjacent cases needed a different
+sign convention**: ABFRL and ABREL were *already* loss-making last year
+and the loss widened further — the raw `(current−prior)/prior` formula on
+a negative base gives a technically-positive percentage for objectively
+worse news, so both use `−(change in loss magnitude)/prior loss
+magnitude` instead, clearly labeled in their Notes field. ADANIGREEN's
+sources were internally inconsistent (headline percentages didn't match
+the Rs-crore figures quoted in the same articles); used the self-
+consistent pair rather than the flashier headline number.
+
+**Result: r=0.37 at 72 stocks, down from r=0.43 at 54.** Still a real,
+moderate signal — not a collapse — but softer than before, and worth
+reporting exactly as it happened rather than only keeping the
+more-flattering earlier number. Whether this keeps drifting down as
+coverage broadens past the large/mega-caps (which the original 54 were
+skewed toward, being either longhold winners or literal Nifty 50
+constituents) toward genuinely smaller, more idiosyncratic names is itself
+useful information about where this relationship holds and where it
+doesn't — worth watching over the next few batches rather than reacting to
+a single data point.
+
+Reproduce: `go run ./cmd/earnings-reaction --seed` (idempotent, includes
+all batches so far), `go run ./cmd/earnings-dashboard` for the live
+sector-filterable table and the daily-movers tab.
 
 ---
 
@@ -1748,6 +1808,14 @@ to swing and §16b applied to longhold.
   press releases + financial news are the practical free substitute; a paid
   subscription (Tijori Finance / Trendlyne) remains the option if the
   fundamentals pilot in §17 proves out and scale becomes the bottleneck.
+- **Full-501 expansion, sector filter, daily movers — IN PROGRESS, see
+  §17b.** Sector filter and a live daily-movers table (`/api/movers`,
+  all 501 symbols in ~250ms via a new bulk `CandleStore.LatestTwo`) both
+  shipped in one pass since neither needed new research. PAT coverage is
+  expanding in batches (54 → 72 so far, alphabetical, no cherry-picking);
+  r softened from 0.43 to 0.37 on the first batch — still real, worth
+  watching as coverage broadens past the large/mega-cap-skewed original
+  set toward genuinely smaller names.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -1769,7 +1837,9 @@ validated — holds up across a two-era split, unlike §15's swing result)**;
 (full Nifty 50 + 4), 1 quarter, real moderate correlation (r≈0.43) between
 PAT growth and reaction that holds steady from 15 to 54 stocks but still
 one quarter, too small to size positions on; NSE/BSE direct access ruled
-out, free news-source sourcing works instead; `earnings_watchlist` tracks
+out, free news-source sourcing works instead; extended in §17b to 72
+stocks (r≈0.37) plus a sector filter and a live daily-movers table;
+`earnings_watchlist` tracks
 all 54 symbols' upcoming quarters)**._
 
 ---
@@ -1907,13 +1977,17 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08
 # Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
 # --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
 
-# §17 — quarterly-results price reaction study (54 stocks, full Nifty 50 + 4, Q1 FY27).
+# §17/§17b — quarterly-results price reaction study (72 stocks and growing, Q1 FY27).
 # --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.
-go run ./cmd/earnings-reaction --seed      # seed the 54 known Q1 FY27 events
+go run ./cmd/earnings-reaction --seed      # seed all known Q1 FY27 events
 go run ./cmd/earnings-reaction             # summary table, all stored events
 go run ./cmd/earnings-reaction --detail KEI  # full day-by-day table, one symbol
 go run ./cmd/earnings-reaction --watch     # register the next quarter to watch
 go run ./cmd/earnings-reaction --pending   # list symbols not yet declared
+
+# §17b — live dashboard: sector-filterable earnings table + daily movers
+# (all 501 watchlist symbols, /api/movers) in one local server.
+go run ./cmd/earnings-dashboard
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
