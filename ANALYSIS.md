@@ -1831,6 +1831,122 @@ sector-filterable table and the daily-movers tab.
 
 ---
 
+## 17c. Multi-year fundamentals vs. price, on the actual multibaggers
+
+§17b's large-cap-vs-broader-market tension pointed at a real problem: this
+pilot exists to help size conviction in smaller compounders like
+KEI/NEULANDLAB, but the signal it keeps finding shows up in large caps,
+not stocks like those. Rather than run another 18-stock batch, this pass
+goes back to the actual 4 multibaggers already in the dataset (KEI,
+NEULANDLAB, JBMA, LAURUSLABS) and asks a different question: not "does
+one quarter's PAT growth move the stock," but "does a *multi-year trend*
+in fundamentals precede or coincide with the specific years each stock's
+price actually exploded."
+
+### Step 1 — find the actual explosive years, from our own data
+No new research needed: `internal/store.CandleStore` already has full
+daily history for all four. Computing year-end cumulative return per
+stock surfaced clearly identifiable "burst" years, distinct from long
+flat/declining stretches:
+
+| Symbol | Standout price years (calendar) |
+|---|---|
+| KEI | 2014 (+306%), 2015 (+138%), 2017 (+202%), **2021 (+145%), 2023 (+118%)** |
+| NEULANDLAB | 2013 (+176%), 2020 (+160%), **2023 (+217%), 2024 (+171%)** |
+| JBMA | 2014 (+1054%), **2021 (+303%), 2023 (+214%)** |
+| LAURUSLABS | 2020 (+380%), **2024 (+42%), 2025 (+80%), 2026 partial (+62%)** |
+
+Bolded years are the ones this pass researched fundamentals for — the
+most recent burst per stock, since fundamental data findability drops
+off sharply going back past ~2020 (same coverage-quality problem §17b
+flagged for smaller/newer listings, but for *time* instead of market cap).
+
+### A real data-quality catch along the way
+Initial searches for KEI's FY21–FY24 annual PAT returned Rs 2,695 / 3,760
+/ 4,773 / 5,808 crore — repeated identically across two separate search
+passes, so not a one-off fluke. A margin sanity check killed it
+immediately: FY23 revenue was independently confirmed at ₹6,912 Cr, and
+4,773/6,912 = **69% net margin**, absurd for a wire-and-cable manufacturer
+(KEI's own Q1 FY27 margin, from §17, is 8.6%). A follow-up search pinned
+the real FY24 figure directly (₹580.74 Cr) and the real FY24/FY23 margins
+(7.2%/6.9%) — both exactly **10x smaller** than the original figures,
+confirming a systematic parsing error somewhere upstream (likely a
+mis-scaled table on the page the search summarizer pulled from) rather
+than a one-off typo. Corrected figures below use the ÷10 correction,
+cross-checked against the independently-confirmed FY23/FY24 margins.
+NEULANDLAB, JBMA, and LAURUSLABS's figures all passed the same
+margin-plausibility check without needing correction.
+
+### Step 2 — fiscal-year PAT growth vs. calendar-year price return
+Indian fiscal years run April–March, so FY*N* mostly overlaps calendar
+year *N−1* (9 of 12 months) with a 3-month spillover into year *N*. That
+mismatch means this is a read on rough alignment, not a precise lead/lag
+measurement — flagged here rather than glossed over.
+
+| Symbol | FY | PAT YoY | Overlapping calendar yr | Price that yr |
+|---|---|---|---|---|
+| KEI | FY22 | +39.5% | 2021 | **+144.8%** |
+| KEI | FY23 | +26.9% | 2022 | +25.4% |
+| KEI | FY24 | +21.7% | 2023 | **+118.0%** |
+| NEULANDLAB | FY23 | +156.2%* | 2022 | +7.9% |
+| NEULANDLAB | FY24 | +83.4% | 2023 | **+216.9%** |
+| JBMA | FY22 | +217.2% | 2021 | **+303.2%** |
+| JBMA | FY23 | −20.0% | 2022 | +14.7% |
+| JBMA | FY24 | +42.9% | 2023 | **+213.8%** |
+| LAURUSLABS | FY25 | +113.3% | 2024 | +42.2% |
+| LAURUSLABS | FY26 | +148.4% | 2025 | +80.4% |
+
+\* NEULANDLAB FY23 PAT YoY from the company's own stated margin expansion
+(6.7%→13.7%), not an absolute-figure ratio (FY22 absolute PAT wasn't
+independently pinned down this pass).
+
+### Reading it honestly: same-period correlation is weak; a one-year lag pattern is not
+The naive hypothesis — biggest fundamental-growth year = biggest price
+year — **does not hold cleanly for any of the four**, and for KEI and
+JBMA it's often backwards: KEI's PAT growth *decelerated* every year
+shown (39.5%→26.9%→21.7%) while its two biggest price years happened
+right in the middle and end of that deceleration; JBMA's PAT fell 20% in
+FY23 even as the stock had its second-biggest price year that same
+window. If the test were "does this year's fundamental growth match this
+year's price return," the honest answer is no.
+
+**But a different, staggered pattern shows up repeatedly**: NEULANDLAB's
+huge FY23 PAT jump (+156%) landed in a year the stock was nearly flat
+(+7.9%) — and the price explosion (+217%) came the *following* year,
+after FY24's fundamentals had already decelerated to "only" +83%.
+LAURUSLABS shows the same shape in miniature: FY25's +113% PAT growth
+landed in a year the stock was up a modest +42%, and FY26's even faster
++148% growth is running well ahead of 2025's +80% price return — the
+market may still be catching up. KEI's FY24 deceleration (+21.7%) still
+came with the stock's second-best year on record (+118%) — plausible if
+what actually moved the price wasn't trailing FY24 PAT at all, but
+forward-looking capacity/order-book stories the trailing number doesn't
+capture, which the single-quarter §17 pilot has no way to see either.
+
+**The concrete, testable refinement this points to**: instead of asking
+"does PAT growth in period *N* correlate with price return in period
+*N*" (what §17/§17b tested and found weak outside large caps), the next
+step should test "does PAT growth in period *N* correlate with price
+return in period *N+1*" — a lagged relationship, not a coincident one.
+That's a small, well-defined follow-up on the same four stocks (the data
+above is already halfway there) before spending more effort on either
+more stocks or more quarters of granularity.
+
+### Verdict
+Genuinely mixed evidence, reported as such rather than rounded toward
+either "confirmed" or "rejected." The naive coincident-year story is
+weak-to-backwards for KEI/JBMA and only loosely supportive for
+NEULANDLAB/LAURUSLABS. The more interesting pattern — fundamentals
+inflecting a year before the market's big re-rating, most visible in
+NEULANDLAB — is exactly the kind of thing worth testing properly with a
+lagged comparison before concluding anything. Also a reminder, via the
+KEI catch, that historical multi-year aggregation via search carries its
+own data-quality risk distinct from the report-date/YoY-sign issues
+found in §17/§17b, and needs the same margin-plausibility discipline
+applied before trusting a number.
+
+---
+
 ## 18. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
@@ -1891,22 +2007,33 @@ sector-filterable table and the daily-movers tab.
   press releases + financial news are the practical free substitute; a paid
   subscription (Tijori Finance / Trendlyne) remains the option if the
   fundamentals pilot in §17 proves out and scale becomes the bottleneck.
-- **Full-501 expansion, sector filter, daily movers — IN PROGRESS, see
+- **Full-501 expansion, sector filter, daily movers — PAUSED at 108, see
   §17b.** Sector filter and a live daily-movers table (`/api/movers`,
   all 501 symbols in ~250ms via a new bulk `CandleStore.LatestTwo`) both
-  shipped in one pass since neither needed new research. PAT coverage is
-  expanding in batches (54 → 72 → 90 → 108 so far, alphabetical, no
-  cherry-picking). r moved 0.43 → 0.37 → 0.185 → 0.157 across four
-  batches, and at 108 stocks there's now a clean equal-size comparison:
-  the original 54 (mega/large-cap) hold at r=0.425, essentially unchanged
+  shipped in one pass since neither needed new research. PAT coverage
+  expanded in batches (54 → 72 → 90 → 108, alphabetical, no
+  cherry-picking) until a clean equal-size comparison emerged: the
+  original 54 (mega/large-cap) hold at r=0.425, essentially unchanged
   since the first pass, while the 54 stocks added since (batches 1–3,
-  broader-market) show r=0.092 **on their own** — not weaker, close to
-  *no* linear relationship. This is a real tension worth confronting: the
-  signal this study keeps finding looks like a large-cap phenomenon, but
-  §15/§16's original motivation for this whole pilot was about smaller
-  multibagger candidates (KEI/NEULANDLAB-style), exactly the names where
-  the signal may not hold. Worth resolving before more batches, not just
-  noting.
+  broader-market) show r=0.092 **on their own** — close to *no* linear
+  relationship. Deliberately paused here rather than running more batches
+  that would likely just reconfirm the same gap — see §17c for what came
+  next instead.
+- **Multi-year fundamentals vs. price on the actual multibaggers —
+  DONE (first pass), see §17c.** Directly confronted the §17b tension by
+  going back to KEI/NEULANDLAB/JBMA/LAURUSLABS and testing multi-year
+  PAT trends against each stock's actual biggest price years (found from
+  our own candle data, no new research needed for that part). Same-period
+  correlation is weak-to-backwards (KEI's PAT growth decelerated through
+  its two biggest price years; JBMA's PAT fell 20% in a year the stock
+  nearly tripled) — but a one-year-lag pattern shows up repeatedly
+  (NEULANDLAB's huge FY23 PAT jump landed in a flat price year, with the
+  price explosion the *following* year). Concrete next step: test PAT
+  growth in period *N* against price return in period *N+1* specifically,
+  rather than same-period correlation, on the same four stocks before
+  expanding further. Also caught a real data-quality issue along the
+  way — search-sourced historical KEI PAT figures were off by exactly
+  10x, caught via a margin-plausibility check, not assumed correct.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -1924,17 +2051,19 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
-**quarterly-results price reaction pilot (§17, in progress — 108 stocks
-and growing, 1 quarter; r≈0.43 on the original 54 (Nifty 50 + 4) holds
-steady across every batch, but the 54 broader-market names added since
-(§17b, batches 1–3) show essentially no correlation on their own
-(r≈0.09) — a clean equal-size comparison now, not just a hypothesis;
-in tension with §15/§16's original motivation for this pilot, which was
-about smaller multibagger candidates specifically; still too
-small/short to size positions on; NSE/BSE direct access ruled out,
-free news-source sourcing works instead; sector filter + live
+**quarterly-results price reaction pilot (§17, paused at 108 stocks, 1
+quarter; r≈0.43 on the original 54 (Nifty 50 + 4) holds steady across
+every batch, but the 54 broader-market names added since (§17b, batches
+1–3) show essentially no correlation on their own (r≈0.09) — a clean
+equal-size comparison, not just a hypothesis; sector filter + live
 daily-movers table shipped alongside; `earnings_watchlist` tracks all
-108 symbols' upcoming quarters)**._
+108 symbols' upcoming quarters)**; **multi-year fundamentals vs. price
+on the actual multibaggers (§17c, first pass — same-period correlation
+weak-to-backwards for KEI/JBMA, but a one-year-lag pattern shows up
+repeatedly, especially NEULANDLAB; concrete next step is testing PAT
+growth in period N against price return in N+1 on the same four stocks;
+also caught a 10x historical-data error via a margin-plausibility
+check)**._
 
 ---
 
