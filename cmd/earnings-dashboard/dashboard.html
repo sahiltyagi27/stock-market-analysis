@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earnings Reaction Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f3f5f3;
+    --surface: #ffffff;
+    --surface-alt: #ecefec;
+    --header-bg: #e7ebe8;
+    --border: #d6dbd6;
+    --border-strong: #b9c1ba;
+    --text: #131917;
+    --text-muted: #5c6863;
+    --text-faint: #8b958f;
+    --accent: #0c7a63;
+    --accent-soft: #e3f1ec;
+    --pos: #1f8a53;
+    --pos-soft: #e7f5ec;
+    --neg: #c23b2c;
+    --neg-soft: #fbeae7;
+    --neutral-num: #6b7570;
+    --focus: #0c7a63;
+    --shadow: 0 1px 2px rgba(20, 30, 25, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0f0d;
+      --surface: #101613;
+      --surface-alt: #151d19;
+      --header-bg: #182019;
+      --border: #253029;
+      --border-strong: #34423a;
+      --text: #e7ece9;
+      --text-muted: #93a29a;
+      --text-faint: #647069;
+      --accent: #35d1a8;
+      --accent-soft: #12291f;
+      --pos: #3fcf8c;
+      --pos-soft: #10261c;
+      --neg: #ff8577;
+      --neg-soft: #2b1512;
+      --neutral-num: #8b968f;
+      --focus: #35d1a8;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+  body { padding: 28px clamp(14px, 3vw, 36px) 48px; }
+
+  .wrap { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+
+  header.page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .page-head-text { display: flex; flex-direction: column; gap: 4px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(22px, 3vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .subhead {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 13.5px;
+    max-width: 68ch;
+    line-height: 1.5;
+  }
+
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.12s;
+  }
+  .refresh-btn:hover { opacity: 0.85; }
+  .refresh-btn:active { opacity: 0.65; }
+  .refresh-btn svg { width: 14px; height: 14px; }
+  .refresh-btn.spinning svg { animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .last-updated {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .stat .num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .stat .label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .search-box {
+    position: relative;
+    flex: 1 1 240px;
+    max-width: 320px;
+  }
+  .search-box input {
+    width: 100%;
+    padding: 9px 12px 9px 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+  }
+  .search-box input:focus {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+  .search-box svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--text-faint);
+    pointer-events: none;
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--text-faint);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .filter-chip {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .filter-chip:hover { border-color: var(--accent); color: var(--text); }
+  .filter-chip.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .table-shell {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 1140px; }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--header-bg);
+    z-index: 2;
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th:hover { color: var(--text); }
+  thead th .arrow { display: inline-block; width: 10px; opacity: 0.6; font-size: 10px; }
+  thead th.num, tbody td.num { text-align: right; }
+  thead th.sorted { color: var(--accent); }
+
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:nth-child(even) { background: var(--surface-alt); }
+  tbody tr:hover { background: var(--accent-soft); }
+
+  td {
+    padding: 9px 12px;
+    font-size: 13px;
+    vertical-align: top;
+  }
+  td.sym {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td.date {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-size: 12.5px;
+  }
+  td.num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  td.comment {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    line-height: 1.45;
+    min-width: 280px;
+    max-width: 420px;
+  }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .neu { color: var(--neutral-num); }
+  .na { color: var(--text-faint); font-style: italic; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .pill.pos { background: var(--pos-soft); color: var(--pos); }
+  .pill.neg { background: var(--neg-soft); color: var(--neg); }
+
+  tfoot td {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-faint);
+    border-top: 1px solid var(--border-strong);
+  }
+
+  .state-msg {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+  }
+  .state-msg.error { color: var(--neg); }
+
+  footer.source-note {
+    font-size: 12px;
+    color: var(--text-faint);
+    line-height: 1.6;
+    max-width: 78ch;
+  }
+  footer.source-note code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    background: var(--surface-alt);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11.5px;
+  }
+
+  @media (max-width: 640px) {
+    .stat-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="page-head">
+    <div class="page-head-text">
+      <span class="eyebrow">stock-market-analysis &middot; live from Postgres</span>
+      <h1>Earnings Reaction Dashboard</h1>
+      <p class="subhead">Every quarterly-results event stored in <code>earnings_events</code>, queried fresh on every load. Reaction window is the calendar week before through the calendar week after the report date.</p>
+      <span class="last-updated" id="lastUpdated"></span>
+    </div>
+    <button class="refresh-btn" id="refreshBtn" title="Re-query the database">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      Refresh
+    </button>
+  </header>
+
+  <div class="stat-strip" id="statStrip"></div>
+
+  <div class="toolbar">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="searchInput" type="text" placeholder="Filter by symbol or comment&hellip;" autocomplete="off">
+    </div>
+    <button class="filter-chip active" data-filter="all">All</button>
+    <button class="filter-chip" data-filter="pos">Reaction &gt; 0</button>
+    <button class="filter-chip" data-filter="neg">Reaction &lt; 0</button>
+    <button class="filter-chip" data-filter="loss">Swung to loss</button>
+    <span class="hint" id="rowCount"></span>
+  </div>
+
+  <div class="table-shell">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="symbol">Symbol<span class="arrow"></span></th>
+            <th data-key="reportDate">Report<span class="arrow"></span></th>
+            <th class="num" data-key="patCr">PAT (&#8377;Cr)<span class="arrow"></span></th>
+            <th class="num" data-key="patYoy">PAT YoY<span class="arrow"></span></th>
+            <th class="num" data-key="revenueCr">Rev/NII (&#8377;Cr)<span class="arrow"></span></th>
+            <th class="num" data-key="revenueYoy">Rev/NII YoY<span class="arrow"></span></th>
+            <th class="num" data-key="weekBefore">Wk-before<span class="arrow"></span></th>
+            <th class="num" data-key="postWeek">Post-wk<span class="arrow"></span></th>
+            <th class="num" data-key="total">Total<span class="arrow"></span></th>
+            <th>Comments</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="10" class="state-msg">Loading from database&hellip;</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td colspan="10">Reaction = close(report date &minus; 7cal days) &rarr; close(report date) &rarr; close(report date + 7cal days). Rev/NII YoY is Net Interest/Premium Income growth for banks &amp; insurers, not topline revenue.</td></tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <footer class="source-note">
+    Sourced from company press releases and financial news (NSE/BSE direct access is policy-blocked in the environment this data was researched in); prices from Kite daily candles. Pearson r (shown above) is computed live in your browser from whatever rows are currently loaded, so it updates automatically as more quarters get seeded. Add data with <code>go run ./cmd/earnings-reaction --seed</code> in the repo, then click Refresh &mdash; no restart needed.
+  </footer>
+</div>
+
+<script>
+let DATA = [];
+let sortKey = 'reportDate';
+let sortDir = 1;
+let activeFilter = 'all';
+let query = '';
+
+const fmtPct = (v) => {
+  if (v === null || v === undefined) return '<span class="na">n/a</span>';
+  const cls = v > 0.05 ? 'pos' : v < -0.05 ? 'neg' : 'neu';
+  const sign = v > 0 ? '+' : '';
+  return `<span class="${cls}">${sign}${v.toFixed(1)}%</span>`;
+};
+const fmtCr = (v) => {
+  if (!v) return '<span class="na">n/a</span>';
+  return v.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+};
+
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  const cov = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0);
+  const sx = Math.sqrt(xs.reduce((s, x) => s + (x - mx) ** 2, 0));
+  const sy = Math.sqrt(ys.reduce((s, y) => s + (y - my) ** 2, 0));
+  if (sx === 0 || sy === 0) return null;
+  return cov / (sx * sy);
+}
+
+function applyFilters(rows) {
+  return rows.filter(r => {
+    if (activeFilter === 'pos' && !(r.hasReaction && r.total > 0)) return false;
+    if (activeFilter === 'neg' && !(r.hasReaction && r.total < 0)) return false;
+    if (activeFilter === 'loss' && !(r.patYoy < -100)) return false;
+    if (query) {
+      const hay = (r.symbol + ' ' + (r.notes || '')).toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+}
+
+function render() {
+  let rows = applyFilters(DATA);
+  rows = rows.slice().sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return 0;
+  });
+
+  if (DATA.length === 0) {
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="10" class="state-msg">No earnings events stored yet &mdash; run <code>go run ./cmd/earnings-reaction --seed</code> in the repo, then Refresh.</td></tr>';
+  } else {
+    document.getElementById('tbody').innerHTML = rows.map(r => `
+      <tr>
+        <td class="sym">${r.symbol}</td>
+        <td class="date">${r.reportDate}</td>
+        <td class="num">${fmtCr(r.patCr)}</td>
+        <td class="num">${r.patYoy < -100 ? `<span class="pill neg">swung to loss ${r.patYoy.toFixed(0)}%</span>` : fmtPct(r.patYoy)}</td>
+        <td class="num">${fmtCr(r.revenueCr)}</td>
+        <td class="num">${r.revenueYoy === 0 && r.revenueCr === 0 ? '<span class="na">n/a</span>' : fmtPct(r.revenueYoy)}</td>
+        <td class="num">${r.hasReaction ? fmtPct(r.weekBefore) : '<span class="na">&mdash;</span>'}</td>
+        <td class="num">${r.hasReaction ? fmtPct(r.postWeek) : '<span class="na">&mdash;</span>'}</td>
+        <td class="num">${r.hasReaction ? fmtPct(r.total) : '<span class="na">&mdash;</span>'}</td>
+        <td class="comment">${r.notes || ''}</td>
+      </tr>
+    `).join('');
+  }
+
+  document.getElementById('rowCount').textContent = `${rows.length} of ${DATA.length} shown`;
+
+  document.querySelectorAll('thead th[data-key]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.key === sortKey);
+    const arrow = th.querySelector('.arrow');
+    arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
+  });
+}
+
+function renderStats() {
+  const n = DATA.length;
+  const withReaction = DATA.filter(r => r.hasReaction);
+  const pos = withReaction.filter(r => r.total > 0).length;
+  const avgTotal = withReaction.length ? withReaction.reduce((s, r) => s + r.total, 0) / withReaction.length : 0;
+  const r = pearson(withReaction.map(x => x.patYoy), withReaction.map(x => x.total));
+  const quarters = [...new Set(DATA.map(x => x.quarter))].join(', ') || '—';
+  const stats = [
+    { num: n, label: 'Stocks tracked' },
+    { num: quarters, label: 'Quarter(s)' },
+    { num: withReaction.length ? `${pos}/${withReaction.length}` : '—', label: 'Positive reaction' },
+    { num: withReaction.length ? `${avgTotal >= 0 ? '+' : ''}${avgTotal.toFixed(1)}%` : '—', label: 'Avg total reaction' },
+    { num: r === null ? '—' : r.toFixed(2), label: 'Pearson r (PAT&harr;reaction)' },
+  ];
+  document.getElementById('statStrip').innerHTML = stats.map(s => `
+    <div class="stat"><span class="num">${s.num}</span><span class="label">${s.label}</span></div>
+  `).join('');
+}
+
+async function loadData(isRefresh) {
+  const btn = document.getElementById('refreshBtn');
+  if (isRefresh) btn.classList.add('spinning');
+  try {
+    const res = await fetch('/api/reactions');
+    if (!res.ok) throw new Error(`API returned ${res.status}`);
+    DATA = await res.json();
+    renderStats();
+    render();
+    document.getElementById('lastUpdated').textContent =
+      'Last updated ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    document.getElementById('tbody').innerHTML =
+      `<tr><td colspan="10" class="state-msg error">Failed to load: ${err.message}. Is the dashboard server still running?</td></tr>`;
+  } finally {
+    if (isRefresh) btn.classList.remove('spinning');
+  }
+}
+
+document.querySelectorAll('thead th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = 1; }
+    render();
+  });
+});
+
+document.querySelectorAll('.filter-chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    render();
+  });
+});
+
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  query = e.target.value.trim().toLowerCase();
+  render();
+});
+
+document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+
+loadData(false);
+</script>
+</body>
+</html>

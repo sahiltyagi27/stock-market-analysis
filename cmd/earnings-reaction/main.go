@@ -39,8 +39,8 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/config"
+	"github.com/sahiltyagi27/stock-market-analysis/internal/earnings"
 	"github.com/sahiltyagi27/stock-market-analysis/internal/store"
-	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
 func date(y int, m time.Month, d int) time.Time {
@@ -418,21 +418,6 @@ var nextWatchQuarter = struct {
 	End   time.Time
 }{Label: "Q2 FY27", End: date(2026, 9, 30)}
 
-// istOffset converts a UTC daily-candle timestamp back to its true IST
-// trading date. Kite's daily candles are midnight IST (e.g.
-// "2026-07-17T00:00:00+0530"); parseKiteTime converts that to UTC, which
-// lands on 18:30 the *previous* calendar day. Without this correction, every
-// date comparison against an externally-sourced (true IST) date is off by
-// one trading day.
-const istOffset = 5*time.Hour + 30*time.Minute
-
-// istDate returns the candle's true IST trading date, truncated to midnight UTC
-// so it can be compared directly against dates built with the date() helper.
-func istDate(c models.Candle) time.Time {
-	ist := c.Timestamp.Add(istOffset)
-	return time.Date(ist.Year(), ist.Month(), ist.Day(), 0, 0, 0, 0, time.UTC)
-}
-
 func main() {
 	seed := flag.Bool("seed", false, "insert/update the reference earnings events and exit")
 	watch := flag.Bool("watch", false, "register the next quarter to watch for every tracked symbol and exit")
@@ -531,88 +516,24 @@ func main() {
 	}
 }
 
-// reaction holds the computed price-reaction figures for one earnings event.
-type reaction struct {
-	day0Date            time.Time
-	preWeekPct          float64
-	postWeekPct         float64
-	totalPct            float64
-	firstClose, day0Close, lastClose float64
-	ok                  bool
-}
-
-// computeReaction pulls candles in the calendar window (report date ± 7
-// calendar days) and computes the reaction. ok=false means there wasn't
-// enough candle data to compute it (e.g. a future/undeclared event).
-func computeReaction(ctx context.Context, cs *store.CandleStore, e store.EarningsEvent) (reaction, []models.Candle, int) {
-	windowFrom := e.ReportDate.AddDate(0, 0, -7)
-	windowTo := e.ReportDate.AddDate(0, 0, 7)
-	queryFrom := windowFrom.AddDate(0, 0, -5)
-	queryTo := windowTo.AddDate(0, 0, 5)
-
-	candles, err := cs.GetCandles(ctx, e.Symbol, store.CandleFilter{From: &queryFrom, To: &queryTo})
-	if err != nil || len(candles) == 0 {
-		return reaction{}, nil, -1
-	}
-
-	day0 := -1
-	for i, c := range candles {
-		if !istDate(c).Before(e.ReportDate) {
-			day0 = i
-			break
-		}
-	}
-	if day0 < 0 {
-		return reaction{}, candles, -1
-	}
-	day0Close := candles[day0].Close
-
-	var firstInWindow, lastInWindow float64
-	haveFirst := false
-	for _, c := range candles {
-		d := istDate(c)
-		if d.Before(windowFrom) || d.After(windowTo) {
-			continue
-		}
-		if !haveFirst {
-			firstInWindow = c.Close
-			haveFirst = true
-		}
-		lastInWindow = c.Close
-	}
-	if !haveFirst {
-		return reaction{}, candles, day0
-	}
-
-	return reaction{
-		day0Date:    istDate(candles[day0]),
-		preWeekPct:  (day0Close/firstInWindow - 1) * 100,
-		postWeekPct: (lastInWindow/day0Close - 1) * 100,
-		totalPct:    (lastInWindow/firstInWindow - 1) * 100,
-		firstClose:  firstInWindow, day0Close: day0Close, lastClose: lastInWindow,
-		ok: true,
-	}, candles, day0
-}
-
 func printSummaryRow(ctx context.Context, cs *store.CandleStore, e store.EarningsEvent) {
-	r, _, _ := computeReaction(ctx, cs, e)
-	if !r.ok {
+	r, _, _ := earnings.Compute(ctx, cs, e)
+	if !r.OK {
 		fmt.Printf("%-12s %-10s %-8s %7.1f%% %7.1f%%   insufficient candle data\n",
 			e.Symbol, e.ReportDate.Format("2006-01-02"), e.Quarter, e.PATYoYPct, e.RevenueYoYPct)
 		return
 	}
 	fmt.Printf("%-12s %-10s %-8s %7.1f%% %7.1f%% %8.1f%% %8.1f%% %8.1f%%\n",
-		e.Symbol, r.day0Date.Format("2006-01-02"), e.Quarter,
-		e.PATYoYPct, e.RevenueYoYPct, r.preWeekPct, r.postWeekPct, r.totalPct)
+		e.Symbol, r.Day0Date.Format("2006-01-02"), e.Quarter,
+		e.PATYoYPct, e.RevenueYoYPct, r.PreWeekPct, r.PostWeekPct, r.TotalPct)
 }
 
 // printDetail prints the full day-by-day close table for one symbol's
 // earnings event, plus the summary line.
 func printDetail(ctx context.Context, cs *store.CandleStore, e store.EarningsEvent) {
-	windowFrom := e.ReportDate.AddDate(0, 0, -7)
-	windowTo := e.ReportDate.AddDate(0, 0, 7)
+	windowFrom, windowTo := earnings.Window(e)
 
-	r, candles, day0 := computeReaction(ctx, cs, e)
+	r, candles, day0 := earnings.Compute(ctx, cs, e)
 	if day0 < 0 {
 		fmt.Printf("=== %s: no trading day found on/after report date %s ===\n",
 			e.Symbol, e.ReportDate.Format("2006-01-02"))
@@ -630,7 +551,7 @@ func printDetail(ctx context.Context, cs *store.CandleStore, e store.EarningsEve
 	havePrev := false
 	day0Close := candles[day0].Close
 	for i, c := range candles {
-		d := istDate(c)
+		d := earnings.ISTDate(c)
 		if d.Before(windowFrom) || d.After(windowTo) {
 			continue
 		}
@@ -648,10 +569,10 @@ func printDetail(ctx context.Context, cs *store.CandleStore, e store.EarningsEve
 		havePrev = true
 	}
 
-	if !r.ok {
+	if !r.OK {
 		fmt.Println("    (no candles found in the requested window)")
 		return
 	}
 	fmt.Printf("Summary: week-before %+.1f%%  |  post-week %+.1f%%  |  total (window) %+.1f%%\n",
-		r.preWeekPct, r.postWeekPct, r.totalPct)
+		r.PreWeekPct, r.PostWeekPct, r.TotalPct)
 }
