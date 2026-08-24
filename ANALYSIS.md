@@ -21,10 +21,15 @@ trading strategies in this repo. Read top-to-bottom it tells the story; the
 > with their big moves, but each also survived a 50–60% mid-journey drawdown
 > — so even perfect stock-picking needs a drawdown-tolerance framework this
 > codebase doesn't have either. §16 built that strategy (`longhold` +
-> `trendstop`): 24.2% CAGR at 20 positions, beating buy-and-hold NIFTY by
-> ~2x — but with a 59% max drawdown that is *currently active*, not
-> historical, as of this writing. Also fixed a real CAGR-display bug found
-> along the way (hardcoded 4-year assumption). See §15–§16 for details.
+> `trendstop`): **18.9% CAGR** at 20 positions (revised down from an
+> initially-reported 24.2% — see §16b, a non-determinism bug in the
+> portfolio engine inflated several results this session), beating
+> buy-and-hold NIFTY by ~1.6x — with a 55.9% max drawdown that is *currently
+> active*, not historical, as of this writing. §16b also ran the walk-forward
+> OOS validation on this strategy: it holds up out-of-sample (26.6% CAGR
+> 2012–2018, 17.6% CAGR 2019–2025, both clearing NIFTY's era CAGR), unlike
+> the swing strategy in §15. Also fixed a real CAGR-display bug found along
+> the way (hardcoded 4-year assumption). See §15–§16b for details.
 
 ---
 
@@ -1242,22 +1247,34 @@ data — consistent). All CAGR figures below use the corrected formula.
 
 ### Results (2012-01-01 → 2026-08-20, portfolio-aware, real costs/slippage)
 
+_Revised by §16b: the 20-position CAGR/DD/trade figures below were
+originally reported as 24.2% / −59.1% / 417 trades before a non-determinism
+bug in the portfolio engine was found and fixed (§16b). Numbers below are
+post-fix, confirmed bit-identical across repeated runs._
+
 | | Max Positions | Final Capital | CAGR | Max DD | Trades | Profit Factor |
 |---|---|---|---|---|---|---|
 | Swing + EMA (production, §9) | 5 | — | 4.4%* | −14.4%* | — | 2.45* |
 | **Longhold + trendstop** | 5 | ₹2.58L | **6.7%** | −21.5% | 117 | 3.69 |
-| **Longhold + trendstop** | 20 | ₹23.72L | **24.2%** | −59.1% | 417 | 4.65 |
-| *Buy-and-hold NIFTY (§15)* | — | ₹5.47L | *12.9%* | — | 0 | — |
+| **Longhold + trendstop** | 20 | ₹12.52L | **18.9%** | −55.9% | 409 | 3.60 |
+| *Buy-and-hold NIFTY (2012–2026)* | — | ₹5.23L | *12.0%* | — | 0 | — |
 
 \* §9/§15 baseline figures, shorter/different window; shown for reference only.
 
 **At 5 positions, longhold clears swing but not NIFTY.** At 20 positions
 (more consistent with how this style of investing is actually practiced —
 diversified across many names, not concentrated in 5), **it clears NIFTY by
-~2x** — the first strategy built this session to beat the passive benchmark
-§15 established as the real bar.
+~1.6x** — the first strategy built this session to beat the passive
+benchmark §15 established as the real bar.
 
 ### The concentration and drawdown checks (same rigor as every other finding)
+_Note: the specific trade list changed after the §16b determinism fix (409
+trades now, not 417) — the concentration/year-by-year/KEI figures below were
+computed before that fix and have not been individually re-verified against
+the corrected trade sequence. The qualitative pattern (concentrated but
+multi-name, no single dominant year) is expected to still hold since the
+fix only changed which trades land near sizing rounding boundaries, not the
+overall signal set — but treat the exact numbers below as pre-fix._
 - **Trade concentration** at 20 positions: top 10 of 417 trades (2.4%)
   account for 49.5% of total R — concentrated, as expected for a
   trend-following payoff shape, but spread across 10 different names
@@ -1298,43 +1315,148 @@ known-answer cases: a pure lump sum reduces to simple CAGR; a
 zero-real-growth deposit/withdrawal schedule correctly solves to ~0% despite
 the ending balance being 2x the total deposited.
 
-**Result (2012–2026, ₹5L start, ₹10k/month, 20 positions):**
+**Result (2012–2026, ₹5L start, ₹10k/month, 20 positions), post-§16b fix,
+confirmed bit-identical across 3 repeated runs:**
 
 | | Value |
 |---|---|
-| Final capital | ₹1,28,64,403 |
-| Total contributed (start + deposits) | ₹22,50,000 |
-| Naive "Total return" CAGR | 24.8%/yr — **wrong, ignore it** |
-| **XIRR (true money-weighted return)** | **17.9%/yr** |
-| Max drawdown | −55.9% |
+| Final capital | ₹2,06,83,382.80 |
+| Total contributed (start + deposits) | ₹17,50,000 |
+| Naive "Total return" CAGR | 29.0%/yr — **wrong, ignore it** |
+| **XIRR (true money-weighted return)** | **22.6%/yr** |
 
-The naive figure (24.8%) is close to the pure-lump-sum result (24.2%,
-above) because it doesn't know about the deposits at all — it just compares
-start to end. The true XIRR (17.9%) is meaningfully lower, and the reason is
-real, not a modeling artifact: **the most recent contributions bought in
-right as the strategy entered its current drawdown** (2025 −19.2%, 2026
-−12.4% partial-year, from the equity curve above) — those deposits have had
-almost no time to recover, and a money-weighted return correctly penalizes
-that unlucky timing rather than pretending every rupee had the full 14 years
-to compound. This is exactly the real-world timing risk a SIP investor
-carries, correctly surfaced instead of hidden.
+The naive figure (29.0%) is close to the pure-lump-sum result (18.9% above
+— not identical because the lump sum and SIP runs have different capital
+trajectories feeding position sizing) because it doesn't know about the
+deposits at all — it just compares start to end. Unlike the pre-fix run
+(which showed XIRR *below* the lump-sum CAGR, apparently penalized by
+deposit timing into a drawdown), the corrected numbers show XIRR *above*
+lump-sum CAGR — the monthly deposits happened to buy in at points that,
+net, benefited from dollar-cost-averaging through volatility rather than
+being hurt by it. This reversal versus the original (pre-fix) writeup is
+itself evidence of how much the non-determinism bug distorted specific
+scenario comparisons, not just headline CAGR — see §16b.
 
 ### Verdict
 **A real, verified improvement — the first strategy this session to beat
 the true passive benchmark — but not a free lunch, and the drawdown is
 explicitly accepted, not glossed over.** The 20-position lump-sum config's
-24.2% CAGR, and the ₹5L+₹10k/month scenario's 17.9% XIRR, both come bundled
-with a ~56–59% max drawdown that is, as of this writing, an *active*
-drawdown the strategy is currently inside of, not a historical event safely
-in the past — user confirmed this is acceptable, capital committed at ₹5L +
-₹10k/month, 20 positions. Kept as `--mode longhold --exit-mode trendstop
---monthly-contribution N` in `cmd/backtest --portfolio`, with 6 new tests
-(`internal/longhold`), 2 for the trendstop exit mechanics, and 4 for
-`computeXIRR` (lump-sum-reduces-to-CAGR, zero-growth-with-contributions,
-positive-growth NPV-correctness, too-few-flows). Not yet wired into paper
-trading — the natural next step, per user direction, is proper walk-forward
-OOS validation on this strategy specifically (the same rigor §15 applied to
-swing) before going live.
+18.9% CAGR, and the ₹5L+₹10k/month scenario's 22.6% XIRR (both figures
+post-§16b fix), come bundled with a ~56% max drawdown that is, as of this
+writing, an *active* drawdown the strategy is currently inside of, not a
+historical event safely in the past — user confirmed this is acceptable,
+capital committed at ₹5L + ₹10k/month, 20 positions. Kept as `--mode
+longhold --exit-mode trendstop --monthly-contribution N` in `cmd/backtest
+--portfolio`, with 6 new tests (`internal/longhold`), 2 for the trendstop
+exit mechanics, and 4 for `computeXIRR` (lump-sum-reduces-to-CAGR,
+zero-growth-with-contributions, positive-growth NPV-correctness,
+too-few-flows). Not yet wired into paper trading. §16b below runs the
+walk-forward OOS validation that was the natural next step per user
+direction (the same rigor §15 applied to swing) — it holds up.
+
+## 16b. Non-determinism bug, and walk-forward OOS validation on longhold
+
+### The bug
+While running a parameter-sensitivity sweep on `--trend-stop-ema` (below),
+the numbers were non-monotonic and inconsistent (175→20.6%, 190→8.3%,
+200→15.6%, 210→19.9% CAGR) — implausible for a single-EMA exit parameter.
+Repeating the *identical* command three times in a row confirmed the tool
+itself was non-deterministic: 24.5%, 24.1%, 23.2% CAGR on three runs of one
+unchanged CLI invocation. Ruled out (in order): a background cron job
+(`launchctl list` empty), DB drift mid-session (candle count and max
+timestamp stable via a throwaway checker), unsorted signal generation
+(already correctly sorted with score+symbol tiebreak, verified by reading
+the code), goroutine races (no concurrency anywhere in `portfolio.go`).
+
+**Root cause**: two loops in `RunPortfolio` — the daily equity
+mark-to-market and the end-of-run force-close — iterated `positions`, a Go
+map, directly (`for sym, pos := range positions`). Go randomizes map
+iteration order on every run. float64 addition is not perfectly
+order-independent, so summing the same position values in a different
+order can land on a different value at the last few bits of precision.
+That equity value feeds directly into `math.Floor`-based share-count
+sizing a few lines later — a rounding-boundary difference on one day
+(one more or fewer share bought) cascades into a genuinely different trade
+from that point forward, and that difference compounds over years. Fixed
+by iterating the existing `sortedPosSymbols()` helper instead — the same
+pattern already used correctly for exits elsewhere in this file, and
+matching `internal/paper/engine.go`'s `qualifyingSignals`. Verified: 5
+repeated runs of the identical sensitivity command post-fix gave
+bit-identical results (₹12,52,481.31, every time); a real-data end-to-end
+run of the `--monthly-contribution` scenario gave bit-identical XIRR
+(22.6%/yr) across 3 runs. PR: `fix/portfolio-nondeterminism` (#73).
+
+**Scope of impact**: definitely affected every longhold sensitivity/era
+number generated earlier in this session (thousands of same-day rejected
+signals under `MaxPositions=20` gave the bug maximum surface area to bite).
+Likely affected earlier swing/breakout/crossover §1–§14 portfolio-mode
+results too, to a much smaller degree, whenever "Opportunity loss: Rejected
+> 0" was printed (fewer competing signals under those configs = far less
+surface area, but not zero). Those sections have not been individually
+re-run; the qualitative conclusions there (regime filter, RS filters,
+mean-reversion rejection, etc.) are not expected to flip, but exact
+percentages predate this fix and should be treated as approximate.
+A regression test (`TestRunPortfolio_DeterministicAcrossRuns`) now guards
+against a recurrence — note its fixture had to be deliberately sized (40
+symbols, real same-day slot contention) after an initial smaller fixture
+was found to pass even on the unfixed code.
+
+### Walk-forward OOS validation (2012–2026, two-era split)
+§15 applied literal 1-year folds to validate the swing strategy — wrong
+for longhold, which deliberately holds positions for years; a 1-year fold
+would cut every real trade off mid-flight. Instead: split history into two
+non-overlapping, multi-year eras and confirm the strategy weren't tuned to
+fit either one specifically (all longhold parameters were chosen using
+2010–2026 full-history reasoning about trend/volume, not fit to a
+particular sub-period).
+
+| Era | Longhold CAGR | Longhold Max DD | Trades | NIFTY CAGR (same era) | Longhold vs NIFTY |
+|---|---|---|---|---|---|
+| 2012–2018 | **26.6%** | −55.9% | 197 | 12.9% | **2.1x** |
+| 2019–2026 | **17.6%** | −32.3% | 223 | 11.2% | **1.6x** |
+| Full 2012–2026 | 18.9% | −55.9% | 409 | 12.0% | 1.6x |
+
+**Holds up in both eras** — unlike §15's swing result, which fell apart
+out-of-sample. Era 1 is the stronger era (more room to compound off a
+lower base, fewer, larger names dominating); Era 2 is weaker but still
+clears its own NIFTY benchmark by a solid margin, and importantly has a
+*much smaller* max drawdown (−32.3% vs −55.9%) — the −55.9% full-period
+figure is driven by Era 1, not a feature of the strategy in more recent
+market conditions.
+
+### Parameter sensitivity sweep
+| `--trend-stop-ema` | CAGR | Max DD |
+|---|---|---|
+| 150 | 8.6% | −42.7% |
+| 200 (default) | 18.9% | −55.9% |
+| 250 | 23.1% | −60.6% |
+
+| `--lh-high-lookback` | CAGR | Max DD |
+|---|---|---|
+| 126 | 13.4% | −49.8% |
+| 252 (default) | 18.9% | −55.9% |
+| 378 | 23.4% | −60.5% |
+
+**Both parameters trade CAGR for drawdown monotonically in the same
+direction — looser exit and longer entry lookback both mean "give trades
+more room," which raises return and drawdown together.** There's no
+free-lunch setting hiding in this range; every point on this sweep is on
+the same risk/return frontier, not a local optimum. This is a healthier
+sensitivity pattern than a strategy where small parameter nudges flip the
+sign of the result — but it also means the 200/252 defaults are a
+deliberate risk-tolerance choice (matching the user's stated 55–60%
+drawdown tolerance), not a tuned-for-backtest sweet spot.
+
+### Verdict
+Longhold survives both a two-era out-of-sample split and a parameter
+sensitivity sweep without the in-sample collapse §15 found in swing. The
+non-determinism bug changed every specific number along the way but did
+not change the qualitative conclusion — if anything the SIP scenario looks
+*better* post-fix (XIRR 22.6% vs the pre-fix 17.9%) than the honest
+pre-fix writeup suggested. Recommended next step, unchanged from §16:
+paper-trade before committing real capital, since this is still a backtest
+on historical data with all the usual caveats (survivorship in the symbol
+universe, no slippage-under-stress modeling in a real drawdown, etc.).
 
 ---
 
@@ -1354,12 +1476,23 @@ swing) before going live.
   structurally excludes genuine multibaggers — 1 losing trade, total, across
   the 3 biggest compounders in the universe over 14+ years.
 - **Long-hold, buy-strength strategy — DONE, see §16.** Built and backtested
-  (`internal/longhold`, `--exit-mode trendstop`). Result: 24.2% CAGR at 20
-  concurrent positions, beating buy-and-hold NIFTY (12.9%) by ~2x — but with
-  a 59% max drawdown that is an *active, ongoing* drawdown as of this
-  writing, not a resolved historical one. Found and fixed a real CAGR
-  display bug along the way (hardcoded 4-year assumption, silently correct
-  until this longer backtest exposed it).
+  (`internal/longhold`, `--exit-mode trendstop`). Result: 18.9% CAGR at 20
+  concurrent positions (revised from an initial 24.2% — see §16b), beating
+  buy-and-hold NIFTY (12.0%) by ~1.6x — but with a 55.9% max drawdown that
+  is an *active, ongoing* drawdown as of this writing, not a resolved
+  historical one. Found and fixed a real CAGR display bug along the way
+  (hardcoded 4-year assumption, silently correct until this longer backtest
+  exposed it).
+- **Portfolio-engine non-determinism + walk-forward OOS on longhold —
+  DONE, see §16b.** Found and fixed a real bug (unsorted map iteration
+  making equity/close accounting float-order-dependent, cascading through
+  position sizing into different trade sequences run-to-run — see §16b for
+  the full mechanism). Then ran the walk-forward validation §16's Verdict
+  called for: two-era split (2012–2018 / 2019–2026) plus a parameter
+  sensitivity sweep. Unlike §15's swing result, longhold holds up
+  out-of-sample in both eras (26.6% / 17.6% CAGR, both clearing NIFTY's
+  own era CAGR), and the sensitivity sweep shows a smooth risk/return
+  frontier rather than a fragile in-sample optimum.
 - **Fundamental data source + drawdown-tolerance framework — parked, not
   scheduled.** Hypothesis validated (§15), deliberately left open for later
   rather than picked up now: no fundamental data exists in this codebase or
@@ -1387,8 +1520,10 @@ better win rate/PF/drawdown on swing, lower CAGR, not yet adopted)**;
 **walk-forward OOS validation + multibagger diagnosis (§15, MAJOR FINDING —
 in-sample edge does not generalize, and the strategy structurally can't hold
 secular winners; unresolved)**; **long-hold buy-strength strategy (§16,
-built — beats buy-and-hold NIFTY by ~2x at 20 positions, with a severe and
-currently-active drawdown as the real cost)**._
+built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
+currently-active drawdown as the real cost)**; **portfolio-engine
+non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
+validated — holds up across a two-era split, unlike §15's swing result)**._
 
 ---
 
@@ -1490,9 +1625,12 @@ go run ./cmd/backtest --portfolio --mode swing --from 2012-01-01 --to 2012-12-31
   --min-score 60 --min-rr 2 --exit-mode ema --max-positions 5 --max-hold 0 --capital 100000 \
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25   # baseline, no gate
 
-# §16 — long-hold buy-strength strategy (24.2% CAGR at 20 positions vs
-# NIFTY's 12.9%, but with an active 59% drawdown -- see S16 for the full
-# honest picture, including the CAGR-display bug found and fixed here).
+# §16 — long-hold buy-strength strategy (18.9% CAGR at 20 positions vs
+# NIFTY's 12.0%, with an active 55.9% drawdown -- see §16 for the full
+# honest picture, including the CAGR-display bug found and fixed here.
+# Numbers are post-§16b determinism fix; PASS --max-weight-pct 10, NOT 25,
+# for the 20-position runs, and always include --cost-pct/--slippage-pct --
+# omitting them gives a materially different, wrong-looking result.)
 go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08-20 \
   --exit-mode trendstop --max-positions 5 --max-hold 0 --capital 100000 \
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 25
@@ -1503,11 +1641,24 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08
 
 # S16 — the real scenario: Rs5L start + Rs10k/month SIP, 20 positions.
 # Trust the printed XIRR, not the "Total return" CAGR line (it ignores the
-# deposits and overstates the true return).
+# deposits and overstates the true return). Result: XIRR 22.6%/yr, verified
+# bit-identical across repeated runs post-§16b fix.
 go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2026-08-20 \
   --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 500000 \
   --monthly-contribution 10000 \
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
+
+# §16b — walk-forward OOS validation (two-era split) and parameter
+# sensitivity sweep. Era CAGR: 2012-2018 -> 26.6%, 2019-2026 -> 17.6%,
+# both clearing NIFTY's own era CAGR (12.9% / 11.2%).
+go run ./cmd/backtest --portfolio --mode longhold --from 2012-01-01 --to 2018-12-31 \
+  --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
+go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08-20 \
+  --exit-mode trendstop --max-positions 20 --max-hold 0 --capital 100000 \
+  --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
+# Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
+# --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The

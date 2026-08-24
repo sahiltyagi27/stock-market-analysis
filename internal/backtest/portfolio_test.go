@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -486,5 +487,46 @@ func TestComputeXIRR_TooFewFlows(t *testing.T) {
 	}
 	if _, ok := computeXIRR([]cashFlowEvent{{amount: -100}}); ok {
 		t.Fatal("expected failure with a single flow")
+	}
+}
+
+// TestRunPortfolio_DeterministicAcrossRuns is the regression test for a real
+// bug found while testing internal/longhold: the day loop's equity
+// mark-to-market and the end-of-run force-close both summed over
+// `positions` (a map) directly -- Go's randomised map iteration order made
+// float64 summation order-dependent, and that equity value fed straight into
+// position-sizing's math.Floor share-count calculation. A rounding-boundary
+// difference on one day cascaded into a genuinely different trade sequence
+// over years of compounding: identical CLI invocations of the real 2012-2026
+// longhold backtest produced CAGR anywhere from 15.6% to 24.8% before the
+// fix (sortedPosSymbols, matching the pattern already used for exits).
+//
+// The fixture matters: an earlier version of this test used the 6-symbol
+// crossPortfolioData() with MaxPositions=2 and passed even on the unfixed
+// code -- too few symbols/days to reliably produce a same-day sizing
+// decision that lands on a rounding boundary. This version uses 40 symbols
+// over ~2.2 years with MaxPositions=5 (verified, before the fix, to diverge
+// run-to-run: FinalCapital varied and Trades ranged over 305-307).
+func TestRunPortfolio_DeterministicAcrossRuns(t *testing.T) {
+	data := map[string][]models.Candle{}
+	for i := 0; i < 40; i++ {
+		sym := fmt.Sprintf("DET%02d", i)
+		data[sym] = syntheticCrossSeries(sym, 900, float64(i)*0.7)
+	}
+	opts := crossPortfolioOpts()
+	opts.From = time.Date(2022, 4, 1, 0, 0, 0, 0, time.UTC)
+	opts.To = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	opts.MaxPositions = 5 // 40 symbols, 5 slots -> real contention whenever multiple signal on the same day.
+
+	_, first := RunPortfolio(context.Background(), data, opts)
+	if first.Trades == 0 {
+		t.Fatal("fixture produced no trades -- test can't exercise slot contention")
+	}
+	for i := 0; i < 9; i++ {
+		_, got := RunPortfolio(context.Background(), data, opts)
+		if got.FinalCapital != first.FinalCapital || got.Trades != first.Trades {
+			t.Fatalf("run %d diverged from run 0: FinalCapital %.6f vs %.6f, Trades %d vs %d",
+				i+1, got.FinalCapital, first.FinalCapital, got.Trades, first.Trades)
+		}
 	}
 }
