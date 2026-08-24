@@ -1510,55 +1510,70 @@ consistent even though the label is one calendar day off from the true IST
 trading date. It only becomes a bug when comparing against an
 externally-sourced true-IST date, as here._
 
-### Results (day 0 = report date; 7 trading days before/after, real prices)
+### Results (calendar week before → calendar week after report date)
+_Revised from an earlier version of this section that used 7 *trading* days
+each side, which silently widened the window beyond a literal week (e.g. for
+JBMA it spanned 21 Jul–10 Aug, not the requested 23 Jul–6 Aug) — caught when
+asked to account for the "15 days" directly. Fixed to `report_date − 7
+calendar days` through `report_date + 7 calendar days`, whatever trading
+days fall inside that span; `cmd/earnings-reaction` now also prints the
+full day-by-day close table for each stock, not just the summary row._
 
-| Symbol | Report (IST) | PAT YoY | Rev YoY | Pre-week | Day 0 | Post-week | 15-day total |
-|---|---|---|---|---|---|---|---|
-| JSWSTEEL | 2026-07-17 | +112.6% | +9.8% | +0.1% | +1.3% | +0.8% | **+2.2%** |
-| LAURUSLABS | 2026-07-24 | +125.5% | +29.1% | +0.9% | +2.1% | +15.5% | **+19.0%** |
-| JBMA | 2026-07-30 | +13.4% | +15.0% | +1.4% | +0.4% | −5.8% | **−4.1%** |
-| KEI | 2026-08-03 | +40.0% | +23.0% | +2.1% | +0.5% | +14.5% | **+17.5%** |
-| NEULANDLAB | 2026-08-05 | +962.0% | +116.3% | +1.5% | +3.5% | +16.9% | **+22.8%** |
+| Symbol | Report (IST) | Window (calendar) | PAT YoY | Week-before | Post-week | Total |
+|---|---|---|---|---|---|---|
+| JSWSTEEL | 2026-07-17 | Jul 10 → Jul 24 | +112.6% | −0.7% | +0.3% | **−0.4%** |
+| LAURUSLABS | 2026-07-24 | Jul 17 → Jul 31 | +125.5% | +4.7% | +13.4% | **+18.7%** |
+| JBMA | 2026-07-30 | Jul 23 → Aug 6 | +13.4% | +2.9% | −3.1% | **−0.2%** |
+| KEI | 2026-08-03 | Jul 27 → Aug 10 | +40.0% | +3.1% | +12.7% | **+16.1%** |
+| NEULANDLAB | 2026-08-05 | Jul 29 → Aug 12 | +962.0% | +1.3% | +12.8% | **+14.3%** |
 
-Reproduce: `go run ./cmd/earnings-reaction --seed` then `go run ./cmd/earnings-reaction`.
+Reproduce: `go run ./cmd/earnings-reaction --seed` then `go run ./cmd/earnings-reaction`
+(prints the day-by-day table per stock, then this summary line).
 
 ### Reading it honestly — 5 data points, one quarter, all-bull-market names
 This is a pilot, not a statistically meaningful sample — no claim here should
 be read as more than "worth investigating further":
 
-- **Directionally consistent, loosely.** All 5 companies grew both revenue
-  and PAT YoY; all 5 had a positive 15-day reaction. That's the expected
-  direction, but 5-for-5 positive isn't surprising on its own — these are
-  exactly the names already flagged as longhold's biggest winners (§16), so
-  the sample is pre-selected toward stocks already in an uptrend, not a
-  random or even representative draw of NIFTY 500 results.
-- **Magnitude doesn't track PAT growth cleanly.** NEULANDLAB's PAT grew 962%
-  and got the largest reaction (+22.8%) — consistent. But JSWSTEEL's PAT grew
-  112.6% (second-largest in this set) and got the *smallest* reaction
-  (+2.2%), while JBMA's PAT grew only 13.4% (smallest in the set) and the
-  stock fell (−4.1%). PAT growth alone is not predicting reaction size or
-  even always sign.
-- **A plausible reason for JSWSTEEL's muted reaction**: JSW Steel publishes
+- **The calendar-week fix changes the picture, not just the label.**
+  JSWSTEEL and JBMA both flip from small-positive/negative to essentially
+  flat (−0.4%, −0.2%) once the window stops overshooting past a literal
+  week. LAURUSLABS, KEI, and NEULANDLAB stay clearly positive either way —
+  the strong reactions were real, not a window-width artifact; the weak
+  ones were partly a measurement artifact, now corrected.
+- **Directionally mixed on a corrected read.** 3 of 5 (LAURUSLABS, KEI,
+  NEULANDLAB) had a clear positive reaction; 2 of 5 (JSWSTEEL, JBMA) were
+  essentially flat despite both growing PAT and revenue YoY. That's a
+  weaker "fundamentals predict reaction" signal than the pre-fix numbers
+  suggested — worth being honest about rather than keeping the more
+  flattering (but wrong) window.
+- **Magnitude still doesn't track PAT growth cleanly.** NEULANDLAB's PAT
+  grew 962% and reacted +14.3% — consistent. JSWSTEEL's PAT grew 112.6%
+  (second-largest in this set) and reacted −0.4% — the largest gap between
+  earnings growth and price reaction in the set.
+- **A plausible reason for JSWSTEEL's flat reaction**: JSW Steel publishes
   monthly/quarterly crude-steel production figures well before the formal
   P&L (a production update was out ~9 July, a week before the 17 July
   results) — the market had a head start on the operational story, so the
-  formal results carried less genuine surprise. This is a real, distinct
-  hypothesis worth testing on more names: **large, closely-covered
-  companies with interim operational disclosures may show muted results-day
-  reactions relative to headline PAT growth**, precisely because the
-  "surprise" leaked out earlier through a different channel.
-- **JBMA's fall is confounded, not necessarily bearish on the results
-  themselves**: the same board meeting also proposed a ₹1,500 Cr securities
-  issue (dilution risk), announced the same day as the results — impossible
-  to cleanly separate "market didn't like the numbers" from "market didn't
-  like the dilution" with only price data and no news-flow tagging.
+  formal results carried less genuine surprise. Worth testing on more
+  names: **large, closely-covered companies with interim operational
+  disclosures may show muted results-day reactions relative to headline
+  PAT growth**, precisely because the "surprise" leaked out earlier
+  through a different channel.
+- **JBMA's flat reaction is confounded, not necessarily neutral on the
+  results themselves**: the same board meeting also proposed a ₹1,500 Cr
+  securities issue (dilution risk), announced the same day as the results —
+  impossible to cleanly separate "market was lukewarm on the numbers" from
+  "market discounted the dilution" with only price data and no news-flow
+  tagging.
 
 ### Verdict and next steps
-Worth continuing, not worth building a sizing framework on yet. The
+Worth continuing, not worth building a sizing framework on yet — and the
+window-width correction is itself a reminder to double-check every derived
+number against the plain-English request before trusting it. The
 data-collection mechanics work (seed once, re-run the analysis freely,
 extend to new quarters/symbols without re-doing the manual research each
-time) and the one clear methodology bug (timezone) is now fixed and will
-carry forward correctly to future runs. Before this can inform actual
+time), and both bugs found so far (timezone, window width) are fixed and
+will carry forward correctly to future runs. Before this can inform actual
 position sizing: (1) more quarters per stock — one quarter can't separate
 signal from noise, (2) a control group of NIFTY 500 names *not* pre-selected
 as longhold winners, to check the pattern isn't just "stocks already in an
@@ -1606,10 +1621,13 @@ companies like NEULANDLAB typically don't).
   frontier rather than a fragile in-sample optimum.
 - **Fundamental data source + drawdown-tolerance framework — IN PROGRESS,
   see §17.** Picked back up: free-source pilot on 5 stocks' Q1 FY27 results
-  (§17) found all 5 grew PAT/revenue YoY and all 5 had a positive 15-day
-  price reaction, but PAT growth magnitude does not cleanly predict reaction
-  size (JSWSTEEL's 112.6% PAT growth got only +2.2%, plausibly because its
-  monthly production disclosures pre-telegraph the story). One quarter on a
+  (§17, calendar-week-before/after window) found 3 of 5 (LAURUSLABS, KEI,
+  NEULANDLAB) had a clear positive reaction while 2 of 5 (JSWSTEEL, JBMA)
+  were essentially flat despite both growing PAT/revenue YoY — a mixed
+  signal, not a clean "fundamentals predict reaction" result. PAT growth
+  magnitude does not cleanly predict reaction size (JSWSTEEL's 112.6% PAT
+  growth got only −0.4%, plausibly because its monthly production
+  disclosures pre-telegraph the story). One quarter on a
   pre-selected (already-winning) sample isn't enough to build a sizing
   framework on yet — next: more quarters, a non-pre-selected control group,
   and confound-tagging for corporate actions (§17's Verdict has the full

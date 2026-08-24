@@ -1,8 +1,9 @@
 // Command earnings-reaction studies how NSE stock prices react to quarterly
-// results declarations: for each stored EarningsEvent it pulls the 7 trading
-// days before and 7 after the report date (15 days total, day 0 = report
-// date) from the existing candles table and computes the pre-drift,
-// announcement-day move, and post-week reaction.
+// results declarations: for each stored EarningsEvent it pulls the calendar
+// week before and the calendar week after the report date (report date − 7
+// calendar days through report date + 7 calendar days, whatever trading days
+// fall in that span) from the existing candles table and prints the
+// day-by-day closes plus a summary of the pre/post/total reaction.
 //
 // Seed the reference data (5 known Q1 FY27 events, sourced manually from
 // company press releases / financial news since NSE/BSE's own filing APIs
@@ -74,6 +75,21 @@ func seedEvents() []store.EarningsEvent {
 	}
 }
 
+// istOffset converts a UTC daily-candle timestamp back to its true IST
+// trading date. Kite's daily candles are midnight IST (e.g.
+// "2026-07-17T00:00:00+0530"); parseKiteTime converts that to UTC, which
+// lands on 18:30 the *previous* calendar day. Without this correction, every
+// date comparison against an externally-sourced (true IST) date is off by
+// one trading day.
+const istOffset = 5*time.Hour + 30*time.Minute
+
+// istDate returns the candle's true IST trading date, truncated to midnight UTC
+// so it can be compared directly against dates built with the date() helper.
+func istDate(c models.Candle) time.Time {
+	ist := c.Timestamp.Add(istOffset)
+	return time.Date(ist.Year(), ist.Month(), ist.Day(), 0, 0, 0, 0, time.UTC)
+}
+
 func main() {
 	seed := flag.Bool("seed", false, "insert/update the reference earnings events and exit")
 	flag.Parse()
@@ -114,63 +130,91 @@ func main() {
 
 	cs := store.NewCandleStore(db)
 
-	fmt.Printf("%-12s %-10s %-8s %8s %8s %9s %9s %9s %9s\n",
-		"Symbol", "Report", "Quarter", "PAT YoY", "Rev YoY", "Pre-wk%", "Day0%", "Post-wk%", "15day%")
-	fmt.Println("--------------------------------------------------------------------------------------------")
-
-	for _, e := range events {
-		from := e.ReportDate.AddDate(0, 0, -21)
-		to := e.ReportDate.AddDate(0, 0, 21)
-		candles, err := cs.GetCandles(ctx, e.Symbol, store.CandleFilter{From: &from, To: &to})
-		if err != nil {
-			fmt.Printf("%-12s error: %v\n", e.Symbol, err)
-			continue
+	for i, e := range events {
+		if i > 0 {
+			fmt.Println()
 		}
-
-		day0 := findDay0(candles, e.ReportDate)
-		if day0 < 0 || day0-7 < 0 || day0+7 >= len(candles) {
-			fmt.Printf("%-12s insufficient candle window around %s (day0=%d, n=%d)\n",
-				e.Symbol, e.ReportDate.Format("2006-01-02"), day0, len(candles))
-			continue
-		}
-
-		preClose := candles[day0-7].Close
-		dayMinus1 := candles[day0-1].Close
-		d0Close := candles[day0].Close
-		postClose := candles[day0+7].Close
-
-		preWeekPct := (dayMinus1/preClose - 1) * 100
-		day0Pct := (d0Close/dayMinus1 - 1) * 100
-		postWeekPct := (postClose/d0Close - 1) * 100
-		totalPct := (postClose/preClose - 1) * 100
-
-		day0IST := candles[day0].Timestamp.Add(istOffset)
-		fmt.Printf("%-12s %-10s %-8s %7.1f%% %7.1f%% %8.1f%% %8.1f%% %8.1f%% %8.1f%%\n",
-			e.Symbol, day0IST.Format("2006-01-02"), e.Quarter,
-			e.PATYoYPct, e.RevenueYoYPct, preWeekPct, day0Pct, postWeekPct, totalPct)
+		printReaction(ctx, cs, e)
 	}
 }
 
-// istOffset converts a UTC daily-candle timestamp back to its true IST
-// trading date. Kite's daily candles are midnight IST (e.g.
-// "2026-07-17T00:00:00+0530"); parseKiteTime converts that to UTC, which
-// lands on 18:30 the *previous* calendar day. Without this correction, every
-// date comparison against an externally-sourced (true IST) date is off by
-// one trading day.
-const istOffset = 5*time.Hour + 30*time.Minute
+// printReaction prints the day-by-day close for the calendar week before and
+// the calendar week after e.ReportDate (report date ± 7 calendar days,
+// whatever trading days fall in that span), plus a pre/day0/post/total
+// summary.
+func printReaction(ctx context.Context, cs *store.CandleStore, e store.EarningsEvent) {
+	windowFrom := e.ReportDate.AddDate(0, 0, -7)
+	windowTo := e.ReportDate.AddDate(0, 0, 7)
+	// Pad the DB query so trading-day lookups near the window edges aren't
+	// starved by a holiday/weekend sitting right on the boundary.
+	queryFrom := windowFrom.AddDate(0, 0, -5)
+	queryTo := windowTo.AddDate(0, 0, 5)
 
-// findDay0 returns the index of the first candle on or after reportDate —
-// the trading day the announcement's price impact should first show up
-// (results are typically declared during or after market hours on the
-// board-meeting date; using the first candle >= that date captures same-day
-// moves when announced during market hours and next-day moves otherwise).
-func findDay0(candles []models.Candle, reportDate time.Time) int {
+	candles, err := cs.GetCandles(ctx, e.Symbol, store.CandleFilter{From: &queryFrom, To: &queryTo})
+	if err != nil {
+		fmt.Printf("=== %s: error: %v ===\n", e.Symbol, err)
+		return
+	}
+
+	day0 := -1
 	for i, c := range candles {
-		ist := c.Timestamp.Add(istOffset)
-		d := time.Date(ist.Year(), ist.Month(), ist.Day(), 0, 0, 0, 0, time.UTC)
-		if !d.Before(reportDate) {
-			return i
+		if !istDate(c).Before(e.ReportDate) {
+			day0 = i
+			break
 		}
 	}
-	return -1
+	if day0 < 0 {
+		fmt.Printf("=== %s: no trading day found on/after report date %s ===\n",
+			e.Symbol, e.ReportDate.Format("2006-01-02"))
+		return
+	}
+	day0Close := candles[day0].Close
+
+	fmt.Printf("=== %s — %s reported %s (PAT YoY %+.1f%%, Revenue YoY %+.1f%%) ===\n",
+		e.Symbol, e.Quarter, e.ReportDate.Format("2006-01-02"), e.PATYoYPct, e.RevenueYoYPct)
+	if e.Notes != "" {
+		fmt.Printf("    note: %s\n", e.Notes)
+	}
+	fmt.Printf("%-12s %10s %12s %12s\n", "Date", "Close", "vs. prior", "vs. day 0")
+
+	var firstInWindow, lastInWindow float64
+	haveFirst := false
+	var prevClose float64
+	havePrev := false
+
+	for i, c := range candles {
+		d := istDate(c)
+		if d.Before(windowFrom) || d.After(windowTo) {
+			continue
+		}
+		marker := ""
+		if i == day0 {
+			marker = "  <- RESULT DAY"
+		}
+		priorPct := "   --"
+		if havePrev {
+			priorPct = fmt.Sprintf("%+.1f%%", (c.Close/prevClose-1)*100)
+		}
+		vsDay0Pct := fmt.Sprintf("%+.1f%%", (c.Close/day0Close-1)*100)
+		fmt.Printf("%-12s %10.2f %12s %12s%s\n", d.Format("2006-01-02 Mon"), c.Close, priorPct, vsDay0Pct, marker)
+
+		if !haveFirst {
+			firstInWindow = c.Close
+			haveFirst = true
+		}
+		lastInWindow = c.Close
+		prevClose = c.Close
+		havePrev = true
+	}
+
+	if !haveFirst {
+		fmt.Println("    (no candles found in the requested window)")
+		return
+	}
+
+	preWeekPct := (day0Close/firstInWindow - 1) * 100
+	postWeekPct := (lastInWindow/day0Close - 1) * 100
+	totalPct := (lastInWindow/firstInWindow - 1) * 100
+	fmt.Printf("Summary: week-before %+.1f%%  |  post-week %+.1f%%  |  total (window) %+.1f%%\n",
+		preWeekPct, postWeekPct, totalPct)
 }
