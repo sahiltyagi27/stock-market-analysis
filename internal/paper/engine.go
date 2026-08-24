@@ -40,11 +40,28 @@ type Config struct {
 	SlippagePct  float64 // per-leg slippage %
 	ScanOpts     scanner.Options
 
-	// signalFunc, when non-nil, overrides entry-signal generation. Production
-	// leaves it nil (the swing scanner). Tests inject deterministic signals so the
-	// gate/shadow orchestration can be exercised without crafting candles that
-	// satisfy every swing-scanner filter.
-	signalFunc func(history map[string][]models.Candle, opts scanner.Options) []scanner.StockSignal
+	// SignalFunc, when non-nil, overrides entry-signal generation. Production
+	// leaves it nil (the swing scanner, via scanner.Scan). cmd/paper-trade sets
+	// it to an adapter around longhold.Scan for --strategy longhold. Tests
+	// inject deterministic signals so the gate/shadow orchestration can be
+	// exercised without crafting candles that satisfy every scanner filter.
+	SignalFunc func(history map[string][]models.Candle, opts scanner.Options) []scanner.StockSignal
+
+	// ExitFunc, when non-nil, overrides exit-decision logic. Production leaves
+	// it nil (SL-first, then EMA7<EMA21 recross — see exitDecision). cmd/paper-trade
+	// sets it to a trend-EMA-break rule for --strategy longhold, since that
+	// strategy is explicitly designed to hold through the kind of drawdowns
+	// an EMA7/21 recross would exit on.
+	ExitFunc func(pos store.PaperPosition, cc []models.Candle, today models.Candle) (trigger float64, outcome string, exited bool)
+}
+
+// exit resolves the active exit rule: cfg.ExitFunc when set, else the default
+// SL-first/EMA-recross rule.
+func (c Config) exit(pos store.PaperPosition, cc []models.Candle, today models.Candle) (float64, string, bool) {
+	if c.ExitFunc != nil {
+		return c.ExitFunc(pos, cc, today)
+	}
+	return exitDecision(pos, cc, today)
 }
 
 // Store is the persistence surface RunDayEnd needs. *store.PaperStore satisfies
@@ -290,7 +307,7 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 			stillOpen = append(stillOpen, pos) // no bar today; hold
 			continue
 		}
-		exitTrigger, outcome, exited := exitDecision(pos, cc, today)
+		exitTrigger, outcome, exited := cfg.exit(pos, cc, today)
 		if !exited {
 			stillOpen = append(stillOpen, pos)
 			continue
@@ -371,7 +388,7 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 			if !ok {
 				continue // no bar today; hold
 			}
-			trigger, outcome, exited := exitDecision(pos, cc, today)
+			trigger, outcome, exited := cfg.exit(pos, cc, today)
 			if !exited {
 				continue
 			}
@@ -489,8 +506,8 @@ func qualifyingSignals(history map[string][]models.Candle, cfg Config, skip map[
 		return nil
 	}
 	var signals []scanner.StockSignal
-	if cfg.signalFunc != nil {
-		signals = cfg.signalFunc(history, cfg.ScanOpts)
+	if cfg.SignalFunc != nil {
+		signals = cfg.SignalFunc(history, cfg.ScanOpts)
 	} else {
 		inputs := make([]scanner.Input, 0, len(history))
 		for sym, cc := range history {
