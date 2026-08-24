@@ -1460,7 +1460,118 @@ universe, no slippage-under-stress modeling in a real drawdown, etc.).
 
 ---
 
-## 17. Open questions / next steps
+## 17. Quarterly-results price reaction study (5 stocks, Q1 FY27) — pilot
+
+### Motivation
+§15/§17's parked hypothesis: genuine profit-growth inflections precede/coincide
+with real multibaggers' big moves, but a drawdown-tolerance framework needs a
+way to *distinguish* which drawdowns to tolerate — which requires fundamental
+data this codebase doesn't have. This is the first real step: not a framework
+yet, just establishing whether results-day fundamentals and price reaction
+actually correlate at all, using free sources, before spending on a paid data
+subscription or a multi-week NSE/BSE XBRL parsing effort.
+
+### Data source note — NSE/BSE direct access is blocked
+Both `nseindia.com` and `bseindia.com` are blocked by this environment's
+browser-automation policy, and direct HTTP requests to NSE hit its bot
+protection (403 even on the homepage, before touching any API). So instead
+of scraping the exchanges directly, quarterly figures and exact declaration
+dates were sourced from company press releases and mainstream financial news
+(Business Standard, EquityBulls, Free Press Journal, Business Upturn — one
+search per stock, cross-checked against the reported day-of price move where
+available). This is slower than an API and doesn't scale past a handful of
+stocks by hand, but it's genuinely free and avoids the exchanges' bot walls
+entirely. Storage: a new `earnings_events` table (`internal/store/earnings_store.go`,
+`symbol, report_date, quarter, revenue_cr, revenue_yoy_pct, pat_cr,
+pat_yoy_pct, ebitda_margin_pct, source_url, notes`), seeded via
+`go run ./cmd/earnings-reaction --seed` and reusable for future quarters
+without re-running the searches.
+
+### A timezone bug found while building this
+The first version of the price-reaction script matched report dates to
+candles by comparing the candle's stored (UTC) calendar date directly. Kite's
+daily candles are timestamped at midnight IST, and `parseKiteTime` converts
+that to UTC — midnight IST becomes 18:30 UTC the *previous* day. So a candle
+whose true IST trading date is 17 July shows up in the DB as 16 July 18:30
+UTC. Matching against an externally-sourced (true IST) report date without
+correcting for this landed on the wrong trading day — for two of the five
+events it silently rolled the "day 0" match forward onto a *Sunday*, which
+doesn't exist as a trading day and should have been the first sign something
+was wrong. Fixed by adding the 5:30 IST offset before extracting the
+calendar date (`cmd/earnings-reaction/main.go`, `istOffset`). Verified: after
+the fix, KEI's computed day-0 move (+0.5%) matches the reported day-of price
+move ("closed 0.49% higher on 3rd Aug") exactly.
+
+_Note: `internal/backtest/portfolio.go` uses the same UTC-formatted date key
+(`c.Timestamp.UTC().Format(dayFmt)`) throughout, uncorrected. That's not a
+bug there — every date in that file (candle keys and `--from`/`--to` bounds)
+goes through the same convention, so relative comparisons stay internally
+consistent even though the label is one calendar day off from the true IST
+trading date. It only becomes a bug when comparing against an
+externally-sourced true-IST date, as here._
+
+### Results (day 0 = report date; 7 trading days before/after, real prices)
+
+| Symbol | Report (IST) | PAT YoY | Rev YoY | Pre-week | Day 0 | Post-week | 15-day total |
+|---|---|---|---|---|---|---|---|
+| JSWSTEEL | 2026-07-17 | +112.6% | +9.8% | +0.1% | +1.3% | +0.8% | **+2.2%** |
+| LAURUSLABS | 2026-07-24 | +125.5% | +29.1% | +0.9% | +2.1% | +15.5% | **+19.0%** |
+| JBMA | 2026-07-30 | +13.4% | +15.0% | +1.4% | +0.4% | −5.8% | **−4.1%** |
+| KEI | 2026-08-03 | +40.0% | +23.0% | +2.1% | +0.5% | +14.5% | **+17.5%** |
+| NEULANDLAB | 2026-08-05 | +962.0% | +116.3% | +1.5% | +3.5% | +16.9% | **+22.8%** |
+
+Reproduce: `go run ./cmd/earnings-reaction --seed` then `go run ./cmd/earnings-reaction`.
+
+### Reading it honestly — 5 data points, one quarter, all-bull-market names
+This is a pilot, not a statistically meaningful sample — no claim here should
+be read as more than "worth investigating further":
+
+- **Directionally consistent, loosely.** All 5 companies grew both revenue
+  and PAT YoY; all 5 had a positive 15-day reaction. That's the expected
+  direction, but 5-for-5 positive isn't surprising on its own — these are
+  exactly the names already flagged as longhold's biggest winners (§16), so
+  the sample is pre-selected toward stocks already in an uptrend, not a
+  random or even representative draw of NIFTY 500 results.
+- **Magnitude doesn't track PAT growth cleanly.** NEULANDLAB's PAT grew 962%
+  and got the largest reaction (+22.8%) — consistent. But JSWSTEEL's PAT grew
+  112.6% (second-largest in this set) and got the *smallest* reaction
+  (+2.2%), while JBMA's PAT grew only 13.4% (smallest in the set) and the
+  stock fell (−4.1%). PAT growth alone is not predicting reaction size or
+  even always sign.
+- **A plausible reason for JSWSTEEL's muted reaction**: JSW Steel publishes
+  monthly/quarterly crude-steel production figures well before the formal
+  P&L (a production update was out ~9 July, a week before the 17 July
+  results) — the market had a head start on the operational story, so the
+  formal results carried less genuine surprise. This is a real, distinct
+  hypothesis worth testing on more names: **large, closely-covered
+  companies with interim operational disclosures may show muted results-day
+  reactions relative to headline PAT growth**, precisely because the
+  "surprise" leaked out earlier through a different channel.
+- **JBMA's fall is confounded, not necessarily bearish on the results
+  themselves**: the same board meeting also proposed a ₹1,500 Cr securities
+  issue (dilution risk), announced the same day as the results — impossible
+  to cleanly separate "market didn't like the numbers" from "market didn't
+  like the dilution" with only price data and no news-flow tagging.
+
+### Verdict and next steps
+Worth continuing, not worth building a sizing framework on yet. The
+data-collection mechanics work (seed once, re-run the analysis freely,
+extend to new quarters/symbols without re-doing the manual research each
+time) and the one clear methodology bug (timezone) is now fixed and will
+carry forward correctly to future runs. Before this can inform actual
+position sizing: (1) more quarters per stock — one quarter can't separate
+signal from noise, (2) a control group of NIFTY 500 names *not* pre-selected
+as longhold winners, to check the pattern isn't just "stocks already in an
+uptrend keep going up regardless of results," (3) tag confounding corporate
+actions (like JBMA's securities issue) so they don't get misread as a
+results reaction, (4) test the "pre-telegraphed via interim disclosures"
+hypothesis explicitly on more large-caps with monthly business updates
+(steel, cement, auto OEMs typically publish these; smaller/single-segment
+companies like NEULANDLAB typically don't).
+
+---
+
+## 18. Open questions / next steps
 
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
@@ -1493,20 +1604,23 @@ universe, no slippage-under-stress modeling in a real drawdown, etc.).
   out-of-sample in both eras (26.6% / 17.6% CAGR, both clearing NIFTY's
   own era CAGR), and the sensitivity sweep shows a smooth risk/return
   frontier rather than a fragile in-sample optimum.
-- **Fundamental data source + drawdown-tolerance framework — parked, not
-  scheduled.** Hypothesis validated (§15), deliberately left open for later
-  rather than picked up now: no fundamental data exists in this codebase or
-  via Kite; a small, targeted validation (public-source lookups for
-  KEI/NEULANDLAB, no bulk scraping) confirmed real profit-growth inflections
-  do precede/coincide with these stocks' big moves, so the hypothesis is
-  worth pursuing eventually. But both stocks also survived 50–60%
-  mid-journey drawdowns before their big runs — meaning the harder unsolved
-  piece isn't the data source (Tijori Finance / Trendlyne are the credible
-  paid options; Screener.in only via their paid Premium export, not
-  scraping; NSE/BSE XBRL is free but a multi-week parsing effort), it's a
-  position-sizing/drawdown-tolerance framework an order of magnitude more
-  tolerant than anything here today. Revisit when there's appetite for that
-  scope of work.
+- **Fundamental data source + drawdown-tolerance framework — IN PROGRESS,
+  see §17.** Picked back up: free-source pilot on 5 stocks' Q1 FY27 results
+  (§17) found all 5 grew PAT/revenue YoY and all 5 had a positive 15-day
+  price reaction, but PAT growth magnitude does not cleanly predict reaction
+  size (JSWSTEEL's 112.6% PAT growth got only +2.2%, plausibly because its
+  monthly production disclosures pre-telegraph the story). One quarter on a
+  pre-selected (already-winning) sample isn't enough to build a sizing
+  framework on yet — next: more quarters, a non-pre-selected control group,
+  and confound-tagging for corporate actions (§17's Verdict has the full
+  list). Data now persists in `earnings_events`, reusable without re-running
+  the manual research each time.
+- **NSE/BSE direct scraping — ruled out for this environment, see §17.**
+  Both domains are blocked by browser-automation policy, and NSE's own site
+  serves a 403 to direct HTTP requests before even reaching an API. Company
+  press releases + financial news are the practical free substitute; a paid
+  subscription (Tijori Finance / Trendlyne) remains the option if the
+  fundamentals pilot in §17 proves out and scale becomes the bottleneck.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -1523,11 +1637,15 @@ secular winners; unresolved)**; **long-hold buy-strength strategy (§16,
 built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
-validated — holds up across a two-era split, unlike §15's swing result)**._
+validated — holds up across a two-era split, unlike §15's swing result)**;
+**quarterly-results price reaction pilot (§17, in progress — 5 stocks, 1
+quarter, directionally consistent with fundamentals but too small a sample
+to size positions on; NSE/BSE direct access ruled out, free news-source
+sourcing works instead)**._
 
 ---
 
-## 18. Reproduce
+## 19. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -1659,6 +1777,11 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
 # Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
 # --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
+
+# §17 — quarterly-results price reaction pilot (5 stocks, Q1 FY27).
+# --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.
+go run ./cmd/earnings-reaction --seed
+go run ./cmd/earnings-reaction
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
