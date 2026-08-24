@@ -68,10 +68,19 @@ var watchedSymbols = []string{
 	"MAXHEALTH", "NESTLEIND", "NTPC", "ONGC", "POWERGRID",
 	"SBILIFE", "SHRIRAMFIN", "TATACONSUM", "TMPV", "TATASTEEL",
 	"TECHM", "TRENT", "ULTRACEMCO", "WIPRO",
+	// Batch 1 of the full-501 expansion (alphabetical from config/symbols.txt,
+	// no cherry-picking) -- ABDL and ABLBL were attempted but dropped: no
+	// clean report date turned up in search for either, consistent with the
+	// expected coverage drop-off for smaller/newer listings flagged before
+	// this expansion started.
+	"360ONE", "3MINDIA", "AADHARHFC", "AARTIIND", "AAVAS",
+	"ABB", "ABBOTINDIA", "ABCAPITAL", "ABSLAMC", "ABFRL",
+	"ABREL", "ACC", "ACE", "ACMESOLAR", "ACUTAAS",
+	"ADANIENSOL", "ADANIGREEN", "ADANIPOWER",
 }
 
 // seedEvents is the manually-researched Q1 FY27 (quarter ended 30 June 2026)
-// reference data for the 54 stocks under study. Figures and dates are as
+// reference data for the stocks under study. Figures and dates are as
 // reported by the sources in each SourceURL/Notes field. For banks and
 // insurers, RevenueYoYPct holds Net Interest Income (NII) or Net Premium
 // Income growth instead of a topline revenue figure — the standard
@@ -404,6 +413,115 @@ func seedEvents() []store.EarningsEvent {
 			RevenueCr: 24478.6, RevenueYoYPct: 10.6, PATCr: 3356.3, PATYoYPct: 0.6,
 			SourceURL: "https://www.republicworld.com (Wipro Q1 FY27), business-standard.com",
 			Notes:     "PAT essentially flat YoY (missed Street estimates) despite +10.6% revenue -- margins at a 15-quarter low. A clean example of the revenue/PAT-growth gap the correlation analysis is trying to measure.",
+		},
+		// --- Batch 1 of the full-501 expansion (18 stocks) ---
+		{
+			Symbol: "360ONE", ReportDate: date(2026, 7, 16), Quarter: "Q1 FY27",
+			RevenueCr: 822, RevenueYoYPct: 24.2, PATCr: 330, PATYoYPct: 14.8,
+			SourceURL: "https://www.freepressjournal.in (360 ONE WAM Q1 FY27), business-standard.com",
+			Notes:     "RevenueCr is revenue from operations; total revenue (incl. other income) was Rs 870 Cr, +20% YoY. AUM Rs 7,76,755 Cr.",
+		},
+		{
+			Symbol: "3MINDIA", ReportDate: date(2026, 8, 14), Quarter: "Q1 FY27",
+			RevenueCr: 1423, RevenueYoYPct: 19, PATCr: 233, PATYoYPct: 31.2,
+			SourceURL: "https://www.investywise.com (3M India Q1 FY27), sahi.com",
+			Notes:     "PAT growth includes a Rs 73.13 Cr exceptional gain from a Pimpri, Pune land sale -- ex-exceptional growth would be meaningfully lower. Fifth consecutive quarter of double-digit sales growth.",
+		},
+		{
+			Symbol: "AADHARHFC", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 992.89, RevenueYoYPct: 17.06, PATCr: 282.36, PATYoYPct: 18.98,
+			SourceURL: "https://www.equitybulls.com (Aadhar Housing Finance Q1 FY27), freepressjournal.in",
+			Notes:     "AUM +18% YoY to Rs 31,364 Cr.",
+		},
+		{
+			Symbol: "AARTIIND", ReportDate: date(2026, 7, 30), Quarter: "Q1 FY27",
+			RevenueCr: 2627, RevenueYoYPct: 41, PATCr: 155, PATYoYPct: 260,
+			SourceURL: "https://www.equitybulls.com (Aarti Industries Q1 FY27), indianchemicalnews.com",
+			Notes:     "Large PAT growth off a small prior-year base -- driven by optimized product mix, inventory management, and forex gains, not purely operating improvement. Treat the 260% with more caution than the large-cap figures in this set.",
+		},
+		{
+			Symbol: "AAVAS", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 709.10, RevenueYoYPct: 12.9, PATCr: 171.27, PATYoYPct: 23,
+			SourceURL: "https://www.equitybulls.com (Aavas Financiers Q1 FY27), scanx.trade",
+			Notes:     "RevenueCr is total income (interest income dominated). Disbursements +41% YoY, AUM +15.4% YoY.",
+		},
+		{
+			Symbol: "ABB", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 3558.87, RevenueYoYPct: 21.03, PATCr: 370.07, PATYoYPct: 7.9,
+			SourceURL: "https://www.freepressjournal.in (ABB India Q1 FY27), marketsmojo.com",
+			Notes:     "Highest-ever quarterly revenue but operating margin contracted to 12.70% from 13.79% -- PAT growth trailing revenue growth is the margin-compression pattern, same shape as TCS/WIPRO in this set.",
+		},
+		{
+			Symbol: "ABBOTINDIA", ReportDate: date(2026, 8, 12), Quarter: "Q1 FY27",
+			RevenueCr: 1813, RevenueYoYPct: 4.33, PATCr: 428, PATYoYPct: 17.13,
+			SourceURL: "https://univest.in (Abbott India Q1 FY27), indiaipo.in",
+			Notes:     "PAT growth well ahead of revenue growth -- EBITDA margin expanded to 28.8%, a pure-margin story rather than a volume one.",
+		},
+		{
+			Symbol: "ABCAPITAL", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 14731, RevenueYoYPct: 29, PATCr: 1175, PATYoYPct: 40,
+			SourceURL: "https://www.adityabirla.com (Aditya Birla Capital Q1 FY27), business-standard.com",
+			Notes:     "Raised Rs 4,000 Cr growth capital same quarter; lending portfolio +32% YoY, housing finance AUM +50% YoY.",
+		},
+		{
+			Symbol: "ABSLAMC", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 462.96, RevenueYoYPct: 0, PATCr: 309.49, PATYoYPct: 11.69,
+			SourceURL: "https://www.equitybulls.com (Aditya Birla Sun Life AMC Q1 FY27), upstox.com",
+			Notes:     "RevenueYoYPct not cleanly found in this search pass -- left at 0, not a real 0%. Shares fell ~4% on muted sequential revenue growth despite the YoY PAT gain. AUM crossed Rs 6 lakh Cr.",
+		},
+		{
+			Symbol: "ABFRL", ReportDate: date(2026, 8, 8), Quarter: "Q1 FY27",
+			RevenueCr: 2025.56, RevenueYoYPct: 10.6, PATCr: -241.73, PATYoYPct: -3.4,
+			SourceURL: "https://www.investywise.com (ABFRL Q1 FY27), scanx.trade",
+			Notes:     "Already loss-making last year (Rs -233.73 Cr) and the loss widened further this quarter -- PATYoYPct here reflects that the loss got worse (not a swing from profit like ADANIENT/INDIGO), computed as -(change in loss magnitude)/prior loss magnitude for a more intuitive sign than the raw (current-prior)/prior formula would give on a negative base.",
+		},
+		{
+			Symbol: "ABREL", ReportDate: date(2026, 8, 13), Quarter: "Q1 FY27",
+			RevenueCr: 188.85, RevenueYoYPct: 29.74, PATCr: -38.55, PATYoYPct: -51.4,
+			SourceURL: "https://www.business-standard.com (Aditya Birla Real Estate Q1 FY27), tradebrains.in",
+			Notes:     "Consolidated loss widened from Rs -25.47 Cr to Rs -38.55 Cr (PATYoYPct sign convention same as ABFRL above). Standalone entity was actually profitable (+Rs 31.11 Cr) -- another case where standalone/consolidated tell different stories. Collections +31% YoY.",
+		},
+		{
+			Symbol: "ACC", ReportDate: date(2026, 7, 24), Quarter: "Q1 FY27",
+			RevenueCr: 5748, RevenueYoYPct: -8.12, PATCr: 148, PATYoYPct: -61.6,
+			SourceURL: "https://www.freepressjournal.in (ACC Q1 FY27), sahi.com",
+			Notes:     "Both revenue and PAT down sharply YoY -- a genuine weak quarter, not a margin or one-off story. Advancing amalgamation with Ambuja Cements.",
+		},
+		{
+			Symbol: "ACE", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 785.68, RevenueYoYPct: 20.49, PATCr: 119.49, PATYoYPct: 22.28,
+			SourceURL: "https://www.equitybulls.com (Action Construction Equipment Q1 FY27), marketsmojo.com",
+			Notes:     "Highest-ever quarterly PAT; EBITDA margin 20.53%, best-ever quarter per one source.",
+		},
+		{
+			Symbol: "ACMESOLAR", ReportDate: date(2026, 7, 29), Quarter: "Q1 FY27",
+			RevenueCr: 8575, RevenueYoYPct: 67.8, PATCr: 2353.3, PATYoYPct: 80,
+			SourceURL: "https://solarquarter.com (ACME Solar Q1 FY27), whalesbook.com",
+			Notes:     "Driven by higher generation from expanding renewable portfolio and BESS (battery storage) contribution.",
+		},
+		{
+			Symbol: "ACUTAAS", ReportDate: date(2026, 7, 31), Quarter: "Q1 FY27",
+			RevenueCr: 326.56, RevenueYoYPct: 27.25, PATCr: 62.7, PATYoYPct: 33.6,
+			SourceURL: "https://upstox.com (Aether Industries Q1 FY27), business-standard.com",
+			Notes:     "Ticker ACUTAAS is Aether Industries. Driven by Contract Exclusive Manufacturing (CEM) and Large Scale Manufacturing demand; shares hit a 52-week high on the print.",
+		},
+		{
+			Symbol: "ADANIENSOL", ReportDate: date(2026, 7, 21), Quarter: "Q1 FY27",
+			RevenueCr: 9711.08, RevenueYoYPct: 42.41, PATCr: 1149, PATYoYPct: 124.22,
+			SourceURL: "https://www.sahi.com (Adani Energy Solutions Q1 FY27), equitybulls.com",
+			Notes:     "Sources gave PAT figures from Rs 1,149-1,236 Cr across different cuts -- used the consolidated PAT paired with the +124.22% YoY figure for internal consistency. Driven by Mumbai HVDC ramp-up and smart-metering rollout.",
+		},
+		{
+			Symbol: "ADANIGREEN", ReportDate: date(2026, 7, 22), Quarter: "Q1 FY27",
+			RevenueCr: 4431, RevenueYoYPct: 16.6, PATCr: 983, PATYoYPct: 19.3,
+			SourceURL: "https://upstox.com (Adani Green Energy Q1 FY27), business-standard.com",
+			Notes:     "Sources were inconsistent here (some headlines said +29% revenue / +135% PAT, which don't match the underlying Rs figures cited in the same articles) -- used the self-consistent pair (Rs 4,431 Cr vs Rs 3,800 Cr = +16.6%; Rs 983 Cr vs Rs 824 Cr = +19.3%) rather than the headline percentages. Operational capacity +27% YoY to 20.1 GW. Stock fell ~3-4% on the day despite the beat.",
+		},
+		{
+			Symbol: "ADANIPOWER", ReportDate: date(2026, 7, 22), Quarter: "Q1 FY27",
+			RevenueCr: 18902, RevenueYoYPct: 34, PATCr: 4866.60, PATYoYPct: 47.2,
+			SourceURL: "https://www.republicworld.com (Adani Power Q1 FY27), business-standard.com",
+			Notes:     "Board approved a Rs 15,000 Cr QIP fundraise same day -- a confound worth remembering, same pattern as JBMA's securities issue.",
 		},
 	}
 }

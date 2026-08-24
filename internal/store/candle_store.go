@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/sahiltyagi27/stock-market-analysis/pkg/models"
 )
 
@@ -136,6 +136,49 @@ func (s *CandleStore) GetCandles(ctx context.Context, symbol string, f CandleFil
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// LatestTwo returns, for each requested symbol that has at least 2 candles,
+// its two most recent candles ([0]=latest, [1]=prior) -- one query instead
+// of one round trip per symbol, which matters at watchlist scale (500+
+// symbols for the daily-movers view).
+func (s *CandleStore) LatestTwo(ctx context.Context, symbols []string) (map[string][2]models.Candle, error) {
+	out := make(map[string][2]models.Candle)
+	if len(symbols) == 0 {
+		return out, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT symbol, timestamp, open, high, low, close, volume, rn
+		FROM (
+			SELECT symbol, timestamp, open, high, low, close, volume,
+			       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) AS rn
+			FROM candles
+			WHERE symbol = ANY($1)
+		) ranked
+		WHERE rn <= 2
+		ORDER BY symbol, rn
+	`, pq.Array(symbols))
+	if err != nil {
+		return nil, fmt.Errorf("latest two candles: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c models.Candle
+		var rn int
+		if err := rows.Scan(&c.Symbol, &c.Timestamp, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &rn); err != nil {
+			return nil, err
+		}
+		pair := out[c.Symbol]
+		if rn == 1 {
+			pair[0] = c
+		} else {
+			pair[1] = c
+		}
+		out[c.Symbol] = pair
 	}
 	return out, rows.Err()
 }
