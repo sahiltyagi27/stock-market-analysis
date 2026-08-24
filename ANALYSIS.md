@@ -1776,6 +1776,55 @@ diagnosed rather than just reported.** Two things are true at once:
    watching as coverage broadens" caution was pointing at, now with
    actual numbers behind it instead of just a hypothesis.
 
+**Batch 3: 18 more stocks (90 → 108).** Same policy. Two more one-off-
+dominated headline figures worth knowing: BAJAJHLDNG's −22.69% PAT
+"decline" is entirely a high-base effect (Q1 FY26 included a ₹1,521.88 Cr
+one-time Bajaj Finserv share-sale gain that didn't repeat — standalone PAT
+actually surged); BANKBARODA's −71.8% PAT "collapse" is almost entirely a
+₹5,680 Cr one-time NMC Group settlement charge (ex-that, PAT would have
+been +21.7% YoY). Both use the headline (unadjusted) figure for dataset
+consistency, same policy as AMBER in batch 2, and both are flagged in
+their Notes as one-off-dominated. One new sign-convention case in the
+*opposite* direction from ABFRL/ABREL: ATHERENERG is still loss-making,
+but the loss **narrowed** 71.33% YoY — genuine improvement — so its
+PATYoYPct is recorded as **positive** (+71.33), the mirror image of how
+ABFRL/ABREL's *widening* losses were recorded as negative, so the sign
+always tracks whether the news was actually good or bad rather than the
+raw formula's mechanical output on a negative base.
+
+**Result: r=0.157 at 108 stocks, and now with a clean equal-size
+comparison that makes the large-cap hypothesis much harder to dismiss.**
+At 108 stocks, the 54 newly-added symbols (batches 1–3) can be compared
+directly against the original 54 — same sample size on both sides, no
+"diluted by a bigger group" confound:
+
+- **Original 54 (mega/large-cap): r=0.425.** Essentially unchanged across
+  every batch added so far — this number has been stable at ~0.43 since
+  the very first 15-stock pass.
+- **New 54 (batches 1–3, broader-market): r=0.092.** Essentially no
+  linear relationship at all — not "weaker," close to *none*.
+- Excluding APOLLOTYRE's single extreme outlier from the full 108 still
+  only recovers r=0.295 — confirming the gap between the two cohorts
+  isn't primarily an outlier artifact anymore; it's a genuine, broad
+  pattern across 54 non-mega-cap names.
+
+Reading this honestly: three batches (54 stocks) is still a small sample
+for the "broader market" cohort specifically, and it's still one quarter
+— but an equal-size, side-by-side comparison showing r=0.43 vs. r=0.09 is
+a much stronger basis for the large-cap hypothesis than the batch 1/2
+write-ups had. Worth treating as a real, provisional finding now rather
+than just "worth watching": **the PAT-growth → price-reaction
+relationship this study keeps finding looks like it may be specific to
+large, closely-covered stocks, not something to expect from the market
+broadly.** If that holds up over more batches and more quarters, it has a
+direct implication for the original drawdown-tolerance-framework
+question this pilot was in service of (§17 Motivation) — a fundamentals-
+based conviction signal may only be trustworthy for the kind of large-cap
+names where this study's signal is real, not for smaller multibagger
+candidates like KEI/NEULANDLAB, which is exactly where §15/§16's
+original hypothesis was aimed. That tension is worth confronting
+directly before more batches, rather than assuming it away.
+
 Reproduce: `go run ./cmd/earnings-reaction --seed` (idempotent, includes
 all batches so far), `go run ./cmd/earnings-dashboard` for the live
 sector-filterable table and the daily-movers tab.
@@ -1846,16 +1895,18 @@ sector-filterable table and the daily-movers tab.
   §17b.** Sector filter and a live daily-movers table (`/api/movers`,
   all 501 symbols in ~250ms via a new bulk `CandleStore.LatestTwo`) both
   shipped in one pass since neither needed new research. PAT coverage is
-  expanding in batches (54 → 72 → 90 so far, alphabetical, no cherry-
-  picking). r moved 0.43 → 0.37 → 0.185 across the three batches, but
-  that last drop was diagnosed, not just reported: about half is a single
-  extreme-outlier artifact (APOLLOTYRE's low-base +2,608% PAT "growth"),
-  and the rest is real — the 36 stocks added in batches 1–2 show r=0.16
-  **on their own**, clearly weaker than the original 54's r=0.43. Emerging
-  hypothesis: this fundamentals→reaction relationship may be a large-cap
-  phenomenon (more analyst coverage, more liquid price discovery) rather
-  than universal — worth testing further as more batches come in, rather
-  than concluding from two batches.
+  expanding in batches (54 → 72 → 90 → 108 so far, alphabetical, no
+  cherry-picking). r moved 0.43 → 0.37 → 0.185 → 0.157 across four
+  batches, and at 108 stocks there's now a clean equal-size comparison:
+  the original 54 (mega/large-cap) hold at r=0.425, essentially unchanged
+  since the first pass, while the 54 stocks added since (batches 1–3,
+  broader-market) show r=0.092 **on their own** — not weaker, close to
+  *no* linear relationship. This is a real tension worth confronting: the
+  signal this study keeps finding looks like a large-cap phenomenon, but
+  §15/§16's original motivation for this whole pilot was about smaller
+  multibagger candidates (KEI/NEULANDLAB-style), exactly the names where
+  the signal may not hold. Worth resolving before more batches, not just
+  noting.
 
 _Done: transaction costs (§7); RS/sector filters (§8, negative); portfolio
 allocation, max-positions, M10 opportunity-loss (rotation ruled out), and **M12
@@ -1873,14 +1924,17 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
-**quarterly-results price reaction pilot (§17, in progress — 90 stocks
+**quarterly-results price reaction pilot (§17, in progress — 108 stocks
 and growing, 1 quarter; r≈0.43 on the original 54 (Nifty 50 + 4) holds
-steady, but the 36 mid-cap names added since (§17b) show a much weaker
-r≈0.16 on their own — a large-cap-vs-broader-market split worth more
-data before drawing conclusions; still too small/short to size positions
-on; NSE/BSE direct access ruled out, free news-source sourcing works
-instead; sector filter + live daily-movers table shipped alongside;
-`earnings_watchlist` tracks all 90 symbols' upcoming quarters)**._
+steady across every batch, but the 54 broader-market names added since
+(§17b, batches 1–3) show essentially no correlation on their own
+(r≈0.09) — a clean equal-size comparison now, not just a hypothesis;
+in tension with §15/§16's original motivation for this pilot, which was
+about smaller multibagger candidates specifically; still too
+small/short to size positions on; NSE/BSE direct access ruled out,
+free news-source sourcing works instead; sector filter + live
+daily-movers table shipped alongside; `earnings_watchlist` tracks all
+108 symbols' upcoming quarters)**._
 
 ---
 
