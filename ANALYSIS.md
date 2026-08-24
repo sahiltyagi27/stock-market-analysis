@@ -1460,6 +1460,71 @@ universe, no slippage-under-stress modeling in a real drawdown, etc.).
 
 ---
 
+## 16c. Paper-trading rollout
+
+`cmd/paper-trade`/`internal/paper` (the persistent, forward paper-trading
+engine — `--mode eod` fills queued entries at the next open, exits on the
+current candle, and queues the next batch; `--mode live` is a read-only
+intraday monitor) pre-dates this thread and was built for the swing
+strategy: entries via `scanner.Scan`, exits hardcoded to
+SL-then-EMA7<EMA21-recross. Getting longhold into paper trading required
+two things beyond "point it at a different strategy."
+
+**Entry/exit pluggability was asymmetric.** `paper.Config` already had a
+`signalFunc` hook (unexported, test-only) that could override entry-signal
+generation — but `exitDecision` was a hardcoded free function with no
+override at all. Fixed by exporting `SignalFunc` and adding a matching
+`ExitFunc` field, with the day-cycle orchestration (`RunDayEnd`'s fill/exit/
+gate/shadow logic — unchanged, ~440 lines reused as-is) resolving through a
+small `Config.exit()` helper: `ExitFunc` if set, else the original swing
+rule. `cmd/paper-trade --strategy longhold` wires both hooks: `SignalFunc`
+adapts `longhold.Scan` into `[]scanner.StockSignal` (Target set to
+`Entry*1000`, the same no-fixed-target sentinel `internal/backtest/engine.go`
+already uses for longhold, since `qualifyingSignals` only gates on
+`Trade.StopLoss`/`Score`, never `Target`); `ExitFunc` mirrors
+`internal/backtest/portfolio.go`'s `ExitMode: "trendstop"` case — a same-day
+gap-down stop first, then exit when the close falls below the trend EMA
+*recomputed fresh from the full candle history each cycle* (so the stop
+effectively rises with the trend over a multi-year hold, unlike the
+position's stored SL, which only guards the same-day gap).
+
+**The paper-account schema was a strict singleton — a real bug, not a
+hypothetical one.** `paper_account` had `id INT PRIMARY KEY DEFAULT 1
+CHECK (id = 1)`, and `paper_positions`/`paper_pending`/the shadow tables
+keyed uniqueness on `symbol` alone. Caught before it caused damage: a
+`--dry-run` longhold cycle printed `Cash: 99418` against a `--capital
+500000` flag, which didn't add up — turned out an existing swing paper
+session (from before this thread) already had a real account (cash 99418,
+one closed losing trade, last EOD 2026-08-21) sitting in that one singleton
+row, and `--strategy longhold` would have silently traded through the same
+account, mixing two strategies' cash/positions/trade history together the
+moment a real (non-dry-run) cycle ran. Fixed with a migration adding a
+`strategy` column to every `paper_*` table (`paper_store.go`), replacing
+the singleton/global-symbol constraints with `(strategy, ...)`-scoped ones,
+and scoping every query/insert in `PaperStore` by the strategy it was
+constructed with (`NewPaperStore(db, strategy)`) — including `Reset`, which
+previously `TRUNCATE`d all four tables unconditionally and now deletes only
+the active strategy's rows. Verified against the real database: the
+existing swing account (cash 99418) survived the migration untouched, and
+a fresh `--strategy longhold` cycle correctly initialised its own separate
+$500,000 account rather than touching swing's.
+
+**Current state, as of 2026-08-24 (as-of the last EOD run):** the longhold
+paper session is live — a real (not dry-run) EOD cycle ran with the
+validated §16 config (`--capital 500000 --max-positions 20 --risk-pct 1
+--max-weight-pct 10 --cost-pct 0.25 --slippage-pct 0.20`), initialised the
+account, and queued 4 entries (LTFOODS, WELCORP, SIEMENS, PTCIL) to fill at
+the next session's open. The strategy-health gate defaults to OFF for
+longhold specifically (`--health-window 0` unless passed explicitly) — the
+swing-tuned gate closes new entries after a losing-R streak, which is
+exactly the kind of drawdown longhold is designed to hold through (§16's
+55.9% max drawdown is the whole point, not a failure mode). Daily workflow
+going forward: `kite-sync` after the close, then `paper-trade --strategy
+longhold --mode eod` — same cadence as the existing swing session, now on
+its own independent account.
+
+---
+
 ## 17. Quarterly-results price reaction study (54 stocks — full Nifty 50, Q1 FY27)
 
 ### Motivation
@@ -2067,6 +2132,17 @@ already showed matters for signal strength.
   out-of-sample in both eras (26.6% / 17.6% CAGR, both clearing NIFTY's
   own era CAGR), and the sensitivity sweep shows a smooth risk/return
   frontier rather than a fragile in-sample optimum.
+- **Longhold paper-trading rollout — DONE, see §16c.** Added a matching
+  `ExitFunc` hook alongside the existing (now-exported) `SignalFunc` hook so
+  `internal/paper`'s day-cycle engine can drive longhold's trendstop exit,
+  not just its entry signal. Found and fixed a real bug along the way: the
+  paper-account schema was a hard singleton, which would have silently
+  merged a new longhold account into the pre-existing swing paper session's
+  cash/positions/trade history the first time a real cycle ran — fixed with
+  a strategy-scoped schema migration, verified against the live database
+  (existing swing account untouched, longhold's own $500k account created
+  cleanly). A real (non-dry-run) longhold EOD cycle is now live with 4
+  entries queued for the next open.
 - **Fundamental data source + drawdown-tolerance framework — IN PROGRESS,
   see §17.** Expanded twice: 5 pre-selected winners → 15 (10 large Nifty 50
   names as a control group) → all 54 currently tracked (the remaining 39
@@ -2140,6 +2216,10 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
+**longhold paper-trading rollout (§16c — exit-hook pluggability added to
+`internal/paper`, a real singleton-schema bug found and fixed before it
+could merge two strategies' accounts, live longhold paper session now
+running)**;
 **quarterly-results price reaction pilot (§17, paused at 108 stocks, 1
 quarter; r≈0.43 on the original 54 (Nifty 50 + 4) holds steady across
 every batch, but the 54 broader-market names added since (§17b, batches
@@ -2290,6 +2370,15 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08
   --cost-pct 0.25 --slippage-pct 0.20 --risk-pct 1.0 --max-weight-pct 10
 # Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
 # --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
+
+# §16c — longhold paper trading (own account, independent of any swing
+# paper session — see §16c for the schema fix that makes this safe).
+go run ./cmd/paper-trade --strategy longhold --mode eod \
+  --capital 500000 --max-positions 20 --risk-pct 1 --max-weight-pct 10 \
+  --cost-pct 0.25 --slippage-pct 0.20
+go run ./cmd/paper-trade --strategy longhold --mode live   # intraday monitor
+# Existing swing paper session, unaffected by the above:
+go run ./cmd/paper-trade --strategy swing --mode eod
 
 # §17/§17b — quarterly-results price reaction study (72 stocks and growing, Q1 FY27).
 # --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.

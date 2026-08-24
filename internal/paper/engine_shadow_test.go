@@ -172,7 +172,7 @@ func shadowTestSetup(shadow bool) (*fakeStore, *fakeCandles, []string, Config, t
 		StartCapital: 100000, MaxPositions: 5, RiskPct: 1, MaxWeightPct: 25,
 		HealthWindow: 3, HealthMin: 0, HealthShadow: shadow, MinScore: 0,
 		// Inject a signal for every symbol each day (dedup/slot logic handles the rest).
-		signalFunc: func(history map[string][]models.Candle, _ scanner.Options) []scanner.StockSignal {
+		SignalFunc: func(history map[string][]models.Candle, _ scanner.Options) []scanner.StockSignal {
 			var out []scanner.StockSignal
 			for sym, cc := range history {
 				if len(cc) == 0 {
