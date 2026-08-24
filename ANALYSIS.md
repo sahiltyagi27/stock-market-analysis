@@ -1460,7 +1460,7 @@ universe, no slippage-under-stress modeling in a real drawdown, etc.).
 
 ---
 
-## 17. Quarterly-results price reaction study (15 stocks, Q1 FY27) — pilot
+## 17. Quarterly-results price reaction study (54 stocks — full Nifty 50, Q1 FY27)
 
 ### Motivation
 §15/§17's parked hypothesis: genuine profit-growth inflections precede/coincide
@@ -1520,69 +1520,127 @@ days`, whatever trading days fall inside that span; `cmd/earnings-reaction`
 now also prints the full day-by-day close table per stock via
 `--detail SYMBOL`, not just the summary row._
 
-Expanded from the original 5 (longhold's biggest winners, §16 — a
-pre-selected, already-winning sample) to 15 by adding 10 large, liquid,
-well-known Nifty 50 names spanning different sectors (energy, IT x2,
-banking x2, telecom, auto, pharma, consumer) as a genuine control group —
-this directly answers the §17 Verdict's next-step #2 from the first pass
-of this pilot.
+Expanded twice: first from the original 5 (longhold's biggest winners,
+§16 — a pre-selected, already-winning sample) to 15 by adding 10 large,
+liquid Nifty 50 names as a control group; then from 15 to the full 54 by
+adding the remaining 39 Nifty 50 constituents, so the sample now covers
+every current Nifty 50 member (confirmed unchanged at the Mar 2026 index
+review) plus the original 4 non-Nifty-50 names (KEI, NEULANDLAB, JBMA,
+LAURUSLABS) kept from the multibagger research thread.
 
 | Symbol | Report (IST) | PAT YoY | Rev/NII YoY | Week-before | Post-week | Total |
 |---|---|---|---|---|---|---|
 | TCS | 2026-07-09 | +4.6% | +13.9% | −0.9% | +7.4% | **+6.4%** |
-| ICICIBANK | 2026-07-17 | +15.9% | +6.3% | +3.1% | −0.8% | **+2.3%** |
+| HCLTECH | 2026-07-13 | +20.4% | +13.9% | +7.7% | 0.0% | **+7.7%** |
+| HDFCLIFE | 2026-07-15 | +11.5% | +15.1% | +2.3% | −2.8% | **−0.5%** |
+| WIPRO | 2026-07-16 | +0.6% | +10.6% | +2.9% | −1.6% | **+1.2%** |
+| JIOFIN | 2026-07-16 | +155.4% | +227.4% | +1.0% | −1.1% | **−0.1%** |
+| TECHM | 2026-07-17 | +28.4% | +17.7% | +8.1% | −0.9% | **+7.2%** |
 | JSWSTEEL | 2026-07-17 | +112.6% | +9.8% | −0.7% | +0.3% | **−0.4%** |
 | RELIANCE | 2026-07-17 | −22.4% | +25.4% | +1.5% | −3.7% | **−2.3%** |
+| ICICIBANK | 2026-07-17 | +15.9% | +6.3% | +3.1% | −0.8% | **+2.3%** |
+| KOTAKBANK | 2026-07-20 | +22.5% | +12.6% | −0.7% | +0.7% | **0.0%** |
 | HDFCBANK | 2026-07-20 | +4.9% | +6.7% | −4.9% | −4.5% | **−9.2%** |
+| AXISBANK | 2026-07-20 | +22.5% | +8.0% | −4.8% | −2.3% | **−7.0%** |
+| ULTRACEMCO | 2026-07-20 | +17.0% | +16.0% | +2.9% | −0.2% | **+2.7%** |
+| BAJAJ-AUTO | 2026-07-21 | +42.0% | +37.0% | +2.3% | +9.3% | **+11.9%** |
+| ETERNAL | 2026-07-22 | +268.0% | +182.0% | −3.5% | +9.6% | **+5.8%** |
+| NESTLEIND | 2026-07-22 | +47.9% | +25.2% | +4.9% | +0.6% | **+5.5%** |
+| DRREDDY | 2026-07-22 | −69.0% | −6.0% | −3.8% | −3.4% | **−7.1%** |
+| CIPLA | 2026-07-23 | −39.2% | n/a | −2.6% | +5.3% | **+2.6%** |
 | INFY | 2026-07-23 | +12.3% | +14.0% | −3.2% | +10.3% | **+6.7%** |
+| INDIGO | 2026-07-23 | −110.9% | +20.0% | −4.6% | +4.1% | **−0.7%** |
+| SHRIRAMFIN | 2026-07-24 | +59.8% | +16.2% | −2.9% | +4.1% | **+1.1%** |
+| SBILIFE | 2026-07-24 | +22.0% | +16.9% | +1.6% | +1.3% | **+2.9%** |
+| NTPC | 2026-07-24 | +12.0% | +3.0% | +1.6% | 0.0% | **+1.6%** |
 | LAURUSLABS | 2026-07-24 | +125.5% | +29.1% | +4.7% | +13.4% | **+18.7%** |
+| TATACONSUM | 2026-07-24 | +27.8% | +11.9% | −0.1% | −0.5% | **−0.5%** |
+| BEL | 2026-07-27 | +9.0% | +25.3% | −0.2% | −3.7% | **−3.9%** |
+| COALINDIA | 2026-07-27 | +0.6% | +8.0% | −0.4% | −2.7% | **−3.1%** |
+| LT | 2026-07-28 | +14.0% | +6.7% | −0.4% | +4.1% | **+3.7%** |
+| HINDUNILVR | 2026-07-28 | −2.2% | +10.0% | −5.6% | +3.6% | **−2.1%** |
+| EICHERMOT | 2026-07-29 | +21.0% | +31.5% | +1.9% | +2.7% | **+4.6%** |
+| ADANIENT | 2026-07-29 | −299.1% | +50.0% | −3.9% | +0.8% | **−3.1%** |
+| ASIANPAINT | 2026-07-29 | +39.6% | +17.9% | +2.4% | +0.1% | **+2.5%** |
+| ADANIPORTS | 2026-07-29 | +9.0% | +19.0% | −5.5% | −1.1% | **−6.6%** |
+| TATASTEEL | 2026-07-30 | +11.6% | +14.3% | +1.5% | +1.3% | **+2.8%** |
 | JBMA | 2026-07-30 | +13.4% | +15.0% | +2.9% | −3.1% | **−0.2%** |
+| BAJFINANCE | 2026-07-30 | +27.4% | +19.6% | +1.3% | +8.7% | **+10.1%** |
+| M&M | 2026-07-30 | +33.6% | +26.6% | +1.7% | +3.7% | **+5.5%** |
+| ITC | 2026-07-31 | −16.2% | +27.6% | −0.9% | +1.8% | **+0.9%** |
+| BAJAJFINSV | 2026-07-31 | +12.3% | +19.0% | +8.1% | −1.0% | **+7.0%** |
 | MARUTI | 2026-07-31 | −9.7% | +36.0% | +5.9% | −1.4% | **+4.4%** |
 | SUNPHARMA | 2026-07-31 | +27.0% | +10.5% | +2.5% | −2.3% | **+0.2%** |
 | KEI | 2026-08-03 | +40.0% | +23.0% | +3.1% | +12.7% | **+16.1%** |
+| ONGC | 2026-08-04 | +112.0% | +45.2% | +1.3% | −1.1% | **+0.2%** |
 | BHARTIARTL | 2026-08-04 | +37.3% | +18.4% | +3.6% | −2.8% | **+0.7%** |
+| POWERGRID | 2026-08-05 | −0.9% | +2.2% | −0.4% | −4.4% | **−4.7%** |
 | NEULANDLAB | 2026-08-05 | +962.0% | +116.3% | +1.3% | +12.8% | **+14.3%** |
-| SBIN | 2026-08-07 | +10.2% | n/a | +6.8% | −2.7% | **+3.9%** |
+| TRENT | 2026-08-06 | +22.0% | +17.8% | +3.6% | −3.8% | **−0.3%** |
 | TITAN | 2026-08-07 | +62.9% | +40.3% | +1.3% | +2.3% | **+3.7%** |
+| SBIN | 2026-08-07 | +10.2% | n/a | +6.8% | −2.7% | **+3.9%** |
+| HINDALCO | 2026-08-07 | +75.2% | +32.1% | +8.7% | −2.8% | **+5.6%** |
+| APOLLOHOSP | 2026-08-12 | +38.4% | +20.6% | −3.5% | +1.8% | **−1.8%** |
+| GRASIM | 2026-08-12 | +38.8% | +21.4% | +2.6% | −1.1% | **+1.4%** |
+| MAXHEALTH | 2026-08-13 | +3.0% | +16.0% | −5.5% | −1.5% | **−6.9%** |
+| TMPV | 2026-08-13 | −80.3% | +9.3% | +1.2% | −8.4% | **−7.3%** |
 
-For the two banks (HDFCBANK, ICICIBANK), the Rev/NII column is Net Interest
-Income growth — the standard "revenue" proxy for a lender, not a topline
-revenue line. SBIN's revenue/NII YoY wasn't cleanly found in this search
-pass and is left as "n/a," not a real 0%.
+For banks and insurers, the Rev/NII column is Net Interest Income or Net
+Premium Income growth — the standard revenue proxy for a lender/insurer,
+not a topline revenue line. Two rows (CIPLA, SBIN) have "n/a" where no
+clean revenue/NII YoY figure turned up in that stock's search pass —
+correctly left blank rather than defaulted to a misleading 0%.
+
+**Two rows needed a genuine swing-to-loss calculation, not a simple
+percentage**: ADANIENT and INDIGO both went from a profit last year to a
+loss this year. PATYoYPct for both is still a well-defined number
+((this year − last year) / last year), just a large negative one
+(−299.1%, −110.9%) rather than a bounded -100%-to-∞ growth rate — computed
+against last year's actual PAT figure (₹734.41 Cr and ₹2,176 Cr
+respectively), sourced with one extra search each since the primary
+article for each didn't state the prior-year base directly.
 
 Reproduce: `go run ./cmd/earnings-reaction --seed` for the summary table
 above, `go run ./cmd/earnings-reaction --detail SYMBOL` for any one stock's
 full day-by-day price table.
 
-### Does PAT growth actually predict the reaction? A real, moderate signal
-With 15 stocks instead of 5, and a genuine control group instead of an
-all-winners sample, this is the first pass worth computing a correlation
-on: **Pearson r = 0.44** between PAT YoY growth and the total 15-day price
-reaction (r = 0.45 excluding NEULANDLAB's 962% PAT-growth outlier — the
-relationship isn't an artifact of that one extreme point). 11 of 15 stocks
-had a positive total reaction. That's a real, moderate positive
-relationship — not nothing, but not strong enough on 15 points from one
-quarter to size positions on.
+### Does PAT growth actually predict the reaction? A real, moderate signal that holds at scale
+Pearson r = 0.43 between PAT YoY growth and the total 15-day price
+reaction across all 54 stocks — essentially unchanged from the 15-stock
+pass's r=0.44, which is itself the most reassuring thing about this
+result: tripling the sample more than 3x (15→54) barely moved the
+correlation, meaning it isn't a small-sample fluke. Excluding the four
+most extreme PAT-growth outliers (NEULANDLAB +962%, ETERNAL +268%,
+ADANIENT −299%, INDIGO −111% — all four are companies where a tiny or
+negative prior-year base makes the percentage itself unstable) gives
+r=0.39 on the remaining 50 — still a real, moderate relationship, not an
+artifact of a few extreme points. 33 of 54 stocks (61%) had a positive
+total reaction.
 
-Two individual cases are more informative than the aggregate number:
+Individual cases worth remembering, beyond the two from the 15-stock pass
+(HDFCBANK's estimate-miss-despite-growth, MARUTI's pre-priced revenue
+story — both still hold at 54 stocks):
 
-- **HDFCBANK is the cleanest counter-example to naive "growth = good"
-  reasoning.** PAT grew +4.9% YoY — genuinely positive — but the stock fell
-  **−5.1% on the result day itself** (the single-day move accounts for
-  almost the entire −9.2% total window reaction; see
-  `--detail HDFCBANK`). News coverage at the time described the print as
-  "missing estimates" despite the YoY gain. This is the market pricing
-  forward expectations, not trailing YoY comparison — a reminder that
-  "grew vs. last year" and "beat what the market expected" are different
-  questions, and this dataset can only currently see the first one.
-- **MARUTI is the mirror case**: PAT *fell* −9.7% YoY (input-cost pressure
-  compressed EBITDA margin from 10.4% to 8.2%) but the stock finished the
-  window **+4.4%**, and per `--detail MARUTI` almost all of that gain
-  happened *before* the report (+5.9% week-before, only −1.4% after) — the
-  market appears to have already been rewarding the +36% revenue growth
-  story ahead of the results, and the margin miss barely dented it
-  afterward. A volume-growth-over-margin story the market had already
-  priced in.
+- **The two swing-to-loss cases reacted far more mildly than their PAT
+  collapse would suggest.** ADANIENT's PAT fell essentially off a cliff
+  (−299%) but the stock finished only −3.1%; INDIGO similarly swung to a
+  loss but finished −0.7%. Both companies' coverage explicitly flagged the
+  loss as driven by a one-off (ADANIENT: an OFAC settlement charge;
+  INDIGO: a fuel-cost spike, an industry-wide cost shock rather than a
+  company-specific failure) — consistent with the market correctly
+  discounting a one-off from the headline number rather than reacting to
+  the raw percentage.
+- **ONGC is the standalone/consolidated-divergence case**: standalone PAT
+  +112% YoY, but consolidated profit (which includes the loss-making
+  refining & marketing arm) fell −43% — the two numbers tell opposite
+  stories from the same quarter, and the model here only sees the
+  standalone figure. The muted +0.2% reaction is plausible under either
+  read.
+- **WIPRO is a clean small-gap example**: PAT essentially flat (+0.6%,
+  "missed Street estimates" per contemporaneous coverage) against +10.6%
+  revenue growth, margins at a 15-quarter low — a smaller-scale echo of
+  the HDFCBANK pattern (revenue fine, profit growth disappoints
+  forward-looking expectations) rather than a dramatic one.
 - **JSWSTEEL and JBMA remain the flattest reactions** despite both growing
   PAT and revenue YoY — consistent with the original 5-stock pilot's
   finding that large, closely-covered names with interim disclosures (JSW
@@ -1591,39 +1649,42 @@ Two individual cases are more informative than the aggregate number:
   of the headline growth number.
 
 ### Tracking upcoming quarters — `earnings_watchlist`
-Added a second table, `earnings_watchlist` (`internal/store/earnings_store.go`,
-`symbol, quarter, quarter_end, declared, checked_at`), so "has this stock's
-next quarter come out yet" is a query against a known list instead of
-re-deriving the symbol set from scratch every time. `go run
-./cmd/earnings-reaction --watch` registers the next quarter (currently Q2
-FY27, quarter end 2026-09-30) for all 15 tracked symbols; `--pending` lists
-which watched symbol/quarter pairs haven't been declared yet; `--seed`
-automatically marks a watchlist entry declared once its matching event is
-seeded. **This is a tracking mechanism, not an automated downloader** —
-Indian companies typically only announce their board-meeting date 1-2 weeks
-ahead, so there's no real date to fetch this far out, and NSE/BSE are still
-blocked (see above), so "downloading once available" still means a manual
-WebSearch pass per stock once each quarter-end has passed by ~4-6 weeks —
-the watchlist just makes that check systematic (`--pending` names exactly
-who's left) instead of ad hoc.
+`earnings_watchlist` (`internal/store/earnings_store.go`, `symbol,
+quarter, quarter_end, declared, checked_at`) now tracks all 54 symbols, so
+"has this stock's next quarter come out yet" is a query against a known
+list instead of re-deriving the symbol set from scratch every time. `go
+run ./cmd/earnings-reaction --watch` registers the next quarter (currently
+Q2 FY27, quarter end 2026-09-30) for every tracked symbol; `--pending`
+lists which watched symbol/quarter pairs haven't been declared yet;
+`--seed` automatically marks a watchlist entry declared once its matching
+event is seeded. **This is a tracking mechanism, not an automated
+downloader** — Indian companies typically only announce their
+board-meeting date 1-2 weeks ahead, so there's no real date to fetch this
+far out, and NSE/BSE are still blocked (see above), so "downloading once
+available" still means a manual WebSearch pass per stock once each
+quarter-end has passed by ~4-6 weeks — the watchlist just makes that check
+systematic (`--pending` names exactly who's left) instead of ad hoc.
 
 ### Verdict and next steps
-A real, moderate signal (r≈0.44) survives the jump from a 5-stock
-pre-selected pilot to a 15-stock sample with a genuine control group — this
-is more informative than either "no signal" or "clean strong signal" would
-have been, and it's honest: still one quarter, still too small to size
-positions on. `earnings_watchlist` now makes it straightforward to add Q2
-FY27 data as it comes out over the next few months, which is the single
-highest-value next step (more quarters per stock, not more stocks per
-quarter). Also still open from the original pilot: (1) tag confounding
-corporate actions (JBMA's securities issue) so they don't get misread as a
-pure results reaction, (2) test the "pre-telegraphed via interim
-disclosures" hypothesis explicitly (JSWSTEEL, MARUTI's pre-drift both point
-at this) by cross-referencing companies' monthly/interim business updates
-against results-day reaction size, (3) once there's enough data across
-quarters, check whether the correlation holds out-of-sample on a quarter
-the pattern wasn't observed on — the same discipline §15 applied to swing
-and §16b applied to longhold.
+The correlation holding steady (r≈0.44 at 15 stocks, r≈0.43 at 54) across
+a 3.6x increase in sample size is the strongest evidence yet that this is
+a real, moderate signal rather than small-sample noise — and it's still
+honest about its limits: one quarter, and a moderate correlation on its
+own doesn't tell you *how much* to size a position, just that fundamentals
+and reaction are related more often than chance. `earnings_watchlist` now
+tracks all 54 symbols, making it straightforward to add Q2 FY27 data as it
+comes out over the next few months, which is the single highest-value next
+step (more quarters per stock, not more stocks per quarter — that
+dimension is now close to exhausted at "the whole Nifty 50"). Also still
+open: (1) tag confounding corporate actions (JBMA's securities issue) so
+they don't get misread as a pure results reaction, (2) test the
+"pre-telegraphed via interim disclosures" hypothesis explicitly
+(JSWSTEEL, MARUTI, ONGC's standalone/consolidated split all point at
+related ideas) by cross-referencing companies' monthly/interim business
+updates against results-day reaction size, (3) once there's enough data
+across quarters, check whether the correlation holds out-of-sample on a
+quarter the pattern wasn't observed on — the same discipline §15 applied
+to swing and §16b applied to longhold.
 
 ---
 
@@ -1661,19 +1722,26 @@ and §16b applied to longhold.
   own era CAGR), and the sensitivity sweep shows a smooth risk/return
   frontier rather than a fragile in-sample optimum.
 - **Fundamental data source + drawdown-tolerance framework — IN PROGRESS,
-  see §17.** Expanded from 5 pre-selected winners to 15 stocks (10 large,
-  liquid Nifty 50 names across sectors added as a genuine control group).
-  Result: a real, moderate correlation between PAT YoY growth and 15-day
-  price reaction (Pearson r≈0.44, stable excluding the NEULANDLAB outlier),
-  with two informative counter-examples — HDFCBANK fell −5.1% on results
-  day despite +4.9% PAT growth (missed estimates despite YoY growth), while
-  MARUTI finished +4.4% despite −9.7% PAT decline (the market had already
-  priced in its +36% revenue story before results day). One quarter still
-  isn't enough to build a sizing framework on, but the signal is real
-  enough to keep collecting. Data persists in `earnings_events`; a new
-  `earnings_watchlist` table now tracks which symbols' next quarter hasn't
-  been declared yet (`--watch` / `--pending`), so extending this across
-  quarters is a systematic check, not a from-scratch search each time.
+  see §17.** Expanded twice: 5 pre-selected winners → 15 (10 large Nifty 50
+  names as a control group) → all 54 currently tracked (the remaining 39
+  Nifty 50 constituents added to cover the full index). Result: a real,
+  moderate correlation between PAT YoY growth and 15-day price reaction
+  that holds steady across the expansion (r≈0.44 at 15 stocks, r≈0.43 at
+  54, r≈0.39 excluding the four most extreme PAT-growth outliers) — the
+  correlation barely moving as the sample more than tripled is the
+  strongest evidence yet that it's real, not small-sample noise.
+  Informative individual cases: HDFCBANK fell −5.1% on results day despite
+  +4.9% PAT growth (missed estimates despite YoY growth); MARUTI finished
+  +4.4% despite −9.7% PAT decline (market had already priced in its +36%
+  revenue story); ADANIENT and INDIGO both swung to a loss but reacted
+  mildly (−3.1%, −0.7%), consistent with the market discounting each
+  as a one-off (an OFAC settlement, an industry-wide fuel-cost spike)
+  rather than reacting to the raw percentage. One quarter still isn't
+  enough to build a sizing framework on, but the signal is real enough to
+  keep collecting. Data persists in `earnings_events`; `earnings_watchlist`
+  tracks all 54 symbols' next-quarter status (`--watch` / `--pending`), so
+  extending this across quarters is a systematic check, not a from-scratch
+  search each time.
 - **NSE/BSE direct scraping — ruled out for this environment, see §17.**
   Both domains are blocked by browser-automation policy, and NSE's own site
   serves a 403 to direct HTTP requests before even reaching an API. Company
@@ -1697,11 +1765,12 @@ built — beats buy-and-hold NIFTY by ~1.6x at 20 positions, with a severe and
 currently-active drawdown as the real cost)**; **portfolio-engine
 non-determinism bug + walk-forward OOS on longhold (§16b, fixed and
 validated — holds up across a two-era split, unlike §15's swing result)**;
-**quarterly-results price reaction pilot (§17, in progress — 15 stocks, 1
-quarter, real moderate correlation (r≈0.44) between PAT growth and
-reaction but still too small a sample to size positions on; NSE/BSE direct
-access ruled out, free news-source sourcing works instead;
-`earnings_watchlist` now tracks upcoming quarters)**._
+**quarterly-results price reaction pilot (§17, in progress — 54 stocks
+(full Nifty 50 + 4), 1 quarter, real moderate correlation (r≈0.43) between
+PAT growth and reaction that holds steady from 15 to 54 stocks but still
+one quarter, too small to size positions on; NSE/BSE direct access ruled
+out, free news-source sourcing works instead; `earnings_watchlist` tracks
+all 54 symbols' upcoming quarters)**._
 
 ---
 
@@ -1838,9 +1907,9 @@ go run ./cmd/backtest --portfolio --mode longhold --from 2019-01-01 --to 2026-08
 # Sensitivity sweep: swap in --trend-stop-ema {150,200,250} or
 # --lh-high-lookback {126,252,378} on the full 2012-2026 command above.
 
-# §17 — quarterly-results price reaction pilot (15 stocks, Q1 FY27).
+# §17 — quarterly-results price reaction study (54 stocks, full Nifty 50 + 4, Q1 FY27).
 # --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.
-go run ./cmd/earnings-reaction --seed      # seed the 15 known Q1 FY27 events
+go run ./cmd/earnings-reaction --seed      # seed the 54 known Q1 FY27 events
 go run ./cmd/earnings-reaction             # summary table, all stored events
 go run ./cmd/earnings-reaction --detail KEI  # full day-by-day table, one symbol
 go run ./cmd/earnings-reaction --watch     # register the next quarter to watch
