@@ -148,6 +148,45 @@ type Report struct {
 	OpenCount   int
 	PendingMade int
 	Positions   []PositionView
+
+	// Filled, Exited, and Queued are structured counterparts of the human-
+	// readable FILL/EXIT/QUEUE lines in Actions — for a caller (e.g.
+	// cmd/paper-trade --mirror) that wants to render "what changed today, and
+	// what would you place to mirror it in a real account" without parsing
+	// log strings.
+	Filled []FillEvent
+	Exited []ExitEvent
+	Queued []QueueEvent
+}
+
+// FillEvent is a position that filled at today's open. Informational for a
+// manual mirror — by the time this report is seen, the entry has already
+// happened at today's (now historical) open price.
+type FillEvent struct {
+	Symbol    string
+	Shares    int64
+	Entry     float64
+	SL        float64
+	WeightPct float64 // cost basis as % of pre-fill equity, to scale to a different capital base
+}
+
+// ExitEvent is a position that closed today — actionable for a manual mirror
+// (sell the mirrored position).
+type ExitEvent struct {
+	Symbol    string
+	Shares    int64
+	Exit      float64
+	Outcome   string
+	RealizedR float64
+}
+
+// QueueEvent is a new entry queued to fill at the NEXT session's open —
+// actionable for a manual mirror (place a matching buy at tomorrow's open).
+type QueueEvent struct {
+	Symbol   string
+	EstEntry float64
+	SL       float64
+	Score    float64
 }
 
 // PositionView is an open position with a current mark for display.
@@ -271,6 +310,8 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 				})
 			}
 			rep.log("FILL %s %d @ %.2f → gap-stopped same day @ %.2f (%.2fR)", pg.Symbol, shares, entry, exit, r)
+			rep.Filled = append(rep.Filled, FillEvent{Symbol: pg.Symbol, Shares: shares, Entry: entry, SL: pg.SL, WeightPct: costBasis / equity * 100})
+			rep.Exited = append(rep.Exited, ExitEvent{Symbol: pg.Symbol, Shares: shares, Exit: exit, Outcome: "loss", RealizedR: r})
 			continue
 		}
 		if !dryRun {
@@ -280,6 +321,7 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 			})
 		}
 		rep.log("FILL %s %d @ %.2f (SL %.2f, target %.2f)", pg.Symbol, shares, entry, pg.SL, pg.Target)
+		rep.Filled = append(rep.Filled, FillEvent{Symbol: pg.Symbol, Shares: shares, Entry: entry, SL: pg.SL, WeightPct: costBasis / equity * 100})
 	}
 	if !dryRun {
 		_ = ps.ClearPending(ctx)
@@ -328,6 +370,7 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 			_ = ps.DeletePosition(ctx, pos.Symbol)
 		}
 		rep.log("EXIT %s %d @ %.2f (%s, %.2fR)", pos.Symbol, pos.Shares, exit, outcome, r)
+		rep.Exited = append(rep.Exited, ExitEvent{Symbol: pos.Symbol, Shares: pos.Shares, Exit: exit, Outcome: outcome, RealizedR: r})
 	}
 	openPos = stillOpen
 
@@ -422,6 +465,7 @@ func RunDayEnd(ctx context.Context, ps Store, cs CandleSource, symbols []string,
 			rep.PendingMade++
 			rep.log("QUEUE %s for next open (entry≈%.2f, SL %.2f, target %.2f, score %.0f)",
 				sig.Symbol, sig.Price, sig.Trade.StopLoss, sig.Trade.Target, sig.Score)
+			rep.Queued = append(rep.Queued, QueueEvent{Symbol: sig.Symbol, EstEntry: sig.Price, SL: sig.Trade.StopLoss, Score: sig.Score})
 		}
 	} else if !rep.GateOpen {
 		rep.log("strategy-health gate CLOSED (last %d trades avg R < %.2f) — no new entries", cfg.HealthWindow, cfg.HealthMin)
