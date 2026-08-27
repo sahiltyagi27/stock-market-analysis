@@ -73,6 +73,8 @@ func main() {
 	reset := flag.Bool("reset", false, "wipe this --strategy's paper state (account, positions, pending, trades) and exit — other strategies are untouched")
 	seedFrom := flag.String("seed-from", "", "warm the health gate: backtest from this date (YYYY-MM-DD) to today and seed paper_trades, then exit")
 	exchange := flag.String("exchange", "NSE", "Kite exchange (for live mode)")
+	mirror := flag.Bool("mirror", false, "[eod] print a manual-mirror sheet after the cycle: what changed today, and what to place in a real account to match")
+	mirrorCapital := flag.Float64("mirror-capital", 0, "[eod/mirror] your real account's capital, to convert suggested position sizes into rupee amounts (0 = show %% of paper capital only)")
 
 	// Strategy parameters — defaults match the validated portfolio config.
 	maxPositions := flag.Int("max-positions", 5, "max concurrent positions")
@@ -181,7 +183,7 @@ func main() {
 
 	switch *mode {
 	case "eod":
-		runEOD(ctx, ps, cs, symbols, *asOfStr, pcfg, *force, *dryRun, *strategy)
+		runEOD(ctx, ps, cs, symbols, *asOfStr, pcfg, *force, *dryRun, *strategy, *mirror, *mirrorCapital)
 	case "live":
 		runLive(ctx, ps, cfg, *exchange)
 	default:
@@ -189,7 +191,7 @@ func main() {
 	}
 }
 
-func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOfStr string, pcfg paper.Config, force, dryRun bool, strategy string) {
+func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, symbols []string, asOfStr string, pcfg paper.Config, force, dryRun bool, strategy string, mirror bool, mirrorCapital float64) {
 	asOf := time.Now()
 	if asOfStr != "" {
 		t, err := time.Parse("2006-01-02", asOfStr)
@@ -208,6 +210,9 @@ func runEOD(ctx context.Context, ps *store.PaperStore, cs *store.CandleStore, sy
 		log.Fatalf("eod cycle: %v", err)
 	}
 	printReport(rep, pcfg.StartCapital)
+	if mirror {
+		printMirror(rep, pcfg, mirrorCapital)
+	}
 }
 
 // runSeed warms the strategy-health gate by replaying the validated portfolio
@@ -448,6 +453,70 @@ func printReport(rep *paper.Report, startCapital float64) {
 		fmt.Printf("  %s %s\n", display.Dim.Sprint("Return vs start:"), display.Sign(ret, "%+.2f%%"))
 	}
 	fmt.Printf("  %s\n", sep)
+}
+
+// printMirror renders what changed in today's cycle as a manual trading
+// checklist — for someone shadowing the paper account with real capital in
+// their own brokerage, since this tool only simulates and never places live
+// orders. Sizes are expressed as a %% of the paper account's own capital
+// (StartCapital) so they scale to any real account size; pass --mirror-capital
+// to also see a suggested rupee amount for your own capital.
+func printMirror(rep *paper.Report, pcfg paper.Config, mirrorCapital float64) {
+	banner := "━━━  Manual Mirror — what changed today  ━━━"
+	fmt.Printf("\n%s\n", display.BoldCyan.Sprint(banner))
+
+	amount := func(pct float64) string {
+		if mirrorCapital <= 0 {
+			return fmt.Sprintf("%.1f%% of capital", pct)
+		}
+		return fmt.Sprintf("%.1f%% of capital (₹%.0f)", pct, pct/100*mirrorCapital)
+	}
+
+	if len(rep.Filled) > 0 {
+		fmt.Printf("\n  %s\n", display.Dim.Sprint("Filled today (informational — already bought at today's open):"))
+		for _, f := range rep.Filled {
+			fmt.Printf("     %s buy %s @ %.2f   %s   SL %.2f\n",
+				display.Green.Sprint("•"), display.BoldWhite.Sprintf("%-12s", f.Symbol), f.Entry, amount(f.WeightPct), f.SL)
+		}
+	}
+
+	if len(rep.Exited) > 0 {
+		fmt.Printf("\n  %s\n", display.Dim.Sprint("Exited today (if you're mirroring this, sell your matching position):"))
+		for _, e := range rep.Exited {
+			fmt.Printf("     %s sell %s @ %.2f   %s   %s\n",
+				display.Red.Sprint("•"), display.BoldWhite.Sprintf("%-12s", e.Symbol), e.Exit, e.Outcome, display.Sign(e.RealizedR, "%+.2fR"))
+		}
+	}
+
+	if len(rep.Queued) > 0 {
+		fmt.Printf("\n  %s\n", display.Dim.Sprint("Queue for TOMORROW's open (place these before/at market open):"))
+		for _, q := range rep.Queued {
+			riskFrac := (q.EstEntry - q.SL) / q.EstEntry
+			weightPct := 100.0 / float64(pcfg.MaxPositions)
+			if pcfg.RiskPct > 0 && riskFrac > 0 {
+				weightPct = pcfg.RiskPct / riskFrac
+			}
+			if weightPct > pcfg.MaxWeightPct {
+				weightPct = pcfg.MaxWeightPct
+			}
+			fmt.Printf("     %s buy %s ~%.2f   %s   SL %.2f   score %.0f\n",
+				display.Cyan.Sprint("•"), display.BoldWhite.Sprintf("%-12s", q.Symbol), q.EstEntry, amount(weightPct), q.SL, q.Score)
+		}
+	}
+
+	if len(rep.Positions) > 0 {
+		fmt.Printf("\n  %s\n", display.Dim.Sprint("Currently holding (cross-check against your own book):"))
+		for _, p := range rep.Positions {
+			fmt.Printf("     %s %s %d @ %.2f  →  mark %.2f (%s)  SL %.2f\n",
+				display.Dim.Sprint("├"), display.BoldWhite.Sprintf("%-12s", p.Symbol),
+				p.Shares, p.Entry, p.Mark, display.Sign(p.UnrealPct, "%+.1f%%"), p.SL)
+		}
+	}
+
+	if len(rep.Filled) == 0 && len(rep.Exited) == 0 && len(rep.Queued) == 0 {
+		fmt.Printf("\n  %s\n", display.Dim.Sprint("Nothing changed today — no fills, exits, or new signals."))
+	}
+	fmt.Println()
 }
 
 func titleMode(m string) string {

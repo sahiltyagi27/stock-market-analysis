@@ -1523,6 +1523,22 @@ going forward: `kite-sync` after the close, then `paper-trade --strategy
 longhold --mode eod` — same cadence as the existing swing session, now on
 its own independent account.
 
+**Manual mirror sheet (`--mirror`).** Both accounts are still pure
+simulation — nothing here places a real order. If a paper position starts
+looking like a genuine multibagger, the only way to actually own it is to
+place the trade yourself in a real broker account, so `RunDayEnd`'s `Report`
+now carries structured `Filled`/`Exited`/`Queued` events (alongside the
+existing human-readable `Actions` log) and `--mirror` renders them as a
+same-day checklist: what filled today (informational — already happened at
+today's open), what to sell if mirroring an exit, and what to buy at
+tomorrow's open for anything newly queued — each sized as a %% of capital
+using the same risk-based-sizing formula the engine itself uses
+(`RiskPct / ((entry−SL)/entry)`, capped at `MaxWeightPct`), plus an optional
+`--mirror-capital` to convert that %% into a rupee amount for a real account
+of a different size than the paper one. Verified the sizing math against a
+real signal: LAURUSLABS at entry≈1,895/SL≈1,305 has a 31.1% risk fraction,
+so `1%% / 31.1%% ≈ 3.1%%` — matches what the tool printed.
+
 ---
 
 ## 17. Quarterly-results price reaction study (54 stocks — full Nifty 50, Q1 FY27)
@@ -2379,6 +2395,13 @@ go run ./cmd/paper-trade --strategy longhold --mode eod \
 go run ./cmd/paper-trade --strategy longhold --mode live   # intraday monitor
 # Existing swing paper session, unaffected by the above:
 go run ./cmd/paper-trade --strategy swing --mode eod
+
+# --mirror: same-day manual checklist for shadowing a paper account with
+# real money (this tool never places live orders). --mirror-capital scales
+# the suggested %% into a rupee amount for your real account's size.
+go run ./cmd/paper-trade --strategy longhold --mode eod \
+  --capital 500000 --max-positions 20 --risk-pct 1 --max-weight-pct 10 \
+  --cost-pct 0.25 --slippage-pct 0.20 --mirror --mirror-capital 200000
 
 # §17/§17b — quarterly-results price reaction study (72 stocks and growing, Q1 FY27).
 # --seed is idempotent (upsert on symbol+report_date) -- safe to re-run.
