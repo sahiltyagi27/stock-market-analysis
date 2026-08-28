@@ -220,13 +220,31 @@ func (c *Client) HistoricalDaily(
 	from time.Time,
 	to time.Time,
 ) ([]models.Candle, error) {
+	return c.Historical(ctx, instrumentToken, symbol, "day", from, to)
+}
+
+// Historical downloads candles for an instrument token at the given Kite
+// interval ("day", "minute", "3minute", "5minute", "10minute", "15minute",
+// "30minute", "60minute"). Kite enforces a much shorter [from, to) span per
+// request for finer intervals than for "day" — callers doing a wide backfill
+// need to chunk the range themselves (see cmd/kite-sync-intraday's
+// per-interval chunk sizes).
+func (c *Client) Historical(
+	ctx context.Context,
+	instrumentToken int64,
+	symbol string,
+	interval string,
+	from time.Time,
+	to time.Time,
+) ([]models.Candle, error) {
 	values := url.Values{}
 	values.Set("from", from.Format("2006-01-02 15:04:05"))
 	values.Set("to", to.Format("2006-01-02 15:04:05"))
 
 	path := fmt.Sprintf(
-		"/instruments/historical/%d/day?%s",
+		"/instruments/historical/%d/%s?%s",
 		instrumentToken,
+		url.PathEscape(interval),
 		values.Encode(),
 	)
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
