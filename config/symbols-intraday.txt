@@ -1,0 +1,56 @@
+# Intraday day-trading watchlist — the 50 current Nifty 50 constituents.
+# A curated, liquid subset of config/symbols.txt: day trading needs names
+# with real intraday volume/volatility, not the full Nifty 500 universe.
+# Reused verbatim from cmd/earnings-reaction/main.go's watchedSymbols list
+# (that file's 54 = these 50 + 4 non-Nifty50 additions: KEI, NEULANDLAB,
+# JBMA, LAURUSLABS), confirmed unchanged at the Mar 2026 index review.
+JSWSTEEL
+RELIANCE
+TCS
+HDFCBANK
+INFY
+ICICIBANK
+SBIN
+BHARTIARTL
+MARUTI
+SUNPHARMA
+TITAN
+ADANIENT
+ADANIPORTS
+APOLLOHOSP
+ASIANPAINT
+AXISBANK
+BAJAJ-AUTO
+BAJFINANCE
+BAJAJFINSV
+BEL
+CIPLA
+COALINDIA
+DRREDDY
+EICHERMOT
+ETERNAL
+GRASIM
+HCLTECH
+HDFCLIFE
+HINDALCO
+HINDUNILVR
+INDIGO
+ITC
+JIOFIN
+KOTAKBANK
+LT
+M&M
+MAXHEALTH
+NESTLEIND
+NTPC
+ONGC
+POWERGRID
+SBILIFE
+SHRIRAMFIN
+TATACONSUM
+TMPV
+TATASTEEL
+TECHM
+TRENT
+ULTRACEMCO
+WIPRO

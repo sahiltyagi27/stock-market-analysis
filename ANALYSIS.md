@@ -2115,8 +2115,126 @@ already showed matters for signal strength.
 
 ---
 
-## 18. Open questions / next steps
+## 18. Day-trading exploration — intraday data pipeline
 
+A separate thread from the swing/longhold research above, prompted by a
+real anecdote: someone the user knows apparently made >20% over the
+trailing year (Aug 2025–Aug 2026) day trading — a genuinely notable result
+worth taking seriously, since NIFTY 50 was actually **down -1.33%** over
+that exact window (checked directly against our own index data, not
+assumed), so it wasn't just riding a rising market.
+
+### What a real example showed
+
+Looking at 7 stocks the user's contact mentioned trading (COFORGE,
+ATHERENERG, ADANIPOWER, TTML, SCI, CHENNPETRO, MRPL), 5 of 7 shared one
+template on their actual trade day: a large single-day price move paired
+with volume far above the prior 7-day average (TTML +7.0% on 42.5x volume;
+ATHERENERG +8.2% on 6.7x; SCI +2.4% on 2.9x; COFORGE +5.9% on 2.6x;
+ADANIPOWER +3.8% the day before on ~3.3x, cooling off the day after). The
+other 2 (CHENNPETRO, MRPL) showed no breakout at all — quietly declining
+on *below*-average volume all week. That 5-vs-2 split matters: it's
+evidence against "he predicted every pick," and consistent with a broader
+speculative watchlist where some names work and some don't.
+
+A live WebSearch confirmed a real, dated catalyst for one of them:
+ATHERENERG's move was driven by a ₹1,758 Cr Hero MotoCorp stake-increase
+block deal, executed in the morning block-deal window *the same day* — a
+piece of information that structurally could not have existed in the
+prior day's candle. No catalyst was found for TTML or Coforge (searches
+turned up only stale/generic pages, genuinely inconclusive either way).
+This is the central, load-bearing point: **catalyst-driven single-day
+moves cannot be predicted from price/volume history alone**, because the
+information that caused them didn't exist in the market yet. Checked
+directly against the user's own scanner criteria: TTML's prior-day candle
+(-2.5%, volume at ~1.2x average — nowhere near `MinVolumeRatio`) would
+have been rejected by every rule already coded in this repo, not just
+missed by chance.
+
+A real screenshot of the contact's actual trade plan on SCI (one of the 7,
+which did show a genuine breakout) showed the mechanism concretely: a
+15-minute chart, an EMA9/EMA21 trend filter, a Fibonacci retracement
+identifying a 0.5-level pullback entry in an established uptrend, and a
+pre-built risk/reward box (entry ≈299.70, stop ≈298.05 just under the
+0.618 retracement, target ≈305.75 just above the prior high, RR 3.67) —
+the same entry/stop/RR discipline already used throughout this codebase's
+`TradeSetup`, just planned in advance and executed off a live intraday
+trigger instead of computed after an EOD close.
+
+### Decision: build the data pipeline first, one setup at a time
+
+Day trading needs infrastructure this repo has never had: intraday
+candles (everything here has been daily-only), a same-day-flatten
+constraint (MIS positions can't be held overnight, unlike every backtest/
+paper engine built so far), realistic intrabar backtesting (much easier to
+introduce look-ahead bias than with daily bars), and a live execution loop
+(today's "live" mode is read-only monitoring; nothing places real orders).
+Agreed to build in stages rather than all at once: data pipeline first,
+then formalize one setup (the volume-breakout momentum pattern found
+above — mechanically simpler than the Fib-pullback-continuation pattern,
+since it doesn't depend on subjectively drawn swing points), then a
+proper intrabar backtest, before touching live execution at all.
+
+### The pipeline, built and verified this session
+
+- **`internal/kite.Client.Historical`** — generalizes the previously
+  day-only `HistoricalDaily` to accept any Kite interval
+  (`minute`/`3minute`/`5minute`/`10minute`/`15minute`/`30minute`/`60minute`/
+  `day`); `HistoricalDaily` is now a thin wrapper, zero behavior change for
+  every existing caller.
+- **Kite's per-request day-limit was verified empirically, not assumed**:
+  a live probe against real RELIANCE data found 5-minute candles are
+  capped at exactly 100 days per request (a 100-day window succeeds, a
+  120-day window returns `"interval exceeds max limit: 100 days"`). The
+  other intervals' chunk sizes in `cmd/kite-sync-intraday` use Kite's
+  documented limits with a safety margin, not yet independently
+  re-verified the same way.
+- **`internal/store/intraday_candle_store.go`** (new `intraday_candles`
+  table, `symbol+interval+timestamp` uniqueness) — kept fully separate
+  from the existing daily `candles` table rather than adding an interval
+  column there, so the well-established daily pipeline and every existing
+  caller's "one row per symbol per day" assumption is untouched.
+- **`config/symbols-intraday.txt`** — the 50 current Nifty 50
+  constituents, reused verbatim from `cmd/earnings-reaction`'s
+  already-vetted `watchedSymbols` list (that list's 54 = these 50 + the 4
+  non-Nifty50 multibaggers) rather than a fresh hand-picked list. A
+  curated, liquid universe on purpose — day trading needs names with real
+  intraday volume, not the full 501-symbol universe, and the shorter Kite
+  lookback windows for intraday intervals make syncing all 501 far more
+  expensive for little benefit.
+- **`cmd/kite-sync-intraday`** — mirrors `cmd/kite-sync`'s worker-pool/
+  rate-limit/chunking shape, but interval-aware. Verified against live
+  data: a real 5-day backfill of all 50 symbols synced cleanly (50/50, 0
+  skipped, 360 five-minute bars each). Spot-checked RELIANCE's stored
+  bars directly — after correcting for the same IST/UTC display gotcha
+  this project has hit before with daily candles (Kite's intraday
+  timestamps are IST wall-clock; printed raw they're off by 5:30, though
+  unlike the midnight-anchored daily case the *date* doesn't shift) — and
+  confirmed clean, contiguous 5-minute bars from the real 09:15 IST NSE
+  open through to 15:10 IST, valid OHLC relationships throughout. Noted
+  directly in the store's package doc so this doesn't get rediscovered
+  the hard way inside strategy code later.
+
+### Not yet done
+
+The strategy itself (the volume-breakout momentum setup), the intrabar
+backtest engine, and any live/paper execution are all still ahead — this
+pass was data infrastructure only, deliberately, per the staged plan
+above.
+
+---
+
+## 19. Open questions / next steps
+
+- **Day trading — data pipeline DONE, strategy NOT YET STARTED, see §18.**
+  Intraday 5-minute candle pipeline built and verified against live data
+  (a new `intraday_candles` table, an interval-generalized Kite client
+  method, Kite's 100-day-per-request limit for 5-minute bars confirmed
+  empirically rather than assumed, a 50-stock curated Nifty 50 watchlist).
+  Next: formalize the volume-breakout momentum setup found in the
+  motivating example (5 of 7 real stocks showed a big move + volume far
+  above average on the actual trade day), then a proper intrabar backtest
+  — deliberately staged, not built all at once.
 - **Cross-sectional RS rank (Variant C)** — "is this among the strongest stocks?"
   (percentile rank of 50–100D return across all 500), distinct from the
   time-series RS filters that failed in §8. Test as a universe filter, not a tiebreak.
@@ -2250,11 +2368,14 @@ found genuinely uneven per-stock (robust for KEI/JBMA, fragile/near-zero
 for LAURUSLABS/NEULANDLAB once each stock's own outlier year is
 excluded); also fully closed a 10x historical-data error via a
 margin-plausibility check, confirmed as a units mislabeling by a second
-source)**._
+source)**; **day-trading intraday data pipeline (§18, pipeline only —
+5-minute candle sync verified against live data, Kite's 100-day
+per-request limit confirmed empirically rather than assumed; the actual
+strategy, backtest, and execution are explicitly NOT built yet)**._
 
 ---
 
-## 19. Reproduce
+## 20. Reproduce
 
 ```bash
 # Backfill data (daily, ≤5y per Kite request)
@@ -2414,6 +2535,12 @@ go run ./cmd/earnings-reaction --pending   # list symbols not yet declared
 # §17b — live dashboard: sector-filterable earnings table + daily movers
 # (all 501 watchlist symbols, /api/movers) in one local server.
 go run ./cmd/earnings-dashboard
+
+# §18 — day-trading intraday data pipeline (pipeline only; no strategy yet).
+# 5-minute bars, 50-stock curated Nifty 50 watchlist. --period is auto-chunked
+# at 95 days/request (Kite's real 5-minute limit is 100, confirmed empirically).
+go run ./cmd/kite-sync-intraday --period 60d
+go run ./cmd/kite-sync-intraday --interval 15minute --period 90d --symbols config/symbols-intraday.txt
 ```
 
 _Note: the `--exit-mode ema` / portfolio engine is the trustworthy path. The
